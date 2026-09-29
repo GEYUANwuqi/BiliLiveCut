@@ -84,7 +84,7 @@ V0.1.18.5 Alpha 使用与本机/Portable 相同的配置真源：默认分片目
 - ASR 模型缓存通过 Docker Volume 持久化
 - 镜像安装 `asr-whisper`、`asr-funasr`、`llm`、`web` 四组已定义的依赖，覆盖默认 Fun-ASR-Nano、辅助 SenseVoice、Whisper 兜底和文案接口；模型权重仍在首次使用时按项目模型配置加载。
 
-当前数据库只接受 V0.1.18.5 创建的 Schema v5。不要把 V0.1.17.x 或其他版本的 `blc.db` 放进挂载的 `./storage/`；当前版本不会备份、迁移或补写历史结构。升级测试请使用新的宿主目录或新的 Docker Volume，原始录像和导出成片可作为普通媒体文件另行保留。
+当前数据库只接受 V0.1.18.5 创建的 Schema v6。不要把任何旧版本的 `blc.db` 放进挂载的 `./storage/`；当前版本不会备份、迁移或补写历史结构。升级测试请使用新的宿主目录或新的 Docker Volume，原始录像和导出成片可作为普通媒体文件另行保留。
 
 ## 版本
 

@@ -180,4 +180,4 @@ biliup_config 通过上传命令模板中的 {config} 占位符使用；不猜�
 
 ## API
 
-GET /api/settings/configuration 返回脱敏字段清单；PATCH 同地址接受 values、reset、clear、revision。原 /api/settings 继续可用。HTTP 422 只返回字段位置、错误类别和静态提示，避免回显含密钥的输入对象。
+GET /api/settings/configuration 返回脱敏字段清单；PATCH 同地址接受 values、reset、clear、revision。GET /api/settings 保留读取启动状态；PATCH /api/settings/port 仅保存 web_port，旧 PATCH /api/settings 已移除。HTTP 422 只返回字段位置、错误类别和静态提示，避免回显含密钥的输入对象。
