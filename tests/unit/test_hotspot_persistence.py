@@ -45,7 +45,7 @@ def test_fresh_schema_contains_hotspot_constraints(temp_db: None) -> None:
         meta = db.get(SchemaMeta, 1)
 
     assert meta is not None
-    assert meta.schema_version == CURRENT_SCHEMA_VERSION == 5
+    assert meta.schema_version == CURRENT_SCHEMA_VERSION == 6
     assert columns["candidate_id"][3] == 0
     assert ("session_id", "status", "peak_ts") in index_columns
     assert {(row[3], row[2], row[4]) for row in foreign_keys} >= {

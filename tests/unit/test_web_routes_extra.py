@@ -165,7 +165,7 @@ class TestSettingsRoutes:
         from app.web.main import app
 
         with TestClient(app) as client:
-            r = client.patch("/api/settings", json={"biliup_enabled": False})
+            r = client.patch("/api/settings/configuration", json={"values": {"biliup_enabled": False}})
             assert r.status_code == 200
 
 

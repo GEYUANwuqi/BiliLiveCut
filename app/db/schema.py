@@ -37,7 +37,7 @@ def _get_settings():
 
 # ── 常量 ──────────────────────────────────────────────────
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # ── Schema 元信息表 ──────────────────────────────────────
 

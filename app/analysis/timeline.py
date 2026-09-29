@@ -74,7 +74,6 @@ def representative_danmaku(
     *,
     limit: int = 2,
     lag_s: float | None = None,
-    include_role: bool = False,
 ) -> list[dict[str, object]]:
     """返回兼顾高频反应与信息量的确定性代表弹幕。"""
     if limit <= 0 or end_ts <= start_ts:
@@ -98,7 +97,6 @@ def representative_danmaku(
     return select_representative_danmaku(
         [row.content for row in rows],
         limit=limit,
-        include_role=include_role,
     )
 
 
@@ -106,13 +104,11 @@ def select_representative_danmaku(
     messages: Sequence[str | None],
     *,
     limit: int = 2,
-    include_role: bool = False,
 ) -> list[dict[str, object]]:
     """从弹幕正文中稳定选择 reaction、information 与可选 humorous 样本。
 
     排序只依赖规范化正文、出现次数和首次出现位置，因此同一输入始终得到
-    相同输出。``include_role`` 供 HotspotEvent 保存选择理由；旧时间线接口
-    默认仍只返回 ``text`` 与 ``count``。
+    相同输出；每条记录统一包含正文、出现次数和选择理由。
     """
     if limit <= 0:
         return []
@@ -184,9 +180,7 @@ def select_representative_danmaku(
 
     result: list[dict[str, object]] = []
     for item, role in chosen:
-        payload: dict[str, object] = {"text": item.text, "count": item.count}
-        if include_role:
-            payload["role"] = role
+        payload: dict[str, object] = {"text": item.text, "count": item.count, "role": role}
         result.append(payload)
     return result
 

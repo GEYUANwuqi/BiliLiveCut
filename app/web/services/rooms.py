@@ -256,9 +256,9 @@ class RecorderManager:
                         )
                     ):
                         return
-            await self._start_locked(db_id, pipeline, produce)
+            await self._start_locked(db_id, pipeline, produce, automatic=automatic)
 
-    async def _start_locked(self, db_id: int, pipeline: bool | None, produce: bool) -> None:
+    async def _start_locked(self, db_id: int, pipeline: bool | None, produce: bool, *, automatic: bool = False) -> None:
         """启动某直播间的录制(幂等:已在录制则忽略)。
 
         :param db_id: ``live_rooms`` 主键。
@@ -287,9 +287,26 @@ class RecorderManager:
         await refresh_room_metadata(db_id)
 
         with get_session() as db:
+            if db.get_bind().dialect.name == "sqlite":
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
             room = db.get(LiveRoom, db_id)
             if room is None:
                 raise ValueError(f"房间不存在: db_id={db_id}")
+            if automatic:
+                from app.analysis.room_config import load_room_config
+
+                config = load_room_config(room)
+                if not room.auto_record or any(
+                    config.get(key, False)
+                    for key in (
+                        "recording_paused",
+                        "recording_auto_restart_suppressed",
+                        "recording_wait_for_next_live",
+                    )
+                ):
+                    return
+                pipeline_enabled = room.auto_analyze
+                produce = room.auto_render
             if settings.require_authorization and not room.authorized:
                 raise ValueError("该直播间未确认授权,拒绝录制。")
             if room_source(room, db) != identity:
@@ -836,7 +853,6 @@ def recording_status() -> list[dict[str, Any]]:
                     "room_id": s.room_id,
                     "status": s.status,
                     "stream_format": s.stream_format,
-                    "quality": s.quality,
                     "reconnect_count": s.reconnect_count,
                     "last_reconnected_at": s.last_reconnected_at.isoformat() if s.last_reconnected_at else None,
                     "segments": n_seg,

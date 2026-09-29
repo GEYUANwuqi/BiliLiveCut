@@ -31,7 +31,8 @@ class TestFileLock:
             lock = FileLock(lock_path)
             with lock.acquire(timeout=5):
                 assert lock_path.exists()
-            assert not lock_path.exists()
+            with FileLock(lock_path).acquire(timeout=0):
+                assert lock_path.exists()
 
     def test_two_locks_conflict(self) -> None:
         from blc_portable.archive.locks import FileLock  # noqa: E402
@@ -52,6 +53,30 @@ class TestFileLock:
         ep = get_engine_pack_lock_path(app_root)
         assert ".runtime-install" in str(rp)
         assert ".engine-pack-install" in str(ep)
+
+
+def test_crashed_process_releases_install_lock(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    from blc_portable.archive.locks import FileLock
+
+    lock_path = tmp_path / "crashed.lock"
+    code = "from pathlib import Path; from blc_portable.archive.locks import FileLock; import os,sys\nwith FileLock(Path(sys.argv[1])).acquire(timeout=0): os._exit(9)"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(lock_path)],
+        env={**os.environ, "PYTHONPATH": str(_src_dir)},
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 9
+    lock = FileLock(lock_path)
+    with lock.acquire(timeout=0):
+        with pytest.raises(RuntimeError, match="重入"):
+            with lock.acquire(timeout=0):
+                pytest.fail("reentrant lock")
+    with lock.acquire(timeout=0):
+        assert lock_path.exists()
 
 
 class TestAtomicInstall:
@@ -78,13 +103,13 @@ class TestAtomicInstall:
                 )
             manifest = _read_installed_manifest(models_dir)
             assert manifest is not None
-            assert manifest["schema_version"] == 6
+            assert manifest["schema_version"] == 7
             assert manifest["engines"]["whisper"]["installation_source"] == "engine_pack"
             assert manifest["engines"]["whisper"]["zip_sha256"] is None
             assert "engine_pack_version" not in manifest
-            assert "source_commit" not in manifest
+            assert len(manifest["source_commit"]) == 40
 
-    def test_installed_manifest_uses_only_content_identity(self) -> None:
+    def test_installed_manifest_rejects_identity_changes(self) -> None:
         from blc_portable.engine_pack.installer import (  # noqa: E402
             check_installed_models,
             install_engine_from_staging,

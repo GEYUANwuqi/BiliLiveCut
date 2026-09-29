@@ -120,7 +120,20 @@ def test_transcribe_compute_stores_clean_text_summary_and_raw_asr(
 
     assert result["text"] == "整理后的可读转写。"
     assert result["final_text"] == "原始没有标点的转写"
-    assert auxiliary["transcript_refinement"] == {"applied": True, "summary": "片段摘要"}
+    assert auxiliary["transcript_refinement"] == {
+        "version": 1,
+        "applied": True,
+        "clean_text": "整理后的可读转写。",
+        "summary": "片段摘要",
+    }
+    from app.pipeline.workers.transcribe import commit_transcript
+    from app.web.services.transcripts import list_transcripts
+
+    commit_transcript(_lease(task_id), result, 1)
+    stored = list_transcripts()[0]
+    assert stored["text"] == "整理后的可读转写。"
+    assert stored["raw_text"] == "原始没有标点的转写"
+    assert stored["llm_refined"] is True
 
 
 def test_transcribe_compute_persists_degenerate_text_as_degraded_without_llm(

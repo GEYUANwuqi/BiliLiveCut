@@ -210,7 +210,7 @@ def _installed_manifest(root: Path) -> dict[str, object]:
     """Read and validate the current installed-model manifest."""
     manifest_path = root / "models" / "engine-pack-installed.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 6 or not isinstance(payload.get("engines"), dict):
+    if payload.get("schema_version") != 7 or not isinstance(payload.get("engines"), dict):
         raise RuntimeError(f"Lite smoke produced an invalid installed-model manifest: {manifest_path}")
     return payload
 

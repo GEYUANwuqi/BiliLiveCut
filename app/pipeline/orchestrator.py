@@ -103,7 +103,7 @@ def produce_clip(
     :param cancel_check: 可选的取消检查。
     :param render_variants: 是否生成派生版本。
     """
-    from app.clipping.clipper import produce_clip as _cut_clip
+    from app.clipping.core import produce_clip as _cut_clip
     from app.core.process_control import ProcessCancelledError
     from app.publishing.copywriter import generate_copy
 

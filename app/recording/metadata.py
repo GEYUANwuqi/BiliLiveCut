@@ -30,7 +30,7 @@ class RoomMetadata(BaseModel):
 
 
 class SessionMetadata(BaseModel):
-    """开录缓存、最后可信观测及冻结时刻；旧场次不伪造开录标题。"""
+    """开录缓存、最后可信观测及冻结时刻；缺失证据时不伪造开录标题。"""
 
     model_config = ConfigDict(extra="forbid")
     version: Literal[1] = 1

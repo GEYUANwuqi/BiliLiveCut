@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import time
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.console import configure_console_encoding
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
 
 PORTABLE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 CACHE_DIR = PORTABLE_DIR / ".model_cache"
@@ -85,15 +87,39 @@ def _engine_id_to_cache_dir(engine_id: str) -> str:
 STATE_FILE = CACHE_DIR / "download_state.json"
 
 
-def load_state() -> dict[str, Any]:
-    """加载下载状态。"""
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return {"downloaded": [], "progress": {}}
+def _state_identity() -> dict[str, str]:
+    """当前发行及锁定模型定义共同限定可续用的下载状态。"""
+    definitions = json.dumps(_load_engine_defs(), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return {
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
+        "model_definitions_sha256": hashlib.sha256(definitions).hexdigest(),
+    }
+
+
+def load_state(path: Path | None = None) -> dict[str, Any]:
+    """只加载当前发行与模型定义的下载状态；旧记录不自动迁移。"""
+    identity = _state_identity()
+    state_path = STATE_FILE if path is None else path
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = None
+        if (
+            isinstance(state, dict)
+            and set(state) == {"identity", "downloaded", "progress"}
+            and state["identity"] == identity
+            and isinstance(state["downloaded"], list)
+            and all(isinstance(item, str) for item in state["downloaded"])
+            and isinstance(state["progress"], dict)
+        ):
+            return state
+    return {"identity": identity, "downloaded": [], "progress": {}}
 
 
 def save_state(state: dict[str, Any]) -> None:
-    """保存下载状态。"""
+    """保存当前下载状态。"""
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

@@ -18,6 +18,7 @@ from app.analysis import llm
 from app.analysis.hotspot_lifecycle import resolve_merged_hotspot_event
 from app.analysis.timeline import datetime_epoch
 from app.analysis.transcript_windows import extract_transcript_window
+from app.analysis.transcription.content import refined_transcript_text
 from app.analysis.transcription.quality import assess_transcript_quality, transcript_quality_payload
 from app.core.config import settings
 from app.db.entities import HotspotEvent, HotspotStatus, RawSegment, Transcript, utcnow
@@ -441,6 +442,7 @@ def _context_transcript_evidence(
             window = extract_transcript_window(
                 transcript.final_text,
                 transcript.words_json,
+                semantic_text=refined_transcript_text(transcript),
                 start_s=overlap_start - segment_start,
                 end_s=overlap_end - segment_start,
                 duration_s=duration_s,
@@ -455,6 +457,7 @@ def _context_transcript_evidence(
             window = extract_transcript_window(
                 transcript.final_text,
                 None,
+                semantic_text=refined_transcript_text(transcript),
                 start_s=overlap_start - segment_start,
                 end_s=overlap_end - segment_start,
                 duration_s=duration_s,

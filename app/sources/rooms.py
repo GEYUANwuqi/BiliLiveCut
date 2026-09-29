@@ -1,4 +1,4 @@
-"""来源身份的事务登记；复用 AppSetting 主键约束，不改变 Schema 5。"""
+"""来源身份的事务登记；复用 AppSetting 主键约束，使用当前数据库 Schema。"""
 
 from __future__ import annotations
 
@@ -73,23 +73,13 @@ def _binding(row: AppSetting) -> SourceBinding:
 
 
 def room_source(room: LiveRoom, db: Session | None = None) -> SourceRoom:
-    """读取持久来源身份；旧 Bilibili 数字房号无需升级即可使用。"""
+    """读取当前版本登记的完整双向来源身份，缺失时拒绝推导或补写。"""
     if db is None:
         with get_session() as connection:
             return room_source(room, connection)
     row = db.get(AppSetting, f"source_room:{room.id}")
     if row is None:
-        if room.platform == "bilibili" and room.room_id is not None:
-            legacy = SourceRoom(
-                platform="bilibili",
-                source_id=str(room.room_id),
-                canonical_url=f"https://live.bilibili.com/{room.room_id}",
-            )
-            index = db.get(AppSetting, _identity_key(legacy))
-            if index is not None and _binding(index).room_db_id == room.id:
-                raise SourceInvalidInput("来源身份缺少反向索引，请从备份恢复")
-            return legacy
-        raise SourceInvalidInput("直播间缺少来源身份，请启用对应插件并重新添加规范地址")
+        raise SourceInvalidInput("来源身份缺少反向索引，请使用当前版本重新初始化或从本版本备份恢复")
     binding = _binding(row)
     if binding.room_db_id != room.id or binding.room.platform != room.platform:
         raise SourceInvalidInput("来源身份与房间关联不一致")
@@ -104,7 +94,7 @@ def room_source(room: LiveRoom, db: Session | None = None) -> SourceRoom:
 def _register(source: SourceRoom, snapshot: RoomSnapshot, authorized: bool) -> LiveRoom:
     with get_session() as db:
         if db.get_bind().dialect.name == "sqlite":
-            # SQLite 在读取去重结果之前拿写锁，避免并发登记旧 Bili 房间或升级读事务。
+            # SQLite 在读取去重结果之前拿写锁，避免并发登记或升级读事务。
             # 此函数在工作线程执行，忙等待不阻塞宿主事件循环。
             db.execute(text("BEGIN IMMEDIATE"))
         key = _identity_key(source)
@@ -118,18 +108,20 @@ def _register(source: SourceRoom, snapshot: RoomSnapshot, authorized: bool) -> L
             if existing is None or room_source(existing, db) != binding.room:
                 raise SourceInvalidInput("来源身份索引引用无效房间")
         elif source.platform == "bilibili":
-            existing = db.exec(
+            unbound = db.exec(
                 select(LiveRoom)
                 .where(LiveRoom.platform == "bilibili", LiveRoom.room_id == int(source.source_id))
                 .order_by(LiveRoom.id)
             ).first()
+            if unbound is not None:
+                raise SourceInvalidInput("Bilibili 房间缺少来源身份索引，不能自动补写历史数据")
         if index is None:
             # 新登记前检查同平台已有反向绑定，不能把丢失正向索引当作首次登记。
             for candidate in db.exec(select(LiveRoom).where(LiveRoom.platform == source.platform)).all():
                 stored = db.get(AppSetting, f"source_room:{candidate.id}")
                 if stored is not None:
                     binding = _binding(stored)
-                    if binding.room.source_id == source.source_id or (existing and candidate.id == existing.id):
+                    if binding.room.source_id == source.source_id:
                         raise SourceInvalidInput("来源身份缺少正向索引，请从备份恢复")
         canonical_match = db.exec(
             select(LiveRoom).where(LiveRoom.platform == source.platform, LiveRoom.input_url == source.canonical_url)

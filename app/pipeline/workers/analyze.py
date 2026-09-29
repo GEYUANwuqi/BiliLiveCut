@@ -22,6 +22,7 @@ from sqlmodel import Session, select
 from app.analysis import audio as audio_mod
 from app.analysis.keywords import match_keywords
 from app.analysis.source_policy import session_danmaku_lag_s
+from app.analysis.transcription.content import refined_transcript_text
 from app.core.config import settings
 from app.db.entities import (
     CandidateStatus,
@@ -1303,6 +1304,7 @@ def _score_segment_draft(
             end_ts=item.end_ts,
             text=session_transcripts[item.id].final_text,
             words_json=session_transcripts[item.id].words_json,
+            semantic_text=refined_transcript_text(session_transcripts[item.id]),
         )
         for item in session_segments
         if item.id in session_transcripts and item.start_ts is not None and item.end_ts is not None
@@ -1454,8 +1456,6 @@ def _score_segment_draft(
         available_start=available_start,
         available_end=available_end,
         peak_offset_s=peak_off,
-        pre_roll_s=cfg.pre_roll_s,
-        post_roll_s=cfg.post_roll_s,
         suggested_start_offset_s=judgement.suggested_start_offset if judgement else None,
         suggested_end_offset_s=judgement.suggested_end_offset if judgement else None,
         silences=feats.silences,

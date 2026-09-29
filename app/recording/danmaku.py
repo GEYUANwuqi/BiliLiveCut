@@ -48,7 +48,7 @@ class DanmakuEvidence(BaseModel):
 
 
 def read_evidence(db: Session, session_id: int) -> DanmakuEvidence | None:
-    """读取场次证据；没有记录的旧场次不推断为成功采集。"""
+    """读取场次证据；缺失记录不推断为成功采集。"""
     return read_metadata(db, f"session_danmaku:{session_id}", DanmakuEvidence)
 
 

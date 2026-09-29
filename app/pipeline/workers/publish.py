@@ -20,8 +20,6 @@ from sqlmodel import Session, select
 from app.db.entities import (
     ClipStatus,
     FinalClip,
-    HighlightEvent,
-    ReviewStatus,
     SegmentTask,
     TaskStatus,
     UploadAttempt,
@@ -29,7 +27,7 @@ from app.db.entities import (
     UploadTask,
 )
 from app.db.session import get_session
-from app.pipeline.lease import TaskLease, still_owns_lease
+from app.pipeline.lease import TaskLease, approved_task_candidate, still_owns_lease
 from app.pipeline.stage_result import enqueue_next, mark_completed, mark_failed
 
 _logger = logging.getLogger(__name__)
@@ -115,7 +113,9 @@ def _atomic_claim_upload_task(db: Session, upload_task_id: int, worker_id: str) 
     return int(row[0]) if row[0] is not None else None
 
 
-def prepare_upload_attempt(upload_task_id: int, worker_id: str, lease_token: str | None = None) -> dict[str, Any]:
+def prepare_upload_attempt(
+    upload_task_id: int, worker_id: str, lease_token: str | None = None, *, task_lease: TaskLease | None = None
+) -> dict[str, Any]:
     """为 Web、CLI 和 Worker 原子领取同一上传任务并持久化请求前记录。"""
     from app.publishing.uploader import precheck_clip
 
@@ -126,6 +126,10 @@ def prepare_upload_attempt(upload_task_id: int, worker_id: str, lease_token: str
         if upload_task is None:
             return {"error": "上传任务不存在", "permanent": True}
         clip_id = upload_task.clip_id
+        if task_lease is not None:
+            error = _publish_source_error(db, task_lease, clip_id)
+            if error:
+                return {"error": error, "permanent": True}
         success = db.exec(
             select(UploadAttempt).where(UploadAttempt.clip_id == clip_id, UploadAttempt.status == UploadStatus.SUCCESS)
         ).first()
@@ -189,6 +193,24 @@ def prepare_upload_attempt(upload_task_id: int, worker_id: str, lease_token: str
         }
 
 
+def _publish_source_error(db: Session, lease: TaskLease, clip_id: int) -> str | None:
+    """防止过期租约、人工拒绝或错误成片关联触发上传。"""
+    if not still_owns_lease(db, lease):
+        return "lease lost before prepare"
+    task = db.get(SegmentTask, lease.task_id)
+    assert task is not None
+    try:
+        candidate = approved_task_candidate(db, task)
+    except ValueError as exc:
+        return str(exc)
+    clip = db.get(FinalClip, clip_id)
+    if clip is None or task.clip_id != clip.id or clip.candidate_id != candidate.id:
+        return "成片与发布任务来源不一致"
+    if clip.status == ClipStatus.REJECTED:
+        return "成片已被拒绝"
+    return None
+
+
 def prepare_publish_attempt(lease: TaskLease) -> dict[str, Any]:
     """验证流水线租约和审核状态，再进入共用上传准备流程。"""
     from app.publishing.uploader import enqueue_upload, get_uploader
@@ -199,9 +221,9 @@ def prepare_publish_attempt(lease: TaskLease) -> dict[str, Any]:
         task = db.get(SegmentTask, lease.task_id)
         if task is None or task.clip_id is None:
             return {"error": "任务不存在或缺少 clip_id", "permanent": True}
-        event = db.get(HighlightEvent, task.event_id) if task.event_id else None
-        if event is None or event.review_status not in ReviewStatus.POSITIVE:
-            return {"error": "Event 未批准或不存在", "permanent": True}
+        error = _publish_source_error(db, lease, task.clip_id)
+        if error:
+            return {"error": error, "permanent": True}
         clip_id = task.clip_id
         upload_task = db.exec(
             select(UploadTask)
@@ -212,7 +234,7 @@ def prepare_publish_attempt(lease: TaskLease) -> dict[str, Any]:
         upload_task = enqueue_upload(clip_id)
     if upload_task.id is None:
         return {"error": "上传任务缺少 ID", "permanent": True}
-    return prepare_upload_attempt(upload_task.id, lease.worker_id, lease.lease_token)
+    return prepare_upload_attempt(upload_task.id, lease.worker_id, lease.lease_token, task_lease=lease)
 
 
 def execute_remote_upload(attempt_token: str) -> dict[str, Any]:
@@ -266,10 +288,9 @@ def execute_remote_upload(attempt_token: str) -> dict[str, Any]:
             "error_message": classified.error_message,
             "request_may_have_been_sent": classified.request_may_have_been_sent,
         }
-    outcome = result.outcome or ("success" if result.success else "remote_result_unknown")
     return {
         **base,
-        "outcome": outcome,
+        "outcome": result.outcome,
         "remote_id": result.remote_id,
         "error_message": None if result.success else result.message,
         "request_may_have_been_sent": result.request_may_have_been_sent,

@@ -125,8 +125,8 @@ def test_room_patch_distinguishes_missing_room_and_recording_conflict(
     """录制中锁定字段返回冲突，只有不存在的直播间返回 404。"""
     from app.db.entities import LiveRoom
     from app.db.session import get_session
-    from app.web import service
     from app.web.main import app
+    from app.web.services import rooms as rooms_service
 
     with get_session() as db:
         room = LiveRoom(input_url="recording-room", room_id=34567, authorized=True)
@@ -138,7 +138,7 @@ def test_room_patch_distinguishes_missing_room_and_recording_conflict(
     def fake_is_running(_db_id: int) -> bool:
         return True
 
-    monkeypatch.setattr(service.recorder_manager, "is_running", fake_is_running)
+    monkeypatch.setattr(rooms_service.recorder_manager, "is_running", fake_is_running)
 
     with TestClient(app) as client:
         conflict = client.patch(f"/api/rooms/{room_id}", json={"schedule_enabled": True})
@@ -484,11 +484,12 @@ def test_dashboard_serves_complete_javascript_module_graph(temp_db: None) -> Non
 
 def test_settings_toggle_and_uploads(temp_db: None, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     """上传开关默认关闭,可切换;上传队列与打开目录接口工作。"""
-    from app.web import service
     from app.web.main import app
 
     # 避免测试真的打开文件管理器窗口。
-    monkeypatch.setattr(service, "open_path", lambda p: True)
+    from app.web.services import clips
+
+    monkeypatch.setattr(clips, "open_path", lambda p: True)
     monkeypatch.setenv("BLC_APP_ROOT", str(tmp_path))
     monkeypatch.setenv("BLC_WEB_PORT", "8000")
 
@@ -506,16 +507,19 @@ def test_settings_toggle_and_uploads(temp_db: None, monkeypatch: MonkeyPatch, tm
         assert s["biliup_enabled"] is False
         assert s["upload_active"] is False
 
-        s2 = client.patch(
-            "/api/settings",
+        saved = client.patch(
+            "/api/settings/configuration",
             json={
-                "recording_pipeline_enabled": False,
-                "transcript_llm_refine_enabled": False,
-                "asr_task_max_concurrency": 3,
-                "web_port": 8080,
-                "biliup_enabled": True,
+                "values": {
+                    "recording_pipeline_enabled": False,
+                    "transcript_llm_refine_enabled": False,
+                    "asr_task_max_concurrency": 3,
+                    "biliup_enabled": True,
+                }
             },
-        ).json()
+        )
+        assert saved.status_code == 200
+        s2 = client.patch("/api/settings/port", json={"web_port": 8080}).json()
         assert s2["recording_pipeline_enabled"] is False
         assert s2["recording_pipeline_overridden"] is True
         assert s2["transcript_llm_refine_enabled"] is False
@@ -535,12 +539,12 @@ def test_settings_toggle_and_uploads(temp_db: None, monkeypatch: MonkeyPatch, tm
         assert r.status_code == 200
         assert "clips_dir" in r.json()
 
-        invalid = client.patch("/api/settings", json={"asr_task_max_concurrency": 9})
+        invalid = client.patch("/api/settings/configuration", json={"values": {"asr_task_max_concurrency": 9}})
         assert invalid.status_code == 400
 
         config_path = tmp_path / "config" / "launcher.json"
         before = config_path.read_bytes()
-        invalid_port = client.patch("/api/settings", json={"web_port": 0})
+        invalid_port = client.patch("/api/settings/port", json={"web_port": 0})
         assert invalid_port.status_code == 400
         assert config_path.read_bytes() == before
 
@@ -571,11 +575,18 @@ def test_transcript_api_exposes_summary_and_raw_asr(temp_db: None) -> None:
             Transcript(
                 segment_id=9,
                 language="zh",
-                final_text="整理后的可读正文。",
+                final_text="原始没有标点的转写",
                 base_text="原始没有标点的转写",
                 primary_backend="funasr-nano",
                 auxiliary_json=json.dumps(
-                    {"transcript_refinement": {"applied": True, "summary": "片段摘要"}},
+                    {
+                        "transcript_refinement": {
+                            "version": 1,
+                            "applied": True,
+                            "clean_text": "整理后的可读正文。",
+                            "summary": "片段摘要",
+                        }
+                    },
                     ensure_ascii=False,
                 ),
             )

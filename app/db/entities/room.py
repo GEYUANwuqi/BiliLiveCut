@@ -56,9 +56,7 @@ class RecordingSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     room_id: int = Field(index=True, description="所属 live_rooms.id")
-    stream_url: str | None = Field(default=None, description="本次拉流地址(短期,可空)")
     stream_format: str | None = Field(default=None, description="hls / flv")
-    quality: int | None = Field(default=None, description="清晰度码 qn")
     status: str = Field(default=SessionStatus.STARTING, description="会话状态")
     started_at: datetime = Field(default_factory=utcnow)
     ended_at: datetime | None = Field(default=None)

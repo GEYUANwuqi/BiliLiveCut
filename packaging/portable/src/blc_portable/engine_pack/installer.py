@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.atomic_fs import replace_with_retry
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
 
 from .identity import (
     IDENTITY_SCHEMA_VERSION,
@@ -25,9 +26,11 @@ from .identity import (
 
 CHUNK_SIZE = 8 * 1024 * 1024
 INSTALLED_MANIFEST_NAME = "engine-pack-installed.json"
-INSTALLED_MANIFEST_SCHEMA = 6
+INSTALLED_MANIFEST_SCHEMA = 7
 _CURRENT_MANIFEST_FIELDS = {
     "schema_version",
+    "release_version",
+    "source_commit",
     "identity_schema_version",
     "model_set_fingerprint",
     "installed_at",
@@ -45,6 +48,10 @@ _ENGINE_RECORD_FIELDS = {
     "files",
 }
 _FILE_INFO_FIELDS = {"target_path", "file_count", "total_size", "files"}
+
+
+class EnginePackValidationError(RuntimeError):
+    """本地包格式、内容或身份校验失败，可按显式策略回退在线供给。"""
 
 
 def compute_crc32(path: Path) -> str:
@@ -157,7 +164,7 @@ def _new_engine_record(
     installation_source: str,
     zip_sha256: str | None,
 ) -> dict[str, object]:
-    """Create one schema-6 installed-engine record."""
+    """Create one current installed-engine record."""
     entries = _collect_engine_files(engine_dir)
     if not entries:
         raise RuntimeError(f"Engine directory is empty: {engine_id}")
@@ -179,10 +186,12 @@ def _write_current_manifest(
     engine_records: Mapping[str, Mapping[str, object]],
     desired: Mapping[str, Mapping[str, object]],
 ) -> None:
-    """Atomically write the release-independent installed-model manifest."""
+    """Atomically write the installed-model manifest for this release."""
     models_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": INSTALLED_MANIFEST_SCHEMA,
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
         "identity_schema_version": IDENTITY_SCHEMA_VERSION,
         "model_set_fingerprint": model_set_fingerprint(desired),
         "installed_at": dt.datetime.now(dt.UTC).isoformat(),
@@ -228,7 +237,9 @@ def _validate_file_info(engine_id: str, info: object) -> list[str]:
     return errors
 
 
-def _verify_engine_files(engine_id: str, engine_dir: Path, info: Mapping[str, object]) -> list[str]:
+def _verify_engine_files(
+    engine_id: str, engine_dir: Path, info: Mapping[str, object], *, full_rehash: bool = True
+) -> list[str]:
     """Fully compare one installed engine with its persisted hash list."""
     errors: list[str] = []
     entries = info["files"]
@@ -240,12 +251,12 @@ def _verify_engine_files(engine_id: str, engine_dir: Path, info: Mapping[str, ob
             errors.append(f"Engine file entry invalid: {engine_id}/{relative}")
             continue
         target = engine_dir / relative
-        if not target.is_file():
+        if target.is_symlink() or not target.resolve().is_relative_to(engine_dir.resolve()) or not target.is_file():
             errors.append(f"Missing: {engine_id}/{relative}")
             continue
         if target.stat().st_size != raw_entry["size"]:
             errors.append(f"Size mismatch: {engine_id}/{relative}")
-        if compute_sha256(target) != raw_entry["sha256"]:
+        if full_rehash and compute_sha256(target) != raw_entry["sha256"]:
             errors.append(f"SHA-256 mismatch: {engine_id}/{relative}")
     actual_paths = {path.relative_to(engine_dir).as_posix() for path in engine_dir.rglob("*") if path.is_file()}
     for relative in sorted(actual_paths - expected_paths):
@@ -261,7 +272,9 @@ def _load_current_manifest(models_dir: Path) -> tuple[dict[str, Any] | None, lis
     if installed.get("schema_version") != INSTALLED_MANIFEST_SCHEMA:
         return None, [f"Installed manifest schema unsupported: {installed.get('schema_version')}"]
     if set(installed) != _CURRENT_MANIFEST_FIELDS:
-        return None, ["Installed manifest schema-6 fields invalid"]
+        return None, ["Installed manifest fields invalid"]
+    if installed["release_version"] != RELEASE_VERSION or installed["source_commit"] != SOURCE_COMMIT_FULL:
+        return None, ["Installed manifest release identity mismatch"]
     if installed.get("identity_schema_version") != IDENTITY_SCHEMA_VERSION:
         return None, ["Installed manifest identity schema mismatch"]
     if not isinstance(installed.get("engines"), dict):
@@ -304,14 +317,16 @@ def reusable_engine_ids(
             errors.extend(info_errors)
             continue
         engine_dir = models_dir / engine_id
-        if not engine_dir.is_dir() or not any(engine_dir.iterdir()):
+        if engine_dir.is_symlink() or not engine_dir.is_dir() or not any(engine_dir.iterdir()):
             errors.append(f"Engine directory missing or empty: {engine_id}")
             continue
-        if full_rehash:
-            disk_errors = _verify_engine_files(engine_id, engine_dir, info)
-            if disk_errors:
-                errors.extend(disk_errors)
-                continue
+        try:
+            disk_errors = _verify_engine_files(engine_id, engine_dir, info, full_rehash=full_rehash)
+        except OSError as exc:
+            disk_errors = [f"Engine files unavailable: {engine_id}: {exc}"]
+        if disk_errors:
+            errors.extend(disk_errors)
+            continue
         reusable.add(engine_id)
     return reusable, errors
 
@@ -426,10 +441,12 @@ def install_from_engine_pack(
     """Install only stale engines from a fully verified local pack."""
     actual_crc32 = compute_crc32(pack_path)
     if expected_crc32 and actual_crc32 != expected_crc32:
-        raise RuntimeError(f"CRC32 mismatch: expected={expected_crc32} actual={actual_crc32}")
+        raise EnginePackValidationError(f"CRC32 mismatch: expected={expected_crc32} actual={actual_crc32}")
     actual_sha256 = compute_sha256(pack_path)
     if expected_sha256 and actual_sha256 != expected_sha256:
-        raise RuntimeError(f"SHA-256 mismatch: expected={expected_sha256[:16]} actual={actual_sha256[:16]}")
+        raise EnginePackValidationError(
+            f"SHA-256 mismatch: expected={expected_sha256[:16]} actual={actual_sha256[:16]}"
+        )
     if not expected_crc32 and not expected_sha256:
         print("  Engine Pack has no external digest; validating its complete internal manifest")
     print(f"  Engine Pack 校验通过: CRC32={actual_crc32} SHA256={actual_sha256[:16]}...")
@@ -442,25 +459,28 @@ def install_from_engine_pack(
     desired = _desired_records()
     staging_dir = app_root / f"models-staging-pack-{uuid.uuid4().hex[:12]}"
     installed_now: list[str] = []
-    reused, _ = reusable_engine_ids(app_root / "models")
     with FileLock(get_engine_pack_lock_path(app_root)).acquire(timeout=120):
+        reused, _ = reusable_engine_ids(app_root / "models", full_rehash=True)
         try:
             staging_dir.mkdir(parents=True, exist_ok=True)
-            _safe_extract(pack_path, staging_dir)
-            manifest_path = staging_dir / "engine-pack-manifest.json"
-            if not manifest_path.is_file():
-                raise RuntimeError("Engine Pack 缺少 engine-pack-manifest.json")
-            manifest = load_manifest(manifest_path)
-            verification_errors = verify_extracted_tree(staging_dir, manifest)
-            if verification_errors:
-                raise RuntimeError("Engine Pack 校验失败:\n  " + "\n  ".join(verification_errors))
-            pack_engines = {engine.engine_id: engine for engine in manifest.engines}
-            if set(pack_engines) != set(desired):
-                raise RuntimeError("Engine Pack engine set does not match the current catalog")
-            for engine_id, desired_record in desired.items():
-                pack_identity = manifest_engine_identity(pack_engines[engine_id])
-                if engine_fingerprint(pack_identity) != desired_record["content_fingerprint"]:
-                    raise RuntimeError(f"Engine Pack content fingerprint mismatch: {engine_id}")
+            try:
+                _safe_extract(pack_path, staging_dir)
+                manifest_path = staging_dir / "engine-pack-manifest.json"
+                if not manifest_path.is_file():
+                    raise RuntimeError("Engine Pack 缺少 engine-pack-manifest.json")
+                manifest = load_manifest(manifest_path)
+                verification_errors = verify_extracted_tree(staging_dir, manifest)
+                if verification_errors:
+                    raise RuntimeError("Engine Pack 校验失败:\n  " + "\n  ".join(verification_errors))
+                pack_engines = {engine.engine_id: engine for engine in manifest.engines}
+                if set(pack_engines) != set(desired):
+                    raise RuntimeError("Engine Pack engine set does not match the current catalog")
+                for engine_id, desired_record in desired.items():
+                    pack_identity = manifest_engine_identity(pack_engines[engine_id])
+                    if engine_fingerprint(pack_identity) != desired_record["content_fingerprint"]:
+                        raise RuntimeError(f"Engine Pack content fingerprint mismatch: {engine_id}")
+            except (ValueError, RuntimeError, zipfile.BadZipFile, zlib.error, EOFError) as exc:
+                raise EnginePackValidationError(f"Engine Pack 无效: {exc}") from exc
             for engine_id, desired_record in desired.items():
                 if engine_id in reused:
                     print(f"  reuse engine by content fingerprint: {engine_id}")

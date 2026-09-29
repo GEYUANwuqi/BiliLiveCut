@@ -5,7 +5,7 @@
 
 关键约束(按需求):**一旦开始录制/分析,定时采集立即暂停**。实现上有两道闸:
 
-1. 录制启动时由 :class:`~app.web.service.RecorderManager` 调用 :meth:`pause_for_recording`
+1. 录制启动时由 :class:`~app.web.services.rooms.RecorderManager` 调用 :meth:`pause_for_recording`
    立刻置暂停标志(满足"立刻");
 2. 调度循环每个 tick 还会通过注入的 ``recording_active`` 回调复查是否有录制在跑
    (兜底 CLI 等其它入口)。录制全部停止后自动恢复。

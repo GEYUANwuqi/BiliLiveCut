@@ -11,6 +11,7 @@ import pytest
 from sqlmodel import select
 
 from app.plugins.live_source import SourceRoom
+from tests.source_fixtures import bind_bilibili_room
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -35,8 +36,8 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
     from app.pipeline import live_monitor as module
     from app.pipeline.scheduler import advance_recorded
     from app.sources.bilibili.client import BilibiliLiveClient
-    from app.web import service
     from app.web.services import rooms
+    from app.web.services import rooms as rooms_service
 
     with get_session() as db:
         room = LiveRoom(
@@ -50,6 +51,7 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
         )
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         db_id = room.id
     assert db_id is not None
     live_status = 1 if already_live else 0
@@ -121,7 +123,7 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
     monkeypatch.setattr("app.sources.bilibili.source.get_bilibili_cookie", lambda: "")
     monkeypatch.setattr(rooms, "Recorder", BoundaryRecorder)
     manager = rooms.RecorderManager()
-    monkeypatch.setattr(service, "recorder_manager", manager)
+    monkeypatch.setattr(rooms_service, "recorder_manager", manager)
     monitor = module.LiveMonitor()
     monitor._stop = asyncio.Event()
     try:

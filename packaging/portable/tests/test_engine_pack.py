@@ -88,6 +88,120 @@ def fixture_engine_pack() -> Generator[Path, None, None]:
         yield zip_path
 
 
+@pytest.mark.parametrize("damage", ["missing", "size", "same_size"])
+def test_explicit_pack_repairs_only_damaged_engine(
+    tmp_path: Path,
+    fixture_engine_pack: Path,
+    damage: str,
+) -> None:
+    from blc_portable.engine_pack.installer import check_installed_models, install_from_engine_pack
+    from blc_portable.launcher.model_downloader import provision_models
+
+    install_from_engine_pack(tmp_path, fixture_engine_pack, "", "")
+    weight = tmp_path / "models/whisper/model.bin"
+    original = weight.read_bytes()
+    unchanged = tmp_path / "models/sensevoice/model.bin"
+    old_mtime = unchanged.stat().st_mtime_ns
+    if damage == "missing":
+        weight.unlink()
+    else:
+        weight.write_bytes(b"x" * (len(original) if damage == "same_size" else 3))
+    assert check_installed_models(tmp_path / "models")[0] == (damage == "same_size")
+    result = provision_models(
+        tmp_path,
+        config_dir=_portable_dir / "config",
+        expected_filename="unused.zip",
+        expected_crc32="",
+        expected_sha256="",
+        user_engine_pack_path=str(fixture_engine_pack),
+        offline=True,
+        fallback_online=False,
+    )
+    assert result["installed_engines"] == ["whisper"]
+    assert weight.read_bytes() == original and unchanged.stat().st_mtime_ns == old_mtime
+    assert check_installed_models(tmp_path / "models", full_rehash=True)[0]
+
+
+@pytest.mark.parametrize("invalid", ["version", "zip", "hash"])
+@pytest.mark.parametrize("fallback,offline", [(True, False), (False, False), (True, True)])
+def test_invalid_pack_fallback_respects_policy(
+    tmp_path: Path,
+    fixture_engine_pack: Path,
+    monkeypatch: MonkeyPatch,
+    invalid: str,
+    fallback: bool,
+    offline: bool,
+) -> None:
+    from blc_portable.launcher import model_downloader
+
+    bad = tmp_path / "bad.zip"
+    if invalid == "zip":
+        bad.write_bytes(b"not a zip")
+    elif invalid == "version":
+        _rewrite_pack_manifest(fixture_engine_pack, bad, lambda data: data.update(engine_pack_version="0.1.17.4-alpha"))
+    else:
+        shutil.copyfile(fixture_engine_pack, bad)
+    calls: list[Path] = []
+
+    def online(app_root: Path, **kwargs: object) -> dict[str, str]:
+        calls.append(app_root)
+        return {"source": "online_boundary"}
+
+    monkeypatch.setattr(model_downloader, "download_all_engines", online)
+    options = dict(
+        config_dir=_portable_dir / "config",
+        expected_filename=bad.name,
+        expected_crc32="BAD" if invalid == "hash" else "",
+        expected_sha256="",
+        user_engine_pack_path=str(bad),
+        offline=offline,
+        fallback_online=fallback,
+    )
+    if fallback and not offline:
+        assert model_downloader.provision_models(tmp_path / "app", **options)["source"] == "online_boundary"
+        assert len(calls) == 1
+    else:
+        with pytest.raises(RuntimeError):
+            model_downloader.provision_models(tmp_path / "app", **options)
+        assert not calls
+
+
+@pytest.mark.parametrize("compression", [zipfile.ZIP_LZMA, zipfile.ZIP_BZIP2])
+def test_corrupt_compressed_pack_can_fallback_online(
+    tmp_path: Path,
+    fixture_engine_pack: Path,
+    monkeypatch: MonkeyPatch,
+    compression: int,
+) -> None:
+    import struct
+
+    from blc_portable.launcher import model_downloader
+
+    bad = tmp_path / "compressed.zip"
+    with zipfile.ZipFile(fixture_engine_pack) as source, zipfile.ZipFile(bad, "w", compression=compression) as target:
+        for member in source.infolist():
+            target.writestr(member.filename, source.read(member))
+    with zipfile.ZipFile(bad) as archive:
+        info = archive.infolist()[0]
+    content = bytearray(bad.read_bytes())
+    name_len, extra_len = struct.unpack_from("<HH", content, info.header_offset + 26)
+    offset = info.header_offset + 30 + name_len + extra_len
+    content[offset : offset + info.compress_size] = b"\x00" * info.compress_size
+    bad.write_bytes(content)
+    monkeypatch.setattr(model_downloader, "download_all_engines", lambda *args, **kwargs: {"source": "online"})
+    result = model_downloader.provision_models(
+        tmp_path / "app",
+        config_dir=_portable_dir / "config",
+        expected_filename=bad.name,
+        expected_crc32="",
+        expected_sha256="",
+        user_engine_pack_path=str(bad),
+        offline=False,
+        fallback_online=True,
+    )
+    assert result["source"] == "online"
+
+
 def _rewrite_pack_manifest(source: Path, destination: Path, mutate: Any) -> Path:
     """Copy a fixture pack while mutating only release/identity metadata."""
     extracted = destination.parent / f"{destination.stem}-tree"
@@ -324,7 +438,7 @@ class TestEnginePackInstall:
         installed = models_dir / "engine-pack-installed.json"
         assert installed.exists()
         info = json.loads(installed.read_text(encoding="utf-8"))
-        assert info["schema_version"] == 6
+        assert info["schema_version"] == 7
         assert len(info["model_set_fingerprint"]) == 64
         assert "engine_pack_version" not in info
 
@@ -365,7 +479,7 @@ class TestEnginePackInstall:
             ),
         )
 
-        with pytest.raises(ValueError, match="engine_pack_version 不匹配"):
+        with pytest.raises(RuntimeError, match="engine_pack_version 不匹配"):
             install_from_engine_pack(tmp_app_root, old_pack, "", "")
         assert not (tmp_app_root / "models" / "engine-pack-installed.json").exists()
 
@@ -457,8 +571,13 @@ class TestCheckInstalledModels:
         ok, _ = check_installed_models(tmp_app_root / "models")
         assert not ok
 
-    def test_release_version_does_not_invalidate_content(self, tmp_app_root: Path) -> None:
-        """应用版本变化不应让相同模型内容失效。"""
+    @pytest.mark.parametrize(
+        "field,value", [("release_version", "0.1.18.4-alpha"), ("source_commit", "0" * 40), ("release_version", None)]
+    )
+    def test_old_release_identity_rejects_identical_content(
+        self, tmp_app_root: Path, field: str, value: str | None
+    ) -> None:
+        """旧版本、旧源码或缺失身份均不能复用相同模型文件。"""
         from blc_portable.engine_pack.installer import check_installed_models
 
         models_dir = tmp_app_root / "models"
@@ -469,8 +588,13 @@ class TestCheckInstalledModels:
         manifest = installed_manifest(models_dir)
         (models_dir / "engine-pack-installed.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-        ok1, _ = check_installed_models(models_dir)
-        assert ok1
+        if value is None:
+            manifest.pop(field)
+        else:
+            manifest[field] = value
+        (models_dir / "engine-pack-installed.json").write_text(json.dumps(manifest), encoding="utf-8")
+        ok1, errors = check_installed_models(models_dir)
+        assert not ok1 and errors
 
     def test_installed_and_valid(self, tmp_app_root: Path) -> None:
         """正确安装时返回 True。"""

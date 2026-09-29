@@ -9,7 +9,14 @@ from dataclasses import dataclass
 
 from sqlmodel import Session
 
-from app.db.entities import SegmentTask
+from app.db.entities import (
+    CandidateStatus,
+    HighlightCandidate,
+    HighlightEvent,
+    RawSegment,
+    ReviewStatus,
+    SegmentTask,
+)
 
 
 class LeaseLostError(RuntimeError):
@@ -68,3 +75,26 @@ def still_owns_lease(db: Session, lease: TaskLease) -> bool:
         and task.lease_token == lease.lease_token
         and task.stage == lease.expected_stage
     )
+
+
+def approved_task_candidate(db: Session, task: SegmentTask) -> HighlightCandidate:
+    """验证任务、片段、候选和已批准事件属于同一来源。"""
+    candidate = db.get(HighlightCandidate, task.candidate_id) if task.candidate_id else None
+    event = db.get(HighlightEvent, task.event_id) if task.event_id else None
+    segment = db.get(RawSegment, task.segment_id)
+    event_segment = db.get(RawSegment, event.segment_id) if event and event.segment_id is not None else None
+    if (
+        candidate is None
+        or event is None
+        or segment is None
+        or candidate.status == CandidateStatus.REJECTED
+        or event.review_status not in ReviewStatus.POSITIVE
+        or event.candidate_id != candidate.id
+        or candidate.session_id != task.session_id
+        or event.session_id != task.session_id
+        or segment.session_id != task.session_id
+        # 合并高光的代表片段可以移动，但仍须属于同一场次。
+        or (event.segment_id is not None and (event_segment is None or event_segment.session_id != task.session_id))
+    ):
+        raise ValueError("任务来源不一致或候选未批准")
+    return candidate

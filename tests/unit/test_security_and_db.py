@@ -286,10 +286,10 @@ class TestDatabaseForeignKeys:
             db.rollback()
 
     def test_schema_version_is_current(self) -> None:
-        """0.1.18 当前数据库使用 Schema v5。"""
+        """当前数据库使用 Schema v6。"""
         from app.db.schema import CURRENT_SCHEMA_VERSION
 
-        assert CURRENT_SCHEMA_VERSION == 5
+        assert CURRENT_SCHEMA_VERSION == 6
 
     def test_schema_rejects_different_app_version(self, temp_db: None) -> None:
         """Alpha 数据库必须由当前应用版本创建。"""

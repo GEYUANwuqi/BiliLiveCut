@@ -2,11 +2,11 @@
 
 通过 Web 左侧“设置中心”搜索中文名称或环境变量名，查看有效值、来源和生效时间。下表解释配置范围；实际注册定义位于 `app/core/configuration.py`，运行中的字段以设置中心返回为准。
 
-当前注册表共 150 项：140 项 Settings 与 10 项运行时配置；评分配置含 8 个权重和 6 个标量。表中默认值均来自代码/项目默认，不导出环境凭据。
+当前注册表共 147 项：137 项 Settings 与 10 项运行时配置；评分配置含 8 个权重和 6 个标量。表中默认值均来自代码/项目默认，不导出环境凭据。
 
 业务默认来自环境或项目配置；Web 覆盖以原键保存在 AppSetting。保存先整体校验，再在单一事务中提交；revision 防止旧表单覆盖。字段缺省保持原值，reset 删除覆盖并恢复环境/项目默认；凭据空白保持，clear 明确清空并阻止环境回退。
 
-生效标记：new_room 为新建房间默认（已有房间不变）；next_recording 为下一场；next_task 为下一次操作或流水线阶段；next_poll 为下一次调度/保护检查；immediate 为下一次读取；restart 为下一次启动；deployment 为启动配置或已替代项，界面只读并解释原因。正在执行的任务和多窗口转写保留开始时的完整快照。
+生效标记：new_room 为新建房间默认（已有房间不变）；next_recording 为下一场；next_task 为下一次操作或流水线阶段；next_poll 为下一次调度/保护检查；immediate 为下一次读取；restart 为下一次启动；deployment 为启动配置，界面只读并解释原因。正在执行的任务和多窗口转写保留开始时的完整快照。
 
 | 配置键 | 中文名称 | 分组/作用域 | 默认 | 类型/范围 | 持久化/生效 | 实际读取位置或只读原因 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -43,11 +43,10 @@
 | `whisper_device` | Whisper 默认设备 | asr/global | cpu | string；不限..不限 | database/next_task | `app/analysis/model_pool.py:34`、`app/analysis/transcription/backends.py:188`、`app/analysis/transcription/backends.py:234`、`app/analysis/transcription/backends.py:241`、`app/analysis/transcription/backends.py:258`、`app/analysis/transcription/backends.py:738` |
 | `whisper_compute_type` | Whisper 计算精度 | asr/global | int8 | string；不限..不限 | database/next_task | `app/analysis/model_pool.py:33`、`app/analysis/transcription/backends.py:739` |
 | `asr_resource_policy` | 模型资源不足处理 | asr/global | warn | string；['strict', 'warn'] | database/next_task | `app/analysis/transcription/backends.py:829` |
-| `asr_primary` | ASR 主引擎 | asr/global | funasr_nano | string；['funasr_nano', 'funasr', 'nano', 'paraformer', 'whisper'] | database/next_task | `app/analysis/model_pool.py:36`、`app/analysis/model_pool.py:162`、`app/analysis/model_pool.py:166`、`app/analysis/model_pool.py:173`、`app/analysis/transcription/pipeline.py:140`、`app/analysis/transcription/pipeline.py:280` |
+| `asr_primary` | ASR 主引擎 | asr/global | funasr_nano | string；['funasr_nano', 'paraformer', 'whisper'] | database/next_task | `app/analysis/model_pool.py:36`、`app/analysis/model_pool.py:162`、`app/analysis/model_pool.py:166`、`app/analysis/model_pool.py:173`、`app/analysis/transcription/pipeline.py:140`、`app/analysis/transcription/pipeline.py:280` |
 | `asr_sensevoice` | 加载 SenseVoice 辅助模型 | asr/global | True | boolean；不限..不限 | database/next_task | `app/analysis/model_pool.py:37`、`app/analysis/model_pool.py:171`、`app/analysis/transcription/backends.py:139`、`app/pipeline/workers/analyze.py:1325` |
 | `asr_funasr_review` | FunASR 低质量复核 | asr/global | True | boolean；不限..不限 | database/next_task | `app/analysis/model_pool.py:39`、`app/analysis/model_pool.py:173`、`app/analysis/transcription/backends.py:140`、`app/analysis/transcription/pipeline.py:243` |
 | `asr_fallback_whisper` | Whisper 兜底 | asr/global | True | boolean；不限..不限 | database/next_task | `app/analysis/model_pool.py:40`、`app/analysis/model_pool.py:175`、`app/analysis/transcription/pipeline.py:88` |
-| `asr_confidence_threshold` | 旧版置信度阈值 | asr/global | -0.6 | number；不限..不限 | environment/deployment | 原始置信度不能跨引擎比较；使用 asr_review_risk_threshold。 |
 | `asr_review_risk_threshold` | 复核风险阈值 | asr/global | 0.65 | number；不限..不限 | database/next_task | `app/analysis/transcription/pipeline.py:91` |
 | `asr_sensevoice_enabled` | 使用 SenseVoice 辅助特征 | asr/global | True | boolean；不限..不限 | database/next_task | `app/analysis/model_pool.py:38`、`app/analysis/model_pool.py:171`、`app/pipeline/workers/analyze.py:1325` |
 | `asr_vad_max_segment_s` | 语音活动切句上限 | asr/global | 30 | integer；5..120 | database/next_task | `app/analysis/model_pool.py:35`、`app/analysis/transcription/backends.py:259`、`app/analysis/transcription/backends.py:267`、`app/analysis/transcription/backends.py:281` |
@@ -66,7 +65,6 @@
 | `asr_fallback_keep_loaded` | 兜底引擎模型常驻 | asr/global | False | boolean；不限..不限 | database/next_poll | `app/analysis/model_pool.py`（按角色动态读取） |
 | `asr_model_idle_unload_seconds` | 非驻留模型空闲卸载时间（0 关闭） | asr/global | 900 | integer；0..86400 | database/next_poll | `app/analysis/model_pool.py:109` |
 | `asr_preload_on_start` | 启动预加载模型 | asr/global | False | boolean；不限..不限 | database/restart | `app/pipeline/task_worker.py:244` |
-| `asr_model_revision` | 旧版全局模型版本 | asr/global | v2.0.4 | string；不限..不限 | environment/deployment | 模型版本由每个后端的模型目录统一锁定；不能使用全局版本覆盖。 |
 | `llm_daily_budget` | LLM 每日预算（美元，0 不限） | llm/global | 0.0 | number；0.0..不限 | database/next_task | `app/analysis/llm.py:38` |
 | `transcript_llm_refine_enabled` | LLM 整理转写与摘要 | llm/global | True | boolean；不限..不限 | database/next_task | `app/core/settings_store.py:144`、`app/core/settings_store.py:150`、`app/web/services/settings.py:28`、`app/web/services/settings.py:36` |
 | `transcript_llm_refine_max_tokens` | 转写整理输出 Token 上限 | llm/global | 65536 | integer；128..65536 | database/next_task | `app/analysis/llm.py:585` |
@@ -128,7 +126,6 @@
 | `upload_attempt_stale_s` | 未返回上传结果确认时间 | publishing/global | 600 | integer；60..86400 | database/next_task | `app/pipeline/stale_recovery.py:216`、`app/pipeline/stale_recovery.py:233` |
 | `low_disk_threshold_gb` | 暂停新任务的磁盘阈值 | storage/global | 20.0 | number；1..不限 | database/next_poll | `app/pipeline/storage_lifecycle.py:121`、`app/pipeline/storage_lifecycle.py:122` |
 | `critical_disk_threshold_gb` | 停止录制的紧急磁盘阈值 | storage/global | 5.0 | number；0.1..不限 | database/next_poll | `app/pipeline/storage_lifecycle.py:122`、`app/pipeline/storage_lifecycle.py:123`、`app/pipeline/storage_lifecycle.py:403` |
-| `uploader` | 旧版上传器默认值 | publishing/global | manual | string；不限..不限 | environment/deployment | 实际上传方式由 biliup_enabled 控制；关闭时使用手动导出。 |
 | `upload_max_retries` | 上传最大重试次数 | publishing/global | 3 | integer；0..10 | database/next_task | `app/publishing/uploader.py:411` |
 | `upload_max_per_hour` | 每小时上传上限 | publishing/global | 5 | integer；1..不限 | database/next_task | `app/publishing/uploader.py:129`、`app/publishing/uploader.py:130` |
 | `title_max_len` | 投稿标题字数上限 | publishing/global | 80 | integer；10..200 | database/next_task | `app/publishing/uploader.py:117`、`app/publishing/uploader.py:118` |
@@ -173,9 +170,9 @@
 
 database_url 必须先于数据库打开确定；storage_root/plugin_dir 涉及路径及已有数据，不在运行中搬迁。日志级别、运行环境和管理员/审核员身份在启动时初始化，保留环境配置入口与重启说明。
 
-BLC_APP_ROOT、BLC_SOURCE_DIR、BLC_PORTABLE、BLC_MODELS_DIR、BLC_MODEL_CONFIG_DIR、BLC_OFFLINE、BLC_JOURNAL_DIR、代理及安装器下载配置属于部署/安装诊断；不保存到被它们定位的数据库。PIP_* 仅作为安装命令的环境变量。ASR_TASK_MAX_CONCURRENCY 为规范键；MAX_TRANSCRIBING 是旧环境别名。
+BLC_APP_ROOT、BLC_SOURCE_DIR、BLC_PORTABLE、BLC_MODELS_DIR、BLC_MODEL_CONFIG_DIR、BLC_OFFLINE、BLC_JOURNAL_DIR、代理及安装器下载配置属于部署/安装诊断；不保存到被它们定位的数据库。PIP_* 仅作为安装命令的环境变量。ASR 任务并发只接受 ASR_TASK_MAX_CONCURRENCY，不再接受旧环境变量别名。
 
-固定模型 ID/revision 来自后端目录；asr_model_revision 不再控制加载，asr_confidence_threshold 由统一复核风险阈值替代，uploader 由 biliup_enabled 替代，三者明确只读。关键词词库、topic_cluster 的内部聚类常量和 danmaku_sampling 的算法常量保留代码/资料文件管理，不将所有内部常量当作可随意调节的用户配置。
+固定模型 ID/revision 来自后端目录；复核阈值使用 asr_review_risk_threshold，上传方式使用 Web 开关 biliup_enabled。历史配置项已删除，不会迁移。业务配置统一经 `/api/settings/configuration` 保存；启动端口使用独立 `/api/settings/port`，旧联合写入接口已移除。关键词词库、topic_cluster 的内部聚类常量和 danmaku_sampling 的算法常量保留代码/资料文件管理，不将所有内部常量当作可随意调节的用户配置。
 
 磁盘参数满足 critical <= min_free <= low 且告警阈值 >= min_free；告警直接使用自己的阈值。自动清理默认关闭，开启后每小时检查；手动磁盘维护可以直接执行清理。原片只按登记的单个文件删除，保留活动录制/任务/媒体操作、审核草稿、重分析、共享路径及未知文件；成片后的提前清理要求可用成片完整覆盖该分段。
 
@@ -183,4 +180,4 @@ biliup_config 通过上传命令模板中的 {config} 占位符使用；不猜�
 
 ## API
 
-GET /api/settings/configuration 返回脱敏字段清单；PATCH 同地址接受 values、reset、clear、revision。原 /api/settings 继续可用。HTTP 422 只返回字段位置、错误类别和静态提示，避免回显含密钥的输入对象。
+GET /api/settings/configuration 返回脱敏字段清单；PATCH 同地址接受 values、reset、clear、revision。GET /api/settings 保留读取启动状态；PATCH /api/settings/port 仅保存 web_port，旧 PATCH /api/settings 已移除。HTTP 422 只返回字段位置、错误类别和静态提示，避免回显含密钥的输入对象。

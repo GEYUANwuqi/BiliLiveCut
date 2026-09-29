@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from app.web import service
+from app.web.services import schedules as schedules_service
 
 
 class ScheduleRequest(BaseModel):
@@ -26,14 +26,14 @@ router = APIRouter()
 @router.get("/schedules")
 def get_schedules() -> list[dict[str, Any]]:
     """返回所有录制预约。"""
-    return service.list_schedules()
+    return schedules_service.list_schedules()
 
 
 @router.post("/schedules")
 def create_schedule(req: ScheduleRequest) -> dict[str, Any]:
     """创建一个录制预约。"""
     try:
-        return service.create_schedule(req.room_id, req.scheduled_at, req.recurrent)
+        return schedules_service.create_schedule(req.room_id, req.scheduled_at, req.recurrent)
     except (ValueError, Exception) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -42,7 +42,7 @@ def create_schedule(req: ScheduleRequest) -> dict[str, Any]:
 def delete_schedule(schedule_id: int) -> dict[str, str]:
     """删除一个录制预约。"""
     try:
-        service.delete_schedule(schedule_id)
+        schedules_service.delete_schedule(schedule_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "deleted"}
@@ -52,6 +52,6 @@ def delete_schedule(schedule_id: int) -> dict[str, str]:
 def patch_schedule(schedule_id: int, enabled: bool) -> dict[str, Any]:
     """启用/禁用录制预约。"""
     try:
-        return service.toggle_schedule(schedule_id, enabled)
+        return schedules_service.toggle_schedule(schedule_id, enabled)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

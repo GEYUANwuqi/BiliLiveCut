@@ -406,6 +406,10 @@ def test_doctor_returns_zero_when_required_checks_pass(tmp_path: Path, monkeypat
         engine_dir = tmp_path / "models" / engine_id
         engine_dir.mkdir(parents=True)
         (engine_dir / "model.bin").write_bytes(b"fixture")
+    from engine_pack_helpers import installed_manifest
+
+    manifest_path = tmp_path / "models" / "engine-pack-installed.json"
+    manifest_path.write_text(json.dumps(installed_manifest(tmp_path / "models")), encoding="utf-8")
     ffmpeg = tmp_path / "bin" / "ffmpeg.exe"
     ffmpeg.parent.mkdir(parents=True)
     ffmpeg.write_bytes(b"fixture")

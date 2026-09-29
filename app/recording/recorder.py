@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
@@ -460,7 +462,7 @@ class Recorder:
         """
         segment_list = out_dir / _SEGMENT_LIST_NAME
         # 为本次录制使用唯一的文件名前缀,避免重连后覆盖既有片段。
-        prefix = f"part{self._seq:03d}_"
+        prefix = f"part{self._seq:03d}_{uuid.uuid4().hex[:12]}_"
         cmd = self._build_ffmpeg_cmd(stream, out_dir, prefix, segment_list)
         logger.debug(
             "启动 FFmpeg db_room={} session={} transport={}", self.db_room_id, self._session_id, stream.transport
@@ -468,6 +470,7 @@ class Recorder:
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -492,7 +495,7 @@ class Recorder:
                     task.cancel()
                 await asyncio.gather(watcher, stderr_task, stopper, disk_guard, return_exceptions=True)
                 # 兜底:登记可能尚未从清单读到的最后片段。
-                await self._scan_orphan_segments(segment_list, out_dir)
+                await self._scan_orphan_segments(segment_list, out_dir, prefix=prefix)
                 self._active_process = None
 
             await complete_cleanup(cleanup())
@@ -601,24 +604,27 @@ class Recorder:
         except asyncio.CancelledError:
             pass
 
-    async def _scan_orphan_segments(self, segment_list: Path, out_dir: Path) -> None:
-        """进程退出后兜底扫描:登记清单中尚未处理的行。
+    async def _scan_orphan_segments(self, segment_list: Path, out_dir: Path, *, prefix: str = "part") -> None:
+        """进程退出后补读清单，再探测本次录制中没有清单记录的末片。"""
+        from app.clipping.core import probe_media
 
-        :param segment_list: 清单文件路径。
-        :param out_dir: 片段所在目录。
-        """
-        if not segment_list.exists():
-            return
-        registered = self._registered_paths()
-        for line in segment_list.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if not line:
+        if segment_list.exists():
+            for line in segment_list.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.strip():
+                    await self._register_segment(line.strip(), out_dir)
+        for path in sorted(out_dir.glob(f"{prefix}*.ts")):
+            if str(path.resolve()) in self._registered_paths() or not path.is_file():
                 continue
-            filename = line.split(",")[0]
-            if str((out_dir / filename).resolve()) not in registered:
-                await self._register_segment(line, out_dir)
+            end_ts = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+            if path.stat().st_size == 0:
+                continue
+            duration, width, height = await asyncio.to_thread(probe_media, str(path))
+            if not math.isfinite(duration) or duration <= 0 or width <= 0 or height <= 0:
+                logger.warning("末片不可播放，保留文件等待检查: {}", path.name)
+                continue
+            await self._register_segment(f"{path.name},0,{duration}", out_dir, end_ts=end_ts)
 
-    async def _register_segment(self, csv_line: str, out_dir: Path) -> None:
+    async def _register_segment(self, csv_line: str, out_dir: Path, *, end_ts: datetime | None = None) -> None:
         """解析一行清单并把片段写入数据库,然后触发下游回调。
 
         :param csv_line: 形如 ``part000_00000.ts,0.000000,60.000000`` 的一行。
@@ -627,6 +633,9 @@ class Recorder:
         parts = csv_line.split(",")
         filename = parts[0]
         file_path = (out_dir / filename).resolve()
+        if not file_path.is_relative_to(out_dir.resolve()):
+            logger.warning("片段路径超出录制目录，拒绝登记: {}", filename)
+            return
         if not file_path.exists():
             logger.debug("清单引用的文件暂不存在,跳过: {}", file_path)
             return
@@ -640,10 +649,13 @@ class Recorder:
             end_off = float(parts[2])
             duration = max(0.0, end_off - start_off)
         except (IndexError, ValueError):
-            duration = float(settings.segment_duration_s)
+            # 强停可能截断清单，退出后由探测恢复真实时长。
+            return
 
-        now = utcnow()
-        # 用"片段完成时刻"反推起止直播时间(近似,足够下游使用)。
+        if not math.isfinite(duration) or duration <= 0:
+            return
+        now = end_ts or datetime.fromtimestamp(file_path.stat().st_mtime, UTC)
+        # 用文件完成时刻反推起止时间，避免恢复探测耗时引起时间漂移。
         seg_start = now - timedelta(seconds=duration)
         size = file_path.stat().st_size
 
@@ -688,8 +700,9 @@ class Recorder:
         from sqlmodel import select
 
         with get_session() as db:
-            rows = db.exec(select(RawSegment.file_path).where(RawSegment.session_id == self._session_id)).all()
-        self._paths = set(rows)
+            rows = db.exec(select(RawSegment).where(RawSegment.session_id == self._session_id)).all()
+        self._seq = max(self._seq, max((row.seq + 1 for row in rows), default=0))
+        self._paths = {row.file_path for row in rows}
         return self._paths
 
     # ------------------------------------------------------------------ #
@@ -725,7 +738,20 @@ class Recorder:
             await self._stop.wait()
             if proc.returncode is None:
                 logger.info("收到停止信号,正在终止 FFmpeg ...")
-                proc.terminate()
+                if proc.stdin is not None:
+                    try:
+                        proc.stdin.write(b"q\n")
+                        await proc.stdin.drain()
+                    except (BrokenPipeError, ConnectionResetError):
+                        logger.debug("FFmpeg 输入已关闭 session={}", self._session_id)
+                else:
+                    proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10.0)
+                except TimeoutError:
+                    if proc.returncode is None:
+                        proc.kill()
+                        await proc.wait()
         except asyncio.CancelledError:
             pass
 
@@ -761,7 +787,6 @@ class Recorder:
         *,
         status: str | None = None,
         stream_format: str | None = None,
-        quality: int | None = None,
         error_message: str | None = None,
         ended: bool = False,
         reconnected: bool = False,
@@ -770,7 +795,6 @@ class Recorder:
 
         :param status: 新状态。
         :param stream_format: 流协议。
-        :param quality: 清晰度码。
         :param error_message: 错误信息。
         :param ended: 是否标记结束时间。
         :param reconnected: 是否标记最近重连成功时间(V0.1.2 新增)。
@@ -785,8 +809,6 @@ class Recorder:
                 session.status = status
             if stream_format is not None:
                 session.stream_format = stream_format
-            if quality is not None:
-                session.quality = quality
             if error_message is not None:
                 session.error_message = error_message
             if ended:

@@ -39,11 +39,11 @@ def test_no_password_modifying_request_requires_same_origin(
     monkeypatch.setenv("BLC_WEB_PORT", "8000")
     headers = {"Host": "localhost:8000", "Origin": "http://localhost:8000"}
     with TestClient(main.app) as client:
-        accepted = client.patch("/api/settings", headers=headers, json={"web_port": 8080})
+        accepted = client.patch("/api/settings/port", headers=headers, json={"web_port": 8080})
         assert accepted.status_code == 200
 
         rejected = client.patch(
-            "/api/settings",
+            "/api/settings/port",
             headers={"Host": "localhost:8000", "Origin": "http://localhost:9000"},
             json={"web_port": 9000},
         )

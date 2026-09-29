@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import shutil
+import lzma
 import stat
 import zipfile
 from collections.abc import Generator
@@ -258,7 +258,19 @@ def safe_extract(
 
         # 流式解压 — 分块读写，避免大文件整读入内存
         with zf.open(info) as src, open(target, "wb") as dst:
-            shutil.copyfileobj(src, dst, length=chunk_size)
+            while True:
+                try:
+                    chunk = src.read(chunk_size)
+                except lzma.LZMAError as exc:
+                    raise RuntimeError(f"损坏的 ZIP 压缩数据: {info.filename}") from exc
+                except OSError as exc:
+                    if exc.errno is not None:
+                        raise
+                    # BZIP2 解码器用无 errno 的 OSError 表示坏压缩流。
+                    raise RuntimeError(f"损坏的 ZIP 压缩数据: {info.filename}") from exc
+                if not chunk:
+                    break
+                dst.write(chunk)
 
         extracted.append(str(target))
 

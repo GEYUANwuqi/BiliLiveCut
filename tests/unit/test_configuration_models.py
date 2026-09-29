@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -121,7 +122,7 @@ def test_policy_change_preserves_loaded_model_and_applies_idle_rule(temp_db: Non
     from app.analysis import model_pool as module
 
     clock = [10.0]
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
     pool = ModelPool()
     model = object()
     with pool.use("primary", "model", lambda: model):

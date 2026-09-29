@@ -20,7 +20,8 @@ from sqlmodel import select
 from app.analysis import llm as llm_mod
 from app.analysis.keywords import match_keywords
 from app.analysis.transcript_windows import extract_transcript_window
-from app.clipping.clipper import select_covering_segments
+from app.analysis.transcription.content import refined_transcript_text
+from app.clipping.core import select_covering_segments
 from app.core.config import settings
 from app.core.paths import ready_to_upload_dir
 from app.core.runtime_settings import configured_task
@@ -137,6 +138,7 @@ def gather_clip_text(candidate_id: int) -> tuple[str, str]:
         window = extract_transcript_window(
             transcript.final_text,
             transcript.words_json,
+            semantic_text=refined_transcript_text(transcript),
             start_s=max(0.0, (window_start - segment_start).total_seconds()),
             end_s=max(0.0, (window_end - segment_start).total_seconds()),
             duration_s=float(duration or 0.0),

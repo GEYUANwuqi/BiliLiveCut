@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.atomic_fs import replace_with_retry
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
 
 RUNTIME_SCHEMA_VERSION = 5
 
@@ -73,6 +74,8 @@ def read_current_json(app_root: Path) -> dict[str, Any] | None:
         "activated_at",
     }
     if not isinstance(data, dict) or set(data) != required or data["runtime_schema"] != RUNTIME_SCHEMA_VERSION:
+        return None
+    if data["release_version"] != RELEASE_VERSION or data["source_commit"] != SOURCE_COMMIT_FULL:
         return None
     for field_name in required - {"runtime_schema"}:
         if not isinstance(data[field_name], str) or not data[field_name]:

@@ -4,8 +4,8 @@
 Manifest 只描述 ZIP 内实际存在的文件，不包含未入包的文件。
 
 字段语义:
-- portable_release_version: Portable 发布版本 (如 0.1.18.4-alpha)
-- core_source_commit / core_source_commit_short: 固定业务源码基线 fc401a6
+- portable_release_version: Portable 发布版本 (如 0.1.18.5-alpha)
+- core_source_commit / core_source_commit_short: 固定业务源码基线 7aea419
 - core_api_level: 业务源码的 schema version
 - builder_commit: 构建工具 commit
 - format_version: Manifest 当前且唯一的格式版本
@@ -24,9 +24,9 @@ from typing import Any
 
 from blc_portable.project_license import PROJECT_LICENSE_ID, project_license_sha256
 
-SOURCE_COMMIT_SHORT = "fc401a6"
-SOURCE_COMMIT_FULL = "fc401a6b4feb7aafcd37da7253687c514dfda0ff"
-RELEASE_VERSION = "0.1.18.4-alpha"
+SOURCE_COMMIT_SHORT = "7aea419"
+SOURCE_COMMIT_FULL = "7aea4199f09c0492b2c6c36182f70eef4f0ba5f4"
+RELEASE_VERSION = "0.1.18.5-alpha"
 MANIFEST_FORMAT_VERSION = 7
 _MANIFEST_FIELDS = {
     "format_version",
@@ -130,8 +130,8 @@ def _get_model_set_version() -> int:
 
 
 def _get_core_api_level() -> int:
-    """Get runtime_schema (core API level) from version.json."""
-    return int(_load_version_json()["runtime_schema"])
+    """Get the business database schema, independent of the runtime manifest format."""
+    return int(_load_version_json()["core_schema"])
 
 
 def _get_python_abi() -> str:
@@ -322,6 +322,10 @@ def validate_manifest(
             "core_source_commit_short 不匹配: "
             f"{manifest.get('core_source_commit_short')} expected={SOURCE_COMMIT_SHORT}"
         )
+
+    expected_core_schema = _get_core_api_level()
+    if manifest["core_api_level"] != expected_core_schema:
+        errors.append(f"core_api_level 不匹配: manifest={manifest['core_api_level']} expected={expected_core_schema}")
 
     if manifest.get("project_license") != PROJECT_LICENSE_ID:
         errors.append(

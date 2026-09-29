@@ -20,6 +20,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
+
 # ── 镜像配置 ──────────────────────────────────────────────
 
 HF_MIRRORS = [
@@ -104,7 +106,11 @@ def _staging_complete(
         payload = json.loads(marker.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
-    return payload == {"content_fingerprint": fingerprint}
+    return payload == {
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
+        "content_fingerprint": fingerprint,
+    }
 
 
 def _release_smoke_provider_enabled() -> bool:
@@ -218,7 +224,9 @@ def _print_progress(current: int, total: int, name: str) -> None:
 # ── 在线下载主入口 ────────────────────────────────────────
 
 
-def download_all_engines(app_root: Path, *, config_dir: Path | None = None) -> dict[str, Any]:
+def download_all_engines(
+    app_root: Path, *, config_dir: Path | None = None, full_rehash: bool = False
+) -> dict[str, Any]:
     """按内容身份下载并逐引擎提交当前模型集合。
 
     :param app_root: 应用根目录。
@@ -243,7 +251,7 @@ def download_all_engines(app_root: Path, *, config_dir: Path | None = None) -> d
 
     catalog_engines = _load_catalog_engines(config_dir)
     desired = desired_engine_records(catalog_engines)
-    reusable, _ = reusable_engine_ids(app_root / "models")
+    reusable, _ = reusable_engine_ids(app_root / "models", full_rehash=full_rehash)
     if reusable == expected_ids:
         return {
             "source": "already_installed",
@@ -253,7 +261,7 @@ def download_all_engines(app_root: Path, *, config_dir: Path | None = None) -> d
             "model_set_fingerprint": model_set_fingerprint(desired),
         }
 
-    staging_root = app_root / ".model-staging"
+    staging_root = app_root / ".model-staging" / f"{RELEASE_VERSION}-{SOURCE_COMMIT_FULL}"
     staging_root.mkdir(parents=True, exist_ok=True)
     installed_now: list[str] = []
     resumed: list[str] = []
@@ -311,7 +319,15 @@ def download_all_engines(app_root: Path, *, config_dir: Path | None = None) -> d
             if missing:
                 raise RuntimeError(f"Engine {engine_id} download incomplete; missing required files: {missing}")
             marker.write_text(
-                json.dumps({"content_fingerprint": fingerprint}, ensure_ascii=False, sort_keys=True),
+                json.dumps(
+                    {
+                        "release_version": RELEASE_VERSION,
+                        "source_commit": SOURCE_COMMIT_FULL,
+                        "content_fingerprint": fingerprint,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 encoding="utf-8",
             )
 
@@ -346,16 +362,22 @@ def provision_models(
     user_engine_pack_path: str | None,
     offline: bool,
     fallback_online: bool,
+    repair: bool = False,
 ) -> dict[str, Any]:
     """Provision installed models, a local pack, or locked online sources.
 
     This function is the production helper boundary and is expected to run
     under ``<app_root>/.venv`` rather than the frozen launcher interpreter.
     """
-    from ..engine_pack.installer import check_installed_models, find_local_engine_packs, install_from_engine_pack
+    from ..engine_pack.installer import (
+        EnginePackValidationError,
+        check_installed_models,
+        find_local_engine_packs,
+        install_from_engine_pack,
+    )
 
     models_dir = app_root / "models"
-    ok, _ = check_installed_models(models_dir)
+    ok, _ = check_installed_models(models_dir, full_rehash=repair or bool(user_engine_pack_path))
     if ok:
         print("  4-engine models installed (content fingerprint match), skip model prep")
         return {"source": "already_installed", "method": "content_fingerprint", "network_requests": 0}
@@ -371,7 +393,7 @@ def provision_models(
                 expected_crc32 if pack_path.name == expected_filename else "",
                 expected_sha256 if pack_path.name == expected_filename else "",
             )
-        except RuntimeError as exc:
+        except EnginePackValidationError as exc:
             pack_errors.append(f"{pack_path}: {exc}")
             if user_engine_pack_path and not fallback_online:
                 raise
@@ -381,6 +403,8 @@ def provision_models(
     else:
         print("\n  no local Engine Pack found")
 
+    if user_engine_pack_path and not pack_paths and not fallback_online:
+        raise EnginePackValidationError(f"指定的 Engine Pack 不存在: {user_engine_pack_path}")
     if offline:
         detail = "\n".join(f"  - {item}" for item in pack_errors)
         raise RuntimeError(
@@ -390,7 +414,7 @@ def provision_models(
         )
 
     print("  downloading locked engine models online...")
-    return download_all_engines(app_root, config_dir=config_dir)
+    return download_all_engines(app_root, config_dir=config_dir, full_rehash=repair or bool(user_engine_pack_path))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -404,6 +428,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-pack")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--fallback-online", action="store_true")
+    parser.add_argument("--repair", action="store_true")
     return parser
 
 
@@ -420,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             user_engine_pack_path=args.engine_pack,
             offline=args.offline,
             fallback_online=args.fallback_online,
+            repair=args.repair,
         )
     except Exception as exc:  # noqa: BLE001 - CLI boundary must preserve third-party root failures
         print(f"BLC_PROVISION_ROOT_EXCEPTION={type(exc).__name__}: {exc}", file=sys.stderr)

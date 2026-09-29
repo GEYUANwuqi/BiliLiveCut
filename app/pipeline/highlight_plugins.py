@@ -12,6 +12,7 @@ from sqlmodel import select
 from app.analysis.audio import AudioFeatures
 from app.analysis.room_config import load_room_config
 from app.analysis.source_policy import session_danmaku_lag_s, session_has_danmaku
+from app.analysis.transcription.content import transcript_text
 from app.db.entities import Danmaku, DanmakuType, LiveRoom, RawSegment, RecordingSession, Transcript
 from app.db.session import get_session
 from app.plugins.highlight import (
@@ -163,7 +164,7 @@ def build_highlight_scoring_request(
             session_started_at=session_started_at,
             duration_s=float(duration),
             file_path=segment.file_path,
-            transcript_text=transcript.final_text if transcript is not None else None,
+            transcript_text=transcript_text(transcript) if transcript is not None else None,
             words=_parse_words(transcript.words_json) if transcript is not None else None,
             asr_avg_logprob=transcript.avg_logprob if transcript is not None else None,
             asr_review_risk=transcript.review_risk_score if transcript is not None else None,

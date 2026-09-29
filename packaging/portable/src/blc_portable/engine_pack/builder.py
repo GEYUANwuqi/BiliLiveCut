@@ -11,7 +11,7 @@
 
 输出:
     dist/engine-pack/
-    ├── BiliLiveCut-EnginePack-0.1.18.4-alpha.zip
+    ├── BiliLiveCut-EnginePack-0.1.18.5-alpha.zip
     ├── engine-pack-manifest.json
     ├── CRC32SUMS.txt
     ├── SHA256SUMS.txt
@@ -645,6 +645,12 @@ def copy_from_cache(staging: Path) -> None:
     if not cache_dir.exists():
         raise FileNotFoundError(f"模型缓存目录不存在: {cache_dir}\n请先运行: python download_engines.py")
 
+    from .downloader import load_state
+
+    state = load_state(cache_dir / "download_state.json")
+    if set(state["downloaded"]) != {engine.engine_id for engine in load_engines()}:
+        raise ValueError("模型缓存缺少当前发行版本的完整下载记录，请运行 download_engines.py 重新同步")
+
     print("  从缓存复制模型 ...")
     engine_targets = {
         "whisper": ("whisper", "models/whisper"),
@@ -665,12 +671,9 @@ def copy_from_cache(staging: Path) -> None:
         # 使用 copytree 复制 (robocopy 在 Windows 上可能更快但需要额外处理)
         fc = 0
         ts = 0
-        excluded_top_level_dirs = {"cam++", "campplus"} if cache_name == "paraformer" else set()
         for f in src.rglob("*"):
             if f.is_file():
                 rel = f.relative_to(src)
-                if rel.parts and rel.parts[0] in excluded_top_level_dirs:
-                    continue
                 dst_file = dst / rel
                 dst_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(f), str(dst_file))

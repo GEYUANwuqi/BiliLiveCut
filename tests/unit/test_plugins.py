@@ -8,6 +8,80 @@ import pytest
 from app.plugins.manager import PluginManager, PluginStateError, PluginValidationError
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_enable", [False, True])
+async def test_lazy_plugin_modules_unload_and_equal_length_update_is_visible(
+    temp_db: None, tmp_path: Path, fail_enable: bool
+) -> None:
+    import os
+    import sys
+
+    directory = _write_plugin(tmp_path)
+    package = directory / "v185_plugin_package"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    service = package / "service.py"
+    service.write_text("VALUE = 'old'\n", encoding="utf-8")
+    import py_compile
+
+    py_compile.compile(str(service), doraise=True)
+    original_mtime = service.stat().st_mtime
+    entry = """from app.plugins import BasePlugin
+import v185_plugin_package
+class Plugin(BasePlugin):
+    def on_enable(self, context):
+        from v185_plugin_package import service
+        (context.plugin_dir / 'value.txt').write_text(service.VALUE)
+FAILURE
+"""
+    (directory / "main.py").write_text(
+        entry.replace("FAILURE", "        raise RuntimeError('test')" if fail_enable else ""), encoding="utf-8"
+    )
+    manager = PluginManager(tmp_path)
+    await manager.start()
+    try:
+        if fail_enable:
+            with pytest.raises(PluginStateError):
+                await manager.set_enabled("demo", True)
+        else:
+            await manager.set_enabled("demo", True)
+            await manager.set_enabled("demo", False)
+        assert not any(name.startswith("v185_plugin_package") for name in sys.modules)
+        assert "app.plugins" in sys.modules
+        service.write_text("VALUE = 'new'\n", encoding="utf-8")
+        os.utime(service, (original_mtime, original_mtime))
+        (directory / "main.py").write_text(entry.replace("FAILURE", ""), encoding="utf-8")
+        await manager.set_enabled("demo", True)
+        assert (directory / "value.txt").read_text() == "new"
+    finally:
+        await manager.stop()
+
+
+def test_unloading_plugin_preserves_shared_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    import sys
+
+    roots = [tmp_path / "one", tmp_path / "two"]
+    for index, root in enumerate(roots):
+        package = root / "v185_shared_namespace"
+        package.mkdir(parents=True)
+        (package / f"child{index}.py").write_text(f"VALUE = {index}\n", encoding="utf-8")
+        monkeypatch.syspath_prepend(str(root))
+    first = importlib.import_module("v185_shared_namespace.child0")
+    second = importlib.import_module("v185_shared_namespace.child1")
+    parent = sys.modules["v185_shared_namespace"]
+    try:
+        PluginManager._unload_modules(roots[0])
+        assert "v185_shared_namespace.child0" not in sys.modules
+        assert not hasattr(parent, "child0")
+        assert sys.modules["v185_shared_namespace"] is parent and parent.child1 is second
+        assert first.VALUE == 0 and importlib.import_module("v185_shared_namespace.child1") is second
+    finally:
+        for name in tuple(sys.modules):
+            if name.startswith("v185_shared_namespace"):
+                sys.modules.pop(name, None)
+
+
 def _write_plugin(root: Path, plugin_id: str = "demo") -> Path:
     directory = root / plugin_id
     directory.mkdir(parents=True)

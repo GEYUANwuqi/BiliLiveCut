@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.web import service
+from app.web.services import clips as clips_service
 
 _MAX_QUERY_LIMIT = 500
 _MAX_QUERY_DAYS = 365
@@ -23,14 +23,14 @@ router = APIRouter()
 def get_clips(limit: int = 50) -> list[dict[str, Any]]:
     """返回成品切片列表。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.list_clips(limit=limit)
+    return clips_service.list_clips(limit=limit)
 
 
 @router.post("/clips/{clip_id}/publish")
 def publish_clip(clip_id: int) -> dict[str, Any]:
     """人工发布:置 ready 并导出待上传清单;上传模块开启时入队上传。"""
     try:
-        result = service.publish_clip(clip_id)
+        result = clips_service.publish_clip(clip_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "ready", **result}
@@ -146,5 +146,5 @@ def confirm_manual_upload(
 @router.post("/clips/{clip_id}/reject")
 def reject_clip(clip_id: int) -> dict[str, str]:
     """拒绝成品切片。"""
-    service.reject_clip(clip_id)
+    clips_service.reject_clip(clip_id)
     return {"status": "rejected"}

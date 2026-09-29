@@ -102,7 +102,7 @@ def cmd_clip(
 
     :param candidate_id: ``highlight_candidates`` 主键。
     """
-    from app.clipping.clipper import produce_clip as make_clip
+    from app.clipping.core import produce_clip as make_clip
 
     c = make_clip(candidate_id)
     console.print(f"[green]切片完成[/green] clip_id={c.id} 时长={c.duration_s:.1f}s -> {c.file_path}")

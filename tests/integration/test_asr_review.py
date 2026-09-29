@@ -5,11 +5,8 @@
 
 from __future__ import annotations
 
-from app.analysis.transcription import (
-    ASRSegmentResult,
-    _compute_review_risk_score,
-    _merge_review_text,
-)
+from app.analysis.transcription.backends import _compute_review_risk_score, _merge_review_text
+from app.analysis.transcription.models import ASRSegmentResult
 
 
 class TestReviewRiskScore:

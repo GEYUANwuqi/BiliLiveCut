@@ -33,6 +33,66 @@ ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ID = "live-source-example"
 
 
+@pytest.mark.parametrize("force", [False, True])
+async def test_stopping_before_first_csv_entry_preserves_real_tail(
+    temp_db: None,
+    tmp_path: Path,
+    media_service: MediaService,
+    monkeypatch: pytest.MonkeyPatch,
+    force: bool,
+) -> None:
+    from app.clipping.core import probe_media
+    from app.plugins.live_source import SourceRoom, StreamSpec
+
+    media_service.keep_live = True
+    monkeypatch.setattr(settings, "segment_duration_s", 60)
+    monkeypatch.setattr("app.pipeline.storage_lifecycle.should_stop_recording", lambda: False)
+    output = tmp_path / "recorded"
+    output.mkdir()
+    delivered: list[int] = []
+
+    async def receive(segment: RawSegment) -> None:
+        delivered.append(segment.id)
+
+    recorder = Recorder(
+        SourceRoom(platform="bilibili", source_id="1", canonical_url="https://live.bilibili.com/1"),
+        1,
+        on_segment=receive,
+    )
+    recorder._session_id = 1
+    stream = StreamSpec(
+        url=media_service.origin + "/media/token-0/index.m3u8",
+        transport="hls",
+        container="ts",
+        headers={"X-Example-Key": media_service.key},
+    )
+    running = asyncio.create_task(recorder._record_once(stream, output))
+    try:
+        async with asyncio.timeout(12):
+            while not any(path.stat().st_size > 0 for path in output.glob("*.ts")):
+                assert not running.done()
+                await asyncio.sleep(0.05)
+        assert not (output / "segments.csv").read_text().strip()
+        if force:
+            filename = next(output.glob("*.ts")).name
+            (output / "segments.csv").write_text(f"{filename},0,", encoding="utf-8")
+        recorder.force_stop() if force else recorder.stop()
+        await asyncio.wait_for(running, 15)
+        with get_session() as db:
+            segments = db.exec(select(RawSegment)).all()
+        assert len(segments) == len(delivered) >= 1
+        for segment in segments:
+            duration, width, height = probe_media(segment.file_path)
+            assert duration > 0 and width > 0 and height > 0
+            assert abs(segment.duration_s - duration) < 1
+            assert segment.duration_s < 60
+        await recorder._scan_orphan_segments(output / "segments.csv", output)
+        assert len(delivered) == len(segments)
+    finally:
+        recorder.force_stop()
+        await asyncio.wait_for(running, 15)
+
+
 class MediaService:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
@@ -254,7 +314,8 @@ async def test_loaded_plugin_real_ffmpeg_reconnect_and_durable_pipeline(
             segments = db.exec(select(RawSegment).order_by(RawSegment.seq)).all()
             tasks = db.exec(select(SegmentTask)).all()
             assert recording.status == "stopped" and recording.reconnect_count == 1
-            assert recording.stream_url is None and recording.ended_at is not None
+            assert "stream_url" not in recording.model_dump()
+            assert recording.ended_at is not None
             assert len(segments) >= 2 and len(tasks) == len(segments)
             assert len({item.file_path for item in segments}) == len(segments)
             assert all(Path(item.file_path).stat().st_size > 1024 and item.duration_s > 1 for item in segments)

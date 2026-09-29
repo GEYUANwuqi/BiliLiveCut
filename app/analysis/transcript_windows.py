@@ -32,6 +32,7 @@ class TimedTranscriptPart:
     end_ts: datetime
     text: str
     words_json: str | None = None
+    semantic_text: str | None = None
 
 
 def extract_transcript_window(
@@ -41,6 +42,7 @@ def extract_transcript_window(
     start_s: float,
     end_s: float,
     duration_s: float,
+    semantic_text: str | None = None,
 ) -> TranscriptWindow:
     """只返回与指定片内时间窗重叠的转写内容。
 
@@ -63,6 +65,14 @@ def extract_transcript_window(
 
     words = _decode_words(words_json)
     selected = [word for word in words if _word_overlaps(word, start, end)]
+    if semantic_text is not None and (not words or (start <= 0 and end >= duration)):
+        # 整理正文没有词对齐信息：有词时间戳的局部窗口保留精确原文，
+        # 整段或原本无词时间戳时使用整理正文。原始词仍用于语速与字幕。
+        return TranscriptWindow(
+            text=_proportional_text_slice(semantic_text, start_s=start, end_s=end, duration_s=duration),
+            words=selected,
+            precise=bool(words) and start <= 0 and end >= duration,
+        )
     if words:
         return TranscriptWindow(
             text=_join_word_tokens(selected),
@@ -114,6 +124,7 @@ def extract_session_transcript_window(
             start_s=local_start,
             end_s=local_end,
             duration_s=duration,
+            semantic_text=part.semantic_text,
         )
         if window.text:
             texts.append(window.text)

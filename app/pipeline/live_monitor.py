@@ -153,7 +153,7 @@ class LiveMonitor:
 
     async def _check_room(self, room: LiveRoom) -> None:
         """只把明确下播作为停止证据；未知和查询失败均保留当前录制。"""
-        from app.web.service import recorder_manager
+        from app.web.services.rooms import recorder_manager
 
         db_id = room.id
         if db_id is None:
@@ -209,7 +209,7 @@ class LiveMonitor:
 
     def _schedule_delayed_stop(self, db_id: int, identity: SourceRoom) -> None:
         """登记唯一的延迟停止任务，并在完成时清理句柄。"""
-        from app.web.service import recorder_manager
+        from app.web.services.rooms import recorder_manager
 
         token = recorder_manager.recording_token(db_id)
         if token is None:
@@ -246,7 +246,7 @@ class LiveMonitor:
             logger.info("房间 {} 停录前未确认下播,继续当前会话。", db_id)
             return
 
-        from app.web.service import recorder_manager
+        from app.web.services.rooms import recorder_manager
 
         if await recorder_manager.stop_if_current(db_id, token):
             self._offline_counts.pop(db_id, None)
@@ -259,7 +259,7 @@ class LiveMonitor:
         :param auto_analyze: 是否启用自动分析。
         :param auto_render: 是否启用自动渲染。
         """
-        from app.web.service import recorder_manager
+        from app.web.services.rooms import recorder_manager
 
         self._starting.add(db_id)
         try:

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.web import service
+from app.web.services import logs as logs_service
 
 _MAX_QUERY_LIMIT = 500
 _MAX_QUERY_DAYS = 365
@@ -23,4 +23,4 @@ router = APIRouter()
 def get_logs(limit: int = 100, level: str | None = None) -> list[dict[str, Any]]:
     """返回系统日志(WARNING 及以上)。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.list_logs(limit=limit, level=level)
+    return logs_service.list_logs(limit=limit, level=level)

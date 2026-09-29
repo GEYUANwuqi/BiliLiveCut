@@ -39,26 +39,22 @@ def candidate_time_bounds(
     available_start: datetime,
     available_end: datetime,
     peak_offset_s: float,
-    pre_roll_s: float,
-    post_roll_s: float,
     suggested_start_offset_s: float | None,
     suggested_end_offset_s: float | None,
     silences: list[tuple[float, float]],
-    minimum_pre_roll_s: float | None = None,
-    minimum_post_roll_s: float | None = None,
+    minimum_pre_roll_s: float,
+    minimum_post_roll_s: float,
 ) -> tuple[datetime, datetime, datetime]:
     """计算可直接渲染的动态候选边界。
 
-    ``pre_roll_s``/``post_roll_s`` 描述分析文本窗口；可选的
-    ``minimum_*`` 则描述成片必须保留的最小上下文。未传最小值时保持旧行为，
-    传入后允许 LLM 在完整分析窗口内给出更短或更长的自然事件边界，从而不再
+    必填的 ``minimum_*`` 描述成片必须保留的最小上下文。允许 LLM 在完整分析窗口内给出更短或更长的自然事件边界，从而不再
     把每个候选固定为同一时长。静音吸附只向外扩展，最终边界限制在连续录像
     范围内。
     """
     normalized_available_start = _coerce_datetime_like(available_start, segment_start)
     normalized_available_end = _coerce_datetime_like(available_end, segment_start)
-    required_pre_roll = pre_roll_s if minimum_pre_roll_s is None else max(0.0, minimum_pre_roll_s)
-    required_post_roll = post_roll_s if minimum_post_roll_s is None else max(0.0, minimum_post_roll_s)
+    required_pre_roll = max(0.0, minimum_pre_roll_s)
+    required_post_roll = max(0.0, minimum_post_roll_s)
     required_start_offset = peak_offset_s - required_pre_roll
     requested_start_offset = suggested_start_offset_s if suggested_start_offset_s is not None else required_start_offset
     requested_start_offset = min(requested_start_offset, required_start_offset)

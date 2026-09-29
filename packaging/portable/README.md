@@ -1,6 +1,6 @@
 # BiliLiveCut · 即插即用版（`packaging/portable/`）
 
-**版本：V0.1.18.4 Alpha** (`0.1.18.4-alpha`)
+**版本：V0.1.18.5 Alpha** (`0.1.18.5-alpha`)
 
 > **普通用户请先阅读：[Portable 小白使用说明](USER_GUIDE_ZH.md)**。该说明按 Windows 用户从下载、校验、解压、首次启动到第一次录制的顺序编写。
 
@@ -8,24 +8,24 @@
 
 BiliLiveCut 是一个**全自动 AI 直播切片系统**：监听 Bilibili 直播间 → 实时录制 + 转写 → 生成场次高光时间线 → 审核动态切片 → 生成剪辑成品 + 文案。
 
-这个 `packaging/portable/` 目录是**即插即用分发版**。Launcher 内嵌了当前发布基线的完整业务源码 (Commit `fc401a6`)，**双击即用，首次启动不需要从 GitHub 下载业务源码**。Full 版自带 Python 3.12、离线依赖和 FFmpeg；Lite 版需要目标电脑已有 Python 3.11/3.12，并自行满足 FFmpeg 等运行组件。
+这个 `packaging/portable/` 目录是**即插即用分发版**。Launcher 内嵌了当前发布基线的完整业务源码 (Commit `7aea419`)，**双击即用，首次启动不需要从 GitHub 下载业务源码**。Full 版自带 Python 3.12、离线依赖和 FFmpeg；Lite 版需要目标电脑已有 Python 3.11/3.12，并自行满足 FFmpeg 等运行组件。
 
 Payload 从 **EXE 内置资源**释放，版本固定并校验 SHA-256，安装阶段不依赖 GitHub 业务源码。
 
 ---
 
-## V0.1.18.4 Alpha：Event-first 热点与原生加速
+## V0.1.18.5 Alpha：Event-first 热点与原生加速
 
 - 弹幕、音频、SenseVoice、ASR 与趋势先形成带稳定 ID 的热点事件；ASR 缺失或质量不足不再阻断自动切片，缺失证据会重归一化而不是记零分。
 - 热点可以跨连续原始分段更新和合并，一个分段也可以保留多个无关事件；真实录制缺口是不可跨越的媒体边界。
 - EventEnricher 只依据带 ID 的证据束生成标题、摘要和语义置信度；ClipScorer 再按完整事件判断是否生成候选，并从事件前后文确定动态边界。
 - GMT+8 场次时间线展示所有活动热点。低于成片阈值的事件仍显示来源评分与代表弹幕，但明确标记为“仅时间线，不生成视频”；有候选的事件才进入既有精审、渲染和发布流程。
 - 首次在线模型准备由 `.venv` Python 子进程执行并一次性预检下载依赖；程序管理的损坏 venv 会自动重建，真实不支持的 Python 会明确拒绝，准备中断可续跑。
-- Engine Pack 与应用版本解耦。四个模型按不可变来源和逐引擎内容指纹独立复用/更新；版本号、ZIP 名称、构建时间和应用提交只作溯源，不决定模型内容是否相同。
-- Engine Pack 内容清单只接受 schema 5，安装后的模型目录只接受 schema 6；其他 schema 不会被迁移或改写。当前清单中的相同内容可来自 Engine Pack、在线下载或另一台机器复制的有效目录。
+- Engine Pack 必须匹配当前发行版本与源码身份；在本版本内，四个模型按不可变来源和逐引擎内容指纹分别校验，完整引擎可复用，损坏引擎单独修复。
+- Engine Pack 内容清单只接受 schema 5，安装后的模型目录只接受 schema 7；其他 schema 不会被迁移或改写。只接受当前发行版本及源码身份生成的清单；本版本内可复用校验通过的完整引擎，旧版本安装状态不复用。
 - 候选聚类和弹幕文本特征使用 Rust/rayon；音频峰值、静音区间和滚动稳健增幅使用 Cython。Payload 强制携带当前 Python ABI 的 C、Cython、Rust 三个 `app.accelerators` 原生模块，不提供旧模块路径。
 - 设置页可保存下次启动 Web 端口；当前服务保持原端口，重启后 Launcher 从根目录 `config/launcher.json` 读取并仍只监听 `127.0.0.1`。
-- 数据库只接受当前版本创建的 Schema v5；历史数据库会被明确拒绝，不执行备份、迁移或字段补写。
+- 数据库只接受当前版本创建的 Schema v6；历史数据库会被明确拒绝，不执行备份、迁移或字段补写。
 
 ## V0.1.17 系列：场次工作台、历史记录与动态切片
 
@@ -35,7 +35,7 @@ Payload 从 **EXE 内置资源**释放，版本固定并校验 SHA-256，安装�
 - V0.1.17.2～V0.1.17.4 统一保护所有自动刷新页面的草稿、选择、展开状态和滚动位置；实时转写可按完整历史场次筛选、显示源 TS 并无损导出无黑首帧 MP4，每次录制前重新查询标题和主播名。
 - 整场结束后会把同场全部最终 ASR 作为一个完整上下文交给 LLM 分析，不直接拼接分段或节点摘要；人工纠错和重分析会使旧总结失效。
 
-逐项版本记录见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)。当前 V0.1.18.4 不迁移 0.1.17.x 的数据库、Runtime、Payload 或已安装清单；请解压到全新目录并使用当前版本创建的新数据库。原始录像、成片和人工导出资料可作为普通文件独立保留。
+逐项版本记录见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)。当前 V0.1.18.5 不迁移 0.1.17.x 的数据库、Runtime、Payload 或已安装清单；请解压到全新目录并使用当前版本创建的新数据库。原始录像、成片和人工导出资料可作为普通文件独立保留。
 
 ## V0.1.16.5 Alpha：严重正确性修复
 
@@ -44,7 +44,7 @@ Payload 从 **EXE 内置资源**释放，版本固定并校验 SHA-256，安装�
 - 拒绝候选会原子同步审核事件、仍可取消的任务和全部未发布关联成片；拒绝记录不会继续以 `reviewing` 出现在成品队列，已经发布的外部结果不会被事后改写。
 - 主播下播或持续断流时，连续重试默认最多 20 次或 300 秒，任一先到即自动收尾；成功产出新片段后重试预算归零。
 - 转写整理与高光复核默认各允许最多 `65536` 个输出 token。长转写的局部解码复读会触发 Paraformer、Whisper 回退，LLM 只保守清理残余的 ASR/VAD 边界重复。
-- Alpha 当前版不迁移其他版本的配置、Runtime、Payload、数据库或 Engine Pack 已安装清单。所有结构只接受当前精确 schema；Engine Pack 中模型内容仍按逐引擎不可变身份和内容指纹验证，版本号与文件名只用于溯源。
+- Alpha 当前版不迁移其他版本的配置、Runtime、Payload、数据库或 Engine Pack 已安装清单。所有结构只接受当前精确 schema；Engine Pack 同时校验发行版本、源码身份及逐引擎内容指纹，拒绝旧版本包与安装状态。
 
 ---
 
@@ -193,7 +193,7 @@ Lite 和 Full 均不携带 ASR 模型。四个引擎模型统一由独立的 **E
 
 ### 使用方式
 
-1. 下载 BiliLiveCut-EnginePack-0.1.18.4-alpha.zip（模型内容按当前清单中的不可变身份校验）
+1. 下载 BiliLiveCut-EnginePack-0.1.18.5-alpha.zip（模型内容按当前清单中的不可变身份校验）
 2. 放在 Launcher EXE **同级目录** (或 packages/ 子目录)
 3. 双击启动 Launcher → 自动 **CRC32 校验** → 校验通过即离线安装 (网络请求 0)
 4. 无可用本地包或包校验失败 → 扫描既有 `models/`，只在线准备缺失或身份变化的引擎
@@ -207,7 +207,7 @@ Lite 和 Full 均不携带 ASR 模型。四个引擎模型统一由独立的 **E
 | 本地包缺失 | 扫描既有模型，逐引擎复用或在线准备 |
 | 内部 Hash 失败 | 拒绝不可信 ZIP，不破坏已经提交的有效模型 |
 
-四个引擎独立校验、独立 staging、独立提交。Engine Pack、上个版本遗留目录、在线下载和人工复制的有效模型最终进入同一内容寻址资产体系；单个引擎失败不会回滚其他成功模型。
+四个引擎独立校验、独立 staging、独立提交。只接受当前发行版本及源码身份的 Engine Pack、在线准备结果和安装记录；旧版本目录及缺少当前清单的人工复制模型不会直接复用。单个引擎失败不会回滚本版本中其他已成功安装的模型。
 
 ### 模型安装目录
 
@@ -236,7 +236,7 @@ python build_engine_pack.py --from-cache  # 从已验证缓存构建
 
 输出:
 
-- dist/engine-pack/BiliLiveCut-EnginePack-0.1.18.4-alpha.zip
+- dist/engine-pack/BiliLiveCut-EnginePack-0.1.18.5-alpha.zip
 - dist/engine-pack/engine-pack-manifest.json
 - dist/engine-pack/CRC32SUMS.txt
 - dist/engine-pack/SHA256SUMS.txt
@@ -274,7 +274,7 @@ resources/engine_pack_info.json (本地 Engine Pack 构建后可供 Lite/Full EX
 | ⑥ | 生成 `.env` 配置 | — | 含合理默认值 |
 
 > **断点续跑**：模型下载 staging 以引擎内容指纹持久化；每个引擎完成后立即独立原子提交。后续引擎失败或进程中断不会回滚已经成功的引擎，再次双击只续传未完成部分。
-> **源码固定**：本次发布源码来源固定为 Commit `fc401a6`，不随 GitHub 上游变动。
+> **源码固定**：本次发布源码来源固定为 Commit `7aea419`，不随 GitHub 上游变动。
 
 4. 部署完成后按 Launcher 输出的地址打开 **Web 管理控制台**（首次默认 `http://127.0.0.1:8000`；未自动弹出时请手动访问）
 
@@ -309,7 +309,7 @@ python build_exe.py --without-engine-pack
 python build_full_bundle.py
 ```
 
-若还需独立模型包，执行 `python build_engine_pack.py --from-cache`（已有完整缓存）或 `python build_engine_pack.py`（联网下载）。构建器仍生成当前发行版审计元数据，但 Launcher 的模型兼容性只取决于逐引擎内容指纹。
+若还需独立模型包，执行 `python build_engine_pack.py --from-cache`（已有完整缓存）或 `python build_engine_pack.py`（联网下载）。构建缓存必须有当前发行版与锁定模型定义的下载记录；缺失时先运行 `python download_engines.py`。Launcher 同时校验发行身份和逐引擎内容指纹，拒绝旧版本包及安装状态。
 
 ---
 
@@ -322,7 +322,7 @@ packaging/portable/                     # ★ 即插即用分发版根目录 (�
 ├── launcher.py                      # launcher.exe 的 Python 源码（可选，便于审查）
 ├── build_exe.py                     # Lite 版构建 (PyInstaller one-file)
 ├── build_full_bundle.py             # Full 完整包构建脚本
-├── build_payload.py                 # Payload 构建器 (fc401a6 → source_payload.zip)
+├── build_payload.py                 # Payload 构建器 (7aea419 → source_payload.zip)
 ├── portable_launcher.spec           # PyInstaller 规格文件
 ├── pip.ini                          # pip 镜像源配置（阿里云 + 清华备用）
 ├── .env.example                     # 配置模板（launcher.exe 自动生成 .env）
@@ -337,7 +337,7 @@ packaging/portable/                     # ★ 即插即用分发版根目录 (�
 └── README.md                        # 本文件
 ```
 
-> **源码去哪了？** `app/` `config/` `pyproject.toml` 等业务文件**不在分发目录中**，而是内嵌在 `launcher.exe` 内部作为 **source_payload.zip**（从当前发布基线 Commit `fc401a6` 提取，SHA-256 可校验）。`launcher.exe` 首次运行时自动将 Payload 解压到 `runtime/releases/` 目录。PnP 目录始终保持最小体积，源码不受工作区未提交内容影响。
+> **源码去哪了？** `app/` `config/` `pyproject.toml` 等业务文件**不在分发目录中**，而是内嵌在 `launcher.exe` 内部作为 **source_payload.zip**（从当前发布基线 Commit `7aea419` 提取，SHA-256 可校验）。`launcher.exe` 首次运行时自动将 Payload 解压到 `runtime/releases/` 目录。PnP 目录始终保持最小体积，源码不受工作区未提交内容影响。
 
 ### 运行时动态生成（首次启动后）
 
@@ -345,7 +345,7 @@ packaging/portable/                     # ★ 即插即用分发版根目录 (�
 ├── runtime/                  # ★ Runtime 版本管理
 │   ├── current.json          #   当前激活的 Release 信息
 │   └── releases/
-│       └── 0.1.18.4-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
+│       └── 0.1.18.5-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
 │
 ├── .venv/                    # Python 虚拟环境（launcher.exe 自动创建）
 ├── models/                   # 四引擎 ASR 模型 (由 Engine Pack 或在线下载安装)
@@ -458,8 +458,6 @@ ASR_FALLBACK_DEVICE=cpu                 # 兜底引擎设备
 ASR_SENSEVOICE=true                     # 情感/笑声/音乐/事件检测（需 funasr + modelscope）
 ASR_FUNASR_REVIEW=true                  # Paraformer 主路径下启用低置信片段 FunASR 复核
 ASR_FALLBACK_WHISPER=true               # 主引擎失败时自动回退 Whisper
-ASR_CONFIDENCE_THRESHOLD=-0.6           # 低于此置信度的片段触发复核
-ASR_MODEL_REVISION=v2.0.4               # 模型版本锁定
 WHISPER_MODEL=small                      # Whisper 兜底模型
 WHISPER_DEVICE=cpu                       # Whisper 设备
 WHISPER_COMPUTE_TYPE=int8                # CPU 推荐 int8
@@ -527,7 +525,6 @@ CLIP_PRESET=veryfast             # 编码速度：ultrafast / veryfast / medium 
 ### 上传
 
 ```ini
-UPLOADER=manual                  # manual=仅产出文件不投稿（零风险，推荐）
 UPLOAD_MAX_RETRIES=3             # 上传失败重试次数
 UPLOAD_MAX_PER_HOUR=5            # 每小时投稿上限（频控）
 TITLE_MAX_LEN=80                 # 标题长度上限
@@ -588,7 +585,7 @@ BILIUP_UPLOAD_CMD=                          # 自定义上传命令模板
 
 ## 回主工程
 
-此 `packaging/portable/` 目录是**发布给最终用户的即插即用版本**，源码固定于 `v0.1.18.4-Alpha` 的发布基线 Commit。
+此 `packaging/portable/` 目录是**发布给最终用户的即插即用版本**，源码固定于 `v0.1.18.5-Alpha` 的发布基线 Commit。
 
 - **主仓库**: `D:\Vibe\BiliLiveCut\README.md`
 - **完整变更日志**: `D:\Vibe\BiliLiveCut\CHANGELOG.md`

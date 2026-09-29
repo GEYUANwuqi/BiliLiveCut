@@ -17,6 +17,7 @@ from app.recording import metadata
 from app.recording.metadata import SessionMetadata, read_metadata
 from app.sources.bilibili import source as bili_source
 from app.sources.bilibili.client import BilibiliLiveClient
+from tests.source_fixtures import bind_bilibili_room
 
 
 @pytest.fixture
@@ -40,7 +41,10 @@ def platform(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> dict[str, object
 
     monkeypatch.setattr(bili_source, "BilibiliLiveClient", TransportClient)
     with get_session() as db:
-        db.add(LiveRoom(id=1, input_url="202", room_id=202, title="缓存旧标题", authorized=True, schedule_enabled=True))
+        room = LiveRoom(id=1, input_url="202", room_id=202, title="缓存旧标题", authorized=True, schedule_enabled=True)
+        db.add(room)
+        db.flush()
+        bind_bilibili_room(db, room)
     return state
 
 
@@ -178,7 +182,8 @@ async def test_daily_schedule_has_one_successor_after_each_outcome(
 ) -> None:
     from collections import deque
 
-    from app.web import main, service
+    from app.web import main
+    from app.web.services import rooms
     from app.web.services.schedules import complete_schedule_occurrence
 
     monkeypatch.setattr("app.web.services.notifications._NOTIFICATIONS", deque(maxlen=200))
@@ -193,8 +198,8 @@ async def test_daily_schedule_has_one_successor_after_each_outcome(
         if fail:
             raise ValueError("未授权")
 
-    monkeypatch.setattr(service.recorder_manager, "is_running", lambda _id: running)
-    monkeypatch.setattr(service.recorder_manager, "start", start)
+    monkeypatch.setattr(rooms.recorder_manager, "is_running", lambda _id: running)
+    monkeypatch.setattr(rooms.recorder_manager, "start", start)
     await main._run_due_schedules()
     await main._run_due_schedules()
     complete_schedule_occurrence(1)

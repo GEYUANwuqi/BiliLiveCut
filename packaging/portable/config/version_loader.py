@@ -24,6 +24,7 @@ _VERSION_FIELDS = {
     "source_commit_full",
     "engine_pack_version",
     "runtime_schema",
+    "core_schema",
     "engine_pack_schema",
     "payload_schema",
     "model_lock_schema",
@@ -35,6 +36,7 @@ _VERSION_FIELDS = {
 _NAMING_FIELDS = {"lite_exe", "full_zip", "engine_pack_zip", "payload_zip"}
 _CURRENT_SCHEMAS = {
     "runtime_schema": 5,
+    "core_schema": 6,
     "engine_pack_schema": 5,
     "payload_schema": 7,
     "model_lock_schema": 5,

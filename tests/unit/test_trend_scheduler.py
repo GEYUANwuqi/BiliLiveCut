@@ -115,21 +115,23 @@ def test_update_schedule_settings_validation(temp_db: None) -> None:
 
     :param temp_db: 隔离数据库夹具。
     """
-    from app.web import service
+    from app.core.configuration import ConfigurationChange, save_configuration
 
-    service.update_settings(
-        {
-            "trend_schedule_enabled": True,
-            "trend_schedule_start": "01:30",
-            "trend_schedule_end": "02:45",
-            "trend_schedule_interval_min": 15,
-        }
+    save_configuration(
+        ConfigurationChange(
+            values={
+                "trend_schedule_enabled": True,
+                "trend_schedule_start": "01:30",
+                "trend_schedule_end": "02:45",
+                "trend_schedule_interval_min": 15,
+            }
+        )
     )
     assert settings_store.get_bool("trend_schedule_enabled") is True
     assert settings_store.get_setting("trend_schedule_start") == "01:30"
     assert settings_store.get_setting("trend_schedule_interval_min") == "15"
 
     with pytest.raises(ValueError):
-        service.update_settings({"trend_schedule_start": "99:99"})
+        save_configuration(ConfigurationChange(values={"trend_schedule_start": "99:99"}))
     with pytest.raises(ValueError):
-        service.update_settings({"trend_schedule_interval_min": 0})
+        save_configuration(ConfigurationChange(values={"trend_schedule_interval_min": 0}))

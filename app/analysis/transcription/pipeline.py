@@ -139,7 +139,7 @@ class ASRPipeline:
         """对标准化音频执行多引擎识别与质量回退。"""
         primary_name = settings.asr_primary.strip().lower().replace("-", "_")
 
-        if primary_name in {"funasr", "funasr_nano", "nano"}:
+        if primary_name == "funasr_nano":
             try:
                 result = self._get_primary().transcribe_funasr(audio_path, initial_prompt)
             except Exception as exc:
@@ -465,7 +465,6 @@ def _cached_pipeline(fingerprint: tuple[tuple[str, object], ...]) -> ASRPipeline
     return ASRPipeline()
 
 
-get_default_pipeline.cache_clear = _cached_pipeline.cache_clear
 _task_pipeline_local = threading.local()
 
 
@@ -547,7 +546,9 @@ def transcribe_segment(
         auxiliary_payload["repetition_repair"] = result.metadata["repetition_repair"]
     if refinement is not None:
         auxiliary_payload["transcript_refinement"] = {
+            "version": 1,
             "applied": True,
+            "clean_text": refinement.clean_text,
             "summary": refinement.summary,
         }
     auxiliary_json = json.dumps(auxiliary_payload, ensure_ascii=False) if auxiliary_payload else None

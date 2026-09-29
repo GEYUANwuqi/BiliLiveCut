@@ -6,13 +6,12 @@
 
 from __future__ import annotations
 
-from app.analysis.transcription import (
-    ASRSegmentResult,
-    ASRTranscriptResult,
+from app.analysis.transcription.backends import (
     _levenshtein_distance,
     _normalize_confidence_sentence,
     _normalize_whisper_logprob,
 )
+from app.analysis.transcription.models import ASRSegmentResult, ASRTranscriptResult
 
 
 class TestASRSegmentResult:

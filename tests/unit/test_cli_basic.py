@@ -11,6 +11,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from tests.source_fixtures import bind_bilibili_room
+
 
 def test_all_commands_count_and_structure() -> None:
     """ALL_COMMANDS list has expected entries; each entry has (name, func, help)."""
@@ -39,7 +41,7 @@ def test_cli_module_entrypoint_dispatches_commands() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "BiliLiveCut 0.1.18.4-alpha" in result.stdout
+    assert "BiliLiveCut 0.1.18.5-alpha" in result.stdout
 
 
 def test_cli_help_preserves_dependency_hints_and_current_doctor_text() -> None:
@@ -91,6 +93,7 @@ def test_record_pipeline_default_persists_scheduler_switches(
         room = LiveRoom(input_url="https://live.bilibili.com/1", room_id=1, authorized=True)
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         db_id = room.id
 
     callback_args: dict[str, object] = {}

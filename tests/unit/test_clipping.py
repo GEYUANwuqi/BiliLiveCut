@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.clipping.clipper import (
+from app.clipping.core import (
     ClipOptions,
     _build_audio_filter,
     _build_video_filter,
@@ -387,7 +387,7 @@ def test_produce_clip_end_to_end(
     import json
     from datetime import UTC, datetime, timedelta
 
-    from app.clipping.clipper import produce_clip
+    from app.clipping.core import produce_clip
     from app.core.paths import ready_to_upload_dir
     from app.db.entities import (
         FinalClip,

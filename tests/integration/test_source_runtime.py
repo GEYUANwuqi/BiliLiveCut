@@ -143,7 +143,7 @@ async def test_reconnect_refreshes_credentials_and_reuses_durable_idempotent_pip
     assert received == ["https://cdn.invalid/live?token=secret-1", "https://cdn.invalid/live?token=secret-2"]
     with get_session() as db:
         session = db.get(RecordingSession, recorder.session_id)
-        assert session.status == "stopped" and session.ended_at and session.stream_url is None
+        assert session.status == "stopped" and session.ended_at and "stream_url" not in session.model_dump()
         assert session.reconnect_count == 1
         assert len(db.exec(select(RawSegment)).all()) == len(db.exec(select(SegmentTask)).all()) == 2
         assert not db.get(LiveRoom, room.id).auto_approve and not db.get(LiveRoom, room.id).auto_upload
@@ -194,6 +194,35 @@ async def test_disable_during_metadata_cancels_start_without_session(runtime: Ru
         assert not db.exec(select(RecordingSession)).all()
 
 
+@pytest.mark.parametrize("disable_recording", [True, False])
+async def test_automatic_start_rechecks_switches_after_metadata(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, disable_recording: bool
+) -> None:
+    from app.web.services.rooms import RecorderManager, update_room
+
+    room = await register_room("123", True, "external")
+    update_room(room.id, {"auto_record": True, "auto_analyze": True, "auto_render": True})
+    runtime.requested.clear()
+    runtime.info_gate = asyncio.Event()
+    manager = RecorderManager()
+    callbacks: list[object] = []
+
+    async def record(self: Recorder) -> None:
+        callbacks.append(self.on_segment)
+
+    monkeypatch.setattr(Recorder, "run", record)
+    starting = asyncio.create_task(manager.start(room.id, pipeline=True, produce=True, automatic=True))
+    await asyncio.wait_for(runtime.requested.wait(), 2)
+    update_room(room.id, {"auto_record": not disable_recording, "auto_analyze": False, "auto_render": False})
+    runtime.info_gate.set()
+    await starting
+    await asyncio.sleep(0)
+    assert callbacks == ([] if disable_recording else [None])
+    with get_session() as db:
+        saved = db.get(LiveRoom, room.id)
+        assert not saved.auto_analyze and not saved.auto_render
+
+
 async def test_auth_failure_ends_without_exhausting_retry_budget(runtime: RuntimeSource) -> None:
     room = await register_room("123", True, "external")
     runtime.failure = SourceAuthenticationError("credential-secret")
@@ -216,8 +245,8 @@ async def test_permanent_stream_failure_blocks_monitor_until_explicit_resume(
 ) -> None:
     from app.analysis.room_config import load_room_config
     from app.pipeline.live_monitor import LiveMonitor
-    from app.web import service
     from app.web.services import rooms
+    from app.web.services import rooms as rooms_service
 
     room = await register_room("123", True, "external")
     with get_session() as db:
@@ -225,7 +254,7 @@ async def test_permanent_stream_failure_blocks_monitor_until_explicit_resume(
         saved.auto_record = True
         db.add(saved)
     manager = rooms.RecorderManager()
-    monkeypatch.setattr(service, "recorder_manager", manager)
+    monkeypatch.setattr(rooms_service, "recorder_manager", manager)
     started = asyncio.Event()
 
     async def ended(session_id: int) -> None:
@@ -259,7 +288,7 @@ async def test_permanent_stream_failure_blocks_monitor_until_explicit_resume(
 
         # 重建运行管理器后仍从数据库读取限制，修复凭据本身不隐式开启录制。
         manager = rooms.RecorderManager()
-        monkeypatch.setattr(service, "recorder_manager", manager)
+        monkeypatch.setattr(rooms_service, "recorder_manager", manager)
         runtime.stream_failure = None
         await monitor._check_all()
         assert runtime.stream_calls == 1 and not manager.is_running(room.id)
@@ -305,7 +334,7 @@ async def test_monitor_keeps_unknown_and_failures_and_polls_healthy_platform_aga
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.pipeline.live_monitor import LiveMonitor
-    from app.web import service
+    from app.web.services import rooms as rooms_service
     from app.web.services.rooms import RecorderManager
 
     other = RuntimeSource("healthy")
@@ -316,7 +345,7 @@ async def test_monitor_keeps_unknown_and_failures_and_polls_healthy_platform_aga
             room.auto_record = True
             db.add(room)
     manager = RecorderManager()
-    monkeypatch.setattr(service, "recorder_manager", manager)
+    monkeypatch.setattr(rooms_service, "recorder_manager", manager)
     monitor = LiveMonitor()
     monitor._stop = asyncio.Event()
     runtime.status = LiveStatus.UNKNOWN
@@ -604,12 +633,11 @@ async def test_automatic_entries_keep_external_identity_and_independent_switches
     trigger: str,
 ) -> None:
     from app.db.entities import RecordingSchedule
-    from app.web import main, service
+    from app.web import main
     from app.web.services import rooms
 
     room = await register_room("123", True, "external")
     manager = rooms.RecorderManager()
-    monkeypatch.setattr(service, "recorder_manager", manager)
     monkeypatch.setattr(rooms, "recorder_manager", manager)
     monkeypatch.setattr(rooms.settings_store, "recording_pipeline_enabled", lambda: True)
     started = asyncio.Event()
