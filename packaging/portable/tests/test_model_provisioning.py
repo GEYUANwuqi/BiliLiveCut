@@ -109,3 +109,41 @@ def test_fingerprint_ignores_display_and_release_metadata() -> None:
     renamed = replace(engine, display_name="A future app release label")
 
     assert engine_fingerprint(catalog_engine_identity(engine)) == engine_fingerprint(catalog_engine_identity(renamed))
+
+
+def test_repair_rehashes_and_downloads_only_damaged_engine(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from blc_portable.engine_pack.installer import install_engine_from_staging
+    from blc_portable.launcher import model_downloader
+    from model_catalog import load_engines
+
+    engines = load_engines()
+    for engine in engines:
+        staging = tmp_path / "seed" / engine.engine_id
+        _write_files(staging, list(engine.required_files))
+        install_engine_from_staging(tmp_path, engine.engine_id, staging)
+    whisper = next(engine for engine in engines if engine.engine_id == "whisper")
+    damaged = tmp_path / "models/whisper" / whisper.required_files[0]
+    damaged.write_bytes(b"damaged")  # 与 fixture 等长，快速大小检查无法辨识。
+    calls: list[str] = []
+
+    def download(repo: str, target: Path, revision: str | None, mirror: str | None) -> None:
+        calls.append(repo)
+        _write_files(target, list(whisper.required_files))
+
+    monkeypatch.setattr(model_downloader, "_download_hf_model", download)
+    monkeypatch.setattr(
+        model_downloader, "_download_ms_model", lambda *args: pytest.fail("intact engine must be reused")
+    )
+    result = model_downloader.provision_models(
+        tmp_path,
+        config_dir=_portable_dir / "config",
+        expected_filename="missing.zip",
+        expected_crc32="",
+        expected_sha256="",
+        user_engine_pack_path=None,
+        offline=False,
+        fallback_online=False,
+        repair=True,
+    )
+    assert result["installed_engines"] == ["whisper"] and len(calls) == 1
+    assert damaged.read_bytes() == b"fixture"

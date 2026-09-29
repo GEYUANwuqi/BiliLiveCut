@@ -50,6 +50,21 @@ def _prepare_with_real_child(app_root: Path) -> dict[str, Any]:
     return prepare_models(Path(sys.executable), app_root)
 
 
+def test_repair_flag_reaches_real_provisioner(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from blc_portable.launcher.main import prepare_models
+
+    _enable_tiny_provider(monkeypatch)
+    _prepare_with_real_child(tmp_path)
+    installed = json.loads((tmp_path / "models/engine-pack-installed.json").read_text(encoding="utf-8"))
+    relative = next(iter(installed["engines"]["whisper"]["files"]))
+    damaged = tmp_path / "models/whisper" / relative
+    original = damaged.read_bytes()
+    damaged.write_bytes(b"x" * len(original))
+    repaired = prepare_models(Path(sys.executable), tmp_path, repair=True)
+    assert repaired["installed_engines"] == ["whisper"]
+    assert damaged.read_bytes() == original
+
+
 def test_clean_install_runs_real_external_provisioner(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

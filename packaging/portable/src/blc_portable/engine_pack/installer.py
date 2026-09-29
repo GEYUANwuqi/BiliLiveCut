@@ -47,6 +47,10 @@ _ENGINE_RECORD_FIELDS = {
 _FILE_INFO_FIELDS = {"target_path", "file_count", "total_size", "files"}
 
 
+class EnginePackValidationError(RuntimeError):
+    """本地包格式、内容或身份校验失败，可按显式策略回退在线供给。"""
+
+
 def compute_crc32(path: Path) -> str:
     """Stream one file and return an uppercase CRC32 digest."""
     crc_value = 0
@@ -228,7 +232,9 @@ def _validate_file_info(engine_id: str, info: object) -> list[str]:
     return errors
 
 
-def _verify_engine_files(engine_id: str, engine_dir: Path, info: Mapping[str, object]) -> list[str]:
+def _verify_engine_files(
+    engine_id: str, engine_dir: Path, info: Mapping[str, object], *, full_rehash: bool = True
+) -> list[str]:
     """Fully compare one installed engine with its persisted hash list."""
     errors: list[str] = []
     entries = info["files"]
@@ -240,12 +246,12 @@ def _verify_engine_files(engine_id: str, engine_dir: Path, info: Mapping[str, ob
             errors.append(f"Engine file entry invalid: {engine_id}/{relative}")
             continue
         target = engine_dir / relative
-        if not target.is_file():
+        if target.is_symlink() or not target.resolve().is_relative_to(engine_dir.resolve()) or not target.is_file():
             errors.append(f"Missing: {engine_id}/{relative}")
             continue
         if target.stat().st_size != raw_entry["size"]:
             errors.append(f"Size mismatch: {engine_id}/{relative}")
-        if compute_sha256(target) != raw_entry["sha256"]:
+        if full_rehash and compute_sha256(target) != raw_entry["sha256"]:
             errors.append(f"SHA-256 mismatch: {engine_id}/{relative}")
     actual_paths = {path.relative_to(engine_dir).as_posix() for path in engine_dir.rglob("*") if path.is_file()}
     for relative in sorted(actual_paths - expected_paths):
@@ -304,14 +310,16 @@ def reusable_engine_ids(
             errors.extend(info_errors)
             continue
         engine_dir = models_dir / engine_id
-        if not engine_dir.is_dir() or not any(engine_dir.iterdir()):
+        if engine_dir.is_symlink() or not engine_dir.is_dir() or not any(engine_dir.iterdir()):
             errors.append(f"Engine directory missing or empty: {engine_id}")
             continue
-        if full_rehash:
-            disk_errors = _verify_engine_files(engine_id, engine_dir, info)
-            if disk_errors:
-                errors.extend(disk_errors)
-                continue
+        try:
+            disk_errors = _verify_engine_files(engine_id, engine_dir, info, full_rehash=full_rehash)
+        except OSError as exc:
+            disk_errors = [f"Engine files unavailable: {engine_id}: {exc}"]
+        if disk_errors:
+            errors.extend(disk_errors)
+            continue
         reusable.add(engine_id)
     return reusable, errors
 
@@ -426,10 +434,12 @@ def install_from_engine_pack(
     """Install only stale engines from a fully verified local pack."""
     actual_crc32 = compute_crc32(pack_path)
     if expected_crc32 and actual_crc32 != expected_crc32:
-        raise RuntimeError(f"CRC32 mismatch: expected={expected_crc32} actual={actual_crc32}")
+        raise EnginePackValidationError(f"CRC32 mismatch: expected={expected_crc32} actual={actual_crc32}")
     actual_sha256 = compute_sha256(pack_path)
     if expected_sha256 and actual_sha256 != expected_sha256:
-        raise RuntimeError(f"SHA-256 mismatch: expected={expected_sha256[:16]} actual={actual_sha256[:16]}")
+        raise EnginePackValidationError(
+            f"SHA-256 mismatch: expected={expected_sha256[:16]} actual={actual_sha256[:16]}"
+        )
     if not expected_crc32 and not expected_sha256:
         print("  Engine Pack has no external digest; validating its complete internal manifest")
     print(f"  Engine Pack 校验通过: CRC32={actual_crc32} SHA256={actual_sha256[:16]}...")
@@ -442,25 +452,28 @@ def install_from_engine_pack(
     desired = _desired_records()
     staging_dir = app_root / f"models-staging-pack-{uuid.uuid4().hex[:12]}"
     installed_now: list[str] = []
-    reused, _ = reusable_engine_ids(app_root / "models")
     with FileLock(get_engine_pack_lock_path(app_root)).acquire(timeout=120):
+        reused, _ = reusable_engine_ids(app_root / "models", full_rehash=True)
         try:
             staging_dir.mkdir(parents=True, exist_ok=True)
-            _safe_extract(pack_path, staging_dir)
-            manifest_path = staging_dir / "engine-pack-manifest.json"
-            if not manifest_path.is_file():
-                raise RuntimeError("Engine Pack 缺少 engine-pack-manifest.json")
-            manifest = load_manifest(manifest_path)
-            verification_errors = verify_extracted_tree(staging_dir, manifest)
-            if verification_errors:
-                raise RuntimeError("Engine Pack 校验失败:\n  " + "\n  ".join(verification_errors))
-            pack_engines = {engine.engine_id: engine for engine in manifest.engines}
-            if set(pack_engines) != set(desired):
-                raise RuntimeError("Engine Pack engine set does not match the current catalog")
-            for engine_id, desired_record in desired.items():
-                pack_identity = manifest_engine_identity(pack_engines[engine_id])
-                if engine_fingerprint(pack_identity) != desired_record["content_fingerprint"]:
-                    raise RuntimeError(f"Engine Pack content fingerprint mismatch: {engine_id}")
+            try:
+                _safe_extract(pack_path, staging_dir)
+                manifest_path = staging_dir / "engine-pack-manifest.json"
+                if not manifest_path.is_file():
+                    raise RuntimeError("Engine Pack 缺少 engine-pack-manifest.json")
+                manifest = load_manifest(manifest_path)
+                verification_errors = verify_extracted_tree(staging_dir, manifest)
+                if verification_errors:
+                    raise RuntimeError("Engine Pack 校验失败:\n  " + "\n  ".join(verification_errors))
+                pack_engines = {engine.engine_id: engine for engine in manifest.engines}
+                if set(pack_engines) != set(desired):
+                    raise RuntimeError("Engine Pack engine set does not match the current catalog")
+                for engine_id, desired_record in desired.items():
+                    pack_identity = manifest_engine_identity(pack_engines[engine_id])
+                    if engine_fingerprint(pack_identity) != desired_record["content_fingerprint"]:
+                        raise RuntimeError(f"Engine Pack content fingerprint mismatch: {engine_id}")
+            except (ValueError, RuntimeError, zipfile.BadZipFile, zlib.error, EOFError) as exc:
+                raise EnginePackValidationError(f"Engine Pack 无效: {exc}") from exc
             for engine_id, desired_record in desired.items():
                 if engine_id in reused:
                     print(f"  reuse engine by content fingerprint: {engine_id}")

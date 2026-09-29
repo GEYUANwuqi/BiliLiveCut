@@ -31,7 +31,8 @@ class TestFileLock:
             lock = FileLock(lock_path)
             with lock.acquire(timeout=5):
                 assert lock_path.exists()
-            assert not lock_path.exists()
+            with FileLock(lock_path).acquire(timeout=0):
+                assert lock_path.exists()
 
     def test_two_locks_conflict(self) -> None:
         from blc_portable.archive.locks import FileLock  # noqa: E402
@@ -52,6 +53,30 @@ class TestFileLock:
         ep = get_engine_pack_lock_path(app_root)
         assert ".runtime-install" in str(rp)
         assert ".engine-pack-install" in str(ep)
+
+
+def test_crashed_process_releases_install_lock(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    from blc_portable.archive.locks import FileLock
+
+    lock_path = tmp_path / "crashed.lock"
+    code = "from pathlib import Path; from blc_portable.archive.locks import FileLock; import os,sys\nwith FileLock(Path(sys.argv[1])).acquire(timeout=0): os._exit(9)"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(lock_path)],
+        env={**os.environ, "PYTHONPATH": str(_src_dir)},
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 9
+    lock = FileLock(lock_path)
+    with lock.acquire(timeout=0):
+        with pytest.raises(RuntimeError, match="重入"):
+            with lock.acquire(timeout=0):
+                pytest.fail("reentrant lock")
+    with lock.acquire(timeout=0):
+        assert lock_path.exists()
 
 
 class TestAtomicInstall:

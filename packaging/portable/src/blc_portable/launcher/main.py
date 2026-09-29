@@ -30,9 +30,9 @@ from config.launcher_settings import APP_ROOT_ENV, WEB_PORT_ENV, load_launcher_c
 
 # -- Constants ──────────────────────────────────────────────────
 APP_NAME = "BiliLiveCut"
-VERSION = "V0.1.18.4 Alpha"
-RELEASE_VERSION = "0.1.18.4-alpha"
-SOURCE_COMMIT_SHORT = "fc401a6"
+VERSION = "V0.1.18.5 Alpha"
+RELEASE_VERSION = "0.1.18.5-alpha"
+SOURCE_COMMIT_SHORT = "ef6ab46"
 # NOTE: RELEASE_ID 将在获得 Payload SHA-256 后动态生成 (内容寻址)
 SUPPORTED_PYTHON_VERSIONS = frozenset({(3, 11), (3, 12)})
 
@@ -760,6 +760,7 @@ def prepare_models(
     *,
     offline: bool = False,
     fallback_online: bool = False,
+    repair: bool = False,
 ) -> dict[str, Any]:
     """Run all model provisioning in the managed virtual environment.
 
@@ -772,6 +773,7 @@ def prepare_models(
     :param user_engine_pack_path: Optional explicitly selected Engine Pack.
     :param offline: Block online model downloads.
     :param fallback_online: Allow an invalid explicit pack to fall back online.
+    :param repair: Verify all installed model hashes and replace damaged engines.
     :returns: Structured provisioning result.
     """
     pack_info = get_engine_pack_info()
@@ -807,6 +809,8 @@ def prepare_models(
         command.append("--offline")
     if fallback_online:
         command.append("--fallback-online")
+    if repair:
+        command.append("--repair")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(source_root.resolve())
@@ -1241,6 +1245,7 @@ def run_launcher(args: argparse.Namespace) -> int:
             user_engine_pack_path,
             offline=args.offline,
             fallback_online=args.fallback_online,
+            repair=args.repair,
         )
         model_source = model_result.get("source", "unknown")
         network_reqs = model_result.get("network_requests", 0)
