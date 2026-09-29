@@ -158,6 +158,8 @@ def recover_pending_clips() -> int:
     """
     recovered = 0
     with get_session() as db:
+        if db.get_bind().dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
         pending_variants = db.exec(select(ClipVariant).where(ClipVariant.render_status == RenderStatus.QUEUED)).all()
 
         for var in pending_variants:

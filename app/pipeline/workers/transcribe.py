@@ -161,7 +161,9 @@ def transcribe_compute(task_id: int) -> dict[str, Any]:
         auxiliary_payload["repetition_repair"] = result.metadata["repetition_repair"]
     if refinement is not None:
         auxiliary_payload["transcript_refinement"] = {
+            "version": 1,
             "applied": True,
+            "clean_text": refinement.clean_text,
             "summary": refinement.summary,
         }
     auxiliary_json = json.dumps(auxiliary_payload, ensure_ascii=False) if auxiliary_payload else None

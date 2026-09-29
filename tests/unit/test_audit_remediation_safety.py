@@ -71,7 +71,7 @@ def test_pipeline_after_manual_export_records_remote_result(
     timeout: bool,
 ) -> None:
     from app.core import settings_store
-    from app.db.entities import HighlightCandidate, HighlightEvent, SegmentTask, UploadAttempt, UploadTask
+    from app.db.entities import HighlightCandidate, HighlightEvent, RawSegment, SegmentTask, UploadAttempt, UploadTask
     from app.db.session import get_session
     from app.pipeline.lease import TaskLease
     from app.pipeline.workers.publish import run_publish
@@ -83,6 +83,7 @@ def test_pipeline_after_manual_export_records_remote_result(
         db.add(HighlightCandidate(id=1, session_id=1, start_ts=now, peak_ts=now, end_ts=now, dedup_hash="remote"))
     clip_id = seed_clip(tmp_path)
     with get_session() as db:
+        db.add(RawSegment(id=1, session_id=1, seq=0, file_path=str(tmp_path / "raw.ts")))
         db.add(HighlightEvent(id=1, candidate_id=1, session_id=1, review_status="approved_solo"))
         db.add(
             SegmentTask(
@@ -90,6 +91,7 @@ def test_pipeline_after_manual_export_records_remote_result(
                 segment_id=1,
                 session_id=1,
                 event_id=1,
+                candidate_id=1,
                 clip_id=clip_id,
                 stage="publishing",
                 claimed_by="audit",
@@ -315,6 +317,7 @@ async def test_disk_guard_stops_active_ffmpeg_and_releases_watchers(
     class MediaProcess:
         returncode: int | None = None
         stderr = None
+        stdin = None
 
         async def wait(self) -> int:
             await finished.wait()
@@ -509,7 +512,7 @@ async def test_worker_start_replays_journal_before_stale_recovery(
 
 
 def test_existing_successful_upload_completes_segment_task(temp_db: None, tmp_path: Path) -> None:
-    from app.db.entities import HighlightCandidate, HighlightEvent, SegmentTask, UploadAttempt, UploadTask
+    from app.db.entities import HighlightCandidate, HighlightEvent, RawSegment, SegmentTask, UploadAttempt, UploadTask
     from app.db.session import get_session
     from app.pipeline.lease import TaskLease
     from app.pipeline.workers.publish import run_publish
@@ -519,6 +522,7 @@ def test_existing_successful_upload_completes_segment_task(temp_db: None, tmp_pa
         db.add(HighlightCandidate(id=1, session_id=1, start_ts=now, peak_ts=now, end_ts=now, dedup_hash="audit-reuse"))
     clip_id = seed_clip(tmp_path)
     with get_session() as db:
+        db.add(RawSegment(id=1, session_id=1, seq=0, file_path=str(tmp_path / "raw.ts")))
         db.add(HighlightEvent(id=1, candidate_id=1, session_id=1, review_status="approved_solo"))
         db.add(
             SegmentTask(
@@ -526,6 +530,7 @@ def test_existing_successful_upload_completes_segment_task(temp_db: None, tmp_pa
                 segment_id=1,
                 session_id=1,
                 event_id=1,
+                candidate_id=1,
                 clip_id=clip_id,
                 stage="publishing",
                 claimed_by="audit",

@@ -246,18 +246,30 @@ class BiliupUploader(Uploader):
                 outcome="failed_permanent",
             )
 
-        # V0.1.8.2:使用 shlex.quote 包裹参数,防止命令注入。
-        import shlex as _shlex
-
-        cmd_str = template.format(
-            file=_shlex.quote(str(clip["file_path"])),
-            title=_sanitize_biliup(clip.get("title") or ""),
-            desc=_sanitize_biliup(clip.get("description") or ""),
-            config=_shlex.quote(settings.biliup_config),
-        )
+        # 先解析模板，再按参数替换值；文件名和正文中的引号不参与命令解析。
         try:
-            args = shlex.split(cmd_str, posix=False)
-            proc = subprocess.run(args, capture_output=True, timeout=1800)
+            from string import Formatter
+
+            lexer = shlex.shlex(template, posix=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            lexer.escape = ""  # 保留 Windows 路径中的反斜杠。
+            values = {
+                "file": str(clip["file_path"]),
+                "title": clip.get("title") or "",
+                "desc": clip.get("description") or "",
+                "config": settings.biliup_config,
+            }
+            for _, field_name, format_spec, conversion in Formatter().parse(template):
+                if field_name is not None and (field_name not in values or format_spec or conversion):
+                    raise ValueError("仅支持 file/title/desc/config 占位符")
+            args = [part.format(**values) for part in lexer]
+            if not args or not args[0]:
+                raise ValueError("缺少可执行文件")
+        except (ValueError, KeyError, IndexError) as exc:
+            return UploadResult(False, message=f"BILIUP_UPLOAD_CMD 模板无效: {exc}", outcome="failed_permanent")
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=1800, shell=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
             classified = classify_upload_error(exc)
             return UploadResult(
@@ -286,13 +298,6 @@ class BiliupUploader(Uploader):
                 request_may_have_been_sent=True,
             )
         return UploadResult(success=True, remote_id=remote_id, message="biliup 上传完成。", outcome="success")
-
-
-def _sanitize_biliup(value: str) -> str:
-    """对 biliup 命令行参数做安全清洗:仅保留安全字符。"""
-    import re as _re
-
-    return _re.sub(r"[^\w\u4e00-\u9fff\u3000-\u303f\uff00-\uffef .,!?()（）《》\[\]【】\-+#&;:/@]", "", value)
 
 
 def _parse_bv(text: str) -> str | None:
@@ -363,7 +368,7 @@ def enqueue_upload(clip_id: int) -> UploadTask:
                 )
             ).first()
             if existing:
-                return existing
+                return _resume_skipped_upload(existing.id)
             # 极小概率: 冲突后仍查不到, 重试一次
             db.add(task)
             db.flush()
@@ -377,6 +382,47 @@ def enqueue_upload(clip_id: int) -> UploadTask:
     return task
 
 
+def _resume_skipped_upload(task_id: int) -> UploadTask:
+    """重新预检确定尚未发送的跳过任务，以写锁和条件更新防止重复领取。"""
+    import json
+
+    from sqlalchemy import text
+
+    from app.db.entities import UploadAttempt
+
+    with get_session() as db:
+        if db.get_bind().dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        task = db.get(UploadTask, task_id)
+        if task is None:
+            raise ValueError(f"上传任务不存在: id={task_id}")
+        if task.status != UploadStatus.SKIPPED or task.claimed_by or task.remote_id:
+            return task
+        blocked = db.exec(
+            select(UploadAttempt.id).where(
+                UploadAttempt.clip_id == task.clip_id,
+                UploadAttempt.status.notin_(["cancelled", "failed_retryable"]),
+            )
+        ).first()
+        if blocked is not None:
+            return task
+        pre = precheck_clip(task.clip_id)
+        task.precheck_json = json.dumps({"ok": pre.ok, "reasons": pre.reasons}, ensure_ascii=False)
+        task.last_error = None if pre.ok else ";".join(pre.reasons)
+        db.add(task)
+        db.flush()
+        if pre.ok:
+            db.exec(
+                text(
+                    "UPDATE upload_tasks SET status='queued' WHERE id=:id AND status='skipped' "
+                    "AND (claimed_by IS NULL OR claimed_by='') AND remote_id IS NULL"
+                ),
+                params={"id": task_id},
+            )
+            db.refresh(task)
+        return task
+
+
 @configured_task
 def process_upload_task(task_id: int) -> UploadTask:
     """复用持久化尝试记录；只有确定未发送的错误允许有限重试。"""
@@ -388,6 +434,7 @@ def process_upload_task(task_id: int) -> UploadTask:
         prepare_upload_attempt,
     )
 
+    _resume_skipped_upload(task_id)
     with get_session() as db:
         task = db.get(UploadTask, task_id)
         if task is None:
@@ -400,13 +447,25 @@ def process_upload_task(task_id: int) -> UploadTask:
         payload = {"id": clip.id, "file_path": clip.file_path, "title": clip.title, "description": clip.description}
         manual = task.uploader == "manual"
     if manual:
-        result = ManualUploader().upload(payload)
-        return _finish_task(
-            task_id,
-            UploadStatus.SUCCESS if result.success else UploadStatus.FAILED,
-            remote_id=result.remote_id,
-            error=None if result.success else result.message,
-        )
+        from app.pipeline.workers.publish import _atomic_claim_upload_task
+
+        # 本地清单写入很短且可幂等重做；同事务领取和完成，进程退出自动回滚。
+        with get_session() as db:
+            if db.get_bind().dialect.name == "sqlite":
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            claimed = _atomic_claim_upload_task(db, task_id, f"manual-{uuid4().hex}")
+            current = db.get(UploadTask, task_id)
+            assert current is not None
+            if claimed is None:
+                return current
+            result = ManualUploader().upload(payload)
+            current.status = UploadStatus.SUCCESS if result.success else UploadStatus.FAILED
+            current.remote_id = result.remote_id
+            current.last_error = None if result.success else result.message
+            current.claimed_by = None
+            current.updated_at = utcnow()
+            db.add(current)
+            return current
     worker_id = f"upload-{uuid4().hex}"
     for _ in range(settings.upload_max_retries + 1):
         prepared = prepare_upload_attempt(task_id, worker_id)
@@ -449,6 +508,7 @@ def _finish_task(
         if task is None:
             raise ValueError(f"上传任务不存在: id={task_id}")
         task.status = status
+        task.claimed_by = None
         task.remote_id = remote_id
         task.last_error = error
         task.updated_at = utcnow()

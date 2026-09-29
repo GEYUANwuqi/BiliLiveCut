@@ -9,6 +9,15 @@ import pytest
 from app.analysis.transcript_windows import extract_transcript_window
 
 
+def test_refined_text_preserves_precise_partial_window_with_uneven_speech() -> None:
+    words = json.dumps([{"w": "开头密集讲话" * 20, "start": 0, "end": 10}, {"w": "结尾一句", "start": 90, "end": 95}])
+    refined = "开头密集讲话，" * 20 + "结尾一句。"
+    partial = extract_transcript_window("raw", words, start_s=50, end_s=100, duration_s=100, semantic_text=refined)
+    assert partial.text == "结尾一句" and partial.precise
+    complete = extract_transcript_window("raw", words, start_s=0, end_s=100, duration_s=100, semantic_text=refined)
+    assert complete.text == refined and len(complete.words) == 2
+
+
 def test_extract_transcript_window_uses_word_timestamps() -> None:
     """有词级时间戳时只保留与目标窗重叠的词。"""
     result = extract_transcript_window(

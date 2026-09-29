@@ -1,7 +1,7 @@
 """渲染阶段 Worker — compute/commit 真正分离。
 
 render_compute 渲染到租约专属临时文件, 不写 FinalClip/ClipVariant。
-commit_render 在租约保护下原子移动文件 + 正式文件备份 + 补偿恢复。
+commit_render 在租约保护下提交独占文件，并重新验证审核与来源。
 """
 
 from __future__ import annotations
@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.clipping.paths import build_backup_path, build_final_clip_path, build_lease_partial_path
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import Session, select
+
+from app.clipping.paths import build_final_clip_path, build_generation_clip_path, build_lease_partial_path
 from app.db.entities import (
     CandidateStatus,
     ClipStatus,
@@ -26,7 +29,7 @@ from app.db.entities import (
     TaskStatus,
 )
 from app.db.session import get_session
-from app.pipeline.lease import LeaseLostError, TaskLease, still_owns_lease
+from app.pipeline.lease import LeaseLostError, TaskLease, approved_task_candidate, still_owns_lease
 from app.pipeline.stage_result import enqueue_next, mark_completed, mark_failed
 
 _logger = logging.getLogger(__name__)
@@ -149,258 +152,169 @@ def render_compute(lease: TaskLease) -> dict[str, Any]:
     }
 
 
+def _render_context(db: Session, lease: TaskLease, result: dict[str, Any]) -> tuple[SegmentTask, HighlightCandidate]:
+    """在当前写事务重新验证租约及计算结果的来源。"""
+    if not still_owns_lease(db, lease):
+        raise LeaseLostError()
+    task = db.get(SegmentTask, lease.task_id)
+    assert task is not None
+    candidate = approved_task_candidate(db, task)
+    if result.get("candidate_id") != candidate.id or result.get("event_id") != task.event_id:
+        raise ValueError("渲染结果与任务来源不一致")
+    return task, candidate
+
+
+def _clip_for_variant(db: Session, variant: ClipVariant, candidate_id: int) -> FinalClip:
+    """取得实际成片记录；恢复已就位但尚未登记的产物。"""
+    clip = db.exec(
+        select(FinalClip).where(
+            FinalClip.candidate_id == candidate_id,
+            FinalClip.file_path == variant.file_path,
+        )
+    ).first()
+    if clip is None:
+        clip = FinalClip(
+            candidate_id=candidate_id,
+            file_path=variant.file_path,
+            duration_s=variant.duration_s,
+            content_hash=variant.file_hash,
+            status=ClipStatus.GENERATED,
+        )
+        db.add(clip)
+        db.flush()
+    if clip.status == ClipStatus.REJECTED:
+        raise ValueError("成片已被拒绝")
+    return clip
+
+
 def commit_render(lease: TaskLease, compute_result: dict[str, Any], ms: int) -> None:
-    """提交渲染结果 — 原子文件操作 + 备份 + 状态机。
+    """以双短事务提交独占产物，两次校验租约、审核和来源。
 
-    流程 (双短事务 + 文件阶段):
-    1. 短事务1: 验证 lease → 幂等查询 ClipVariant → 创建 PENDING → 提交
-    2. 文件阶段: backup old → atomic move new (os.replace)
-    3. 短事务2: 验证 generation → 标记 READY → 推进 Task → 提交
-    4. 成功后删除 backup
-
-    :param lease: 任务租约。
-    :param compute_result: render_compute 的输出。
-    :param ms: 处理耗时 (毫秒)。
+    文件阶段不占用数据库写锁；每一 generation 使用独占路径，失败时只
+    删除本次产物，保留旧成片及其它租约的文件。
     """
     temp_path = compute_result.get("temp_path", "")
-    formal_path = compute_result.get("formal_path", "")
-    event_id = compute_result.get("event_id", 0)
-    variant_type = compute_result.get("variant_type", ClipVariantType.SINGLE)
-    render_config_hash = compute_result.get("render_config_hash", "")
-    content_hash = compute_result.get("content_hash", "")
-    candidate_id = compute_result.get("candidate_id", 0)
-    duration_s = compute_result.get("duration_s", 0)
-
+    output_path = ""
+    variant_id: int | None = None
+    generation = 0
     try:
-        # ═══ 短事务1: 验证租约 + 创建 PENDING ClipVariant ═══
         with get_session() as db:
+            if db.get_bind().dialect.name == "sqlite":
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
             if not still_owns_lease(db, lease):
                 raise LeaseLostError()
-
             task = db.get(SegmentTask, lease.task_id)
-            if task is None:
-                return
-
+            assert task is not None
             if "error" in compute_result:
                 mark_failed(task, compute_result["error"], permanent=compute_result.get("permanent", False))
                 db.add(task)
-                _safe_delete_temp(temp_path)
-                db.commit()
                 return
-
-            # 幂等查询 ClipVariant (含 render_config_hash)
-            from sqlmodel import select as _sel
-
-            existing_var = db.exec(
-                _sel(ClipVariant).where(
-                    ClipVariant.event_id == event_id,
-                    ClipVariant.variant_type == variant_type,
-                    ClipVariant.render_config_hash == render_config_hash,
+            task, candidate = _render_context(db, lease, compute_result)
+            variant = db.exec(
+                select(ClipVariant).where(
+                    ClipVariant.event_id == task.event_id,
+                    ClipVariant.variant_type == compute_result.get("variant_type", ClipVariantType.SINGLE),
+                    ClipVariant.render_config_hash == compute_result["render_config_hash"],
                 )
             ).first()
-
-            if existing_var is not None:
-                if existing_var.render_status == RenderStatus.DONE:
-                    _logger.info("render_reuse_variant: variant=%s event=%s (already READY)", existing_var.id, event_id)
-                    _safe_delete_temp(temp_path)
-                    _update_task_and_commit(db, task, existing_var.id, ms)
-                    return
-
-                variant = existing_var
-                variant.generation += 1
-                variant.render_status = RenderStatus.QUEUED
-                variant.file_path = formal_path
-                variant.file_hash = content_hash
-                variant.render_config_hash = render_config_hash
-                variant.duration_s = duration_s
-                db.add(variant)
-                db.flush()
-            else:
+            if (
+                variant is not None
+                and variant.render_status == RenderStatus.DONE
+                and variant.file_path
+                and Path(variant.file_path).is_file()
+            ):
+                clip = _clip_for_variant(db, variant, candidate.id)
+                candidate.status = CandidateStatus.CLIPPED
+                db.add(candidate)
+                _update_rendered_task(db, task, clip, ms)
+                return
+            if variant is None:
                 variant = ClipVariant(
-                    event_id=event_id,
-                    candidate_id=candidate_id,
-                    variant_type=variant_type,
-                    render_config_hash=render_config_hash,
-                    file_path=formal_path,
-                    file_hash=content_hash,
-                    duration_s=duration_s,
-                    render_status=RenderStatus.QUEUED,
-                    generation=1,
+                    event_id=task.event_id,
+                    variant_type=compute_result.get("variant_type", ClipVariantType.SINGLE),
+                    render_config_hash=compute_result["render_config_hash"],
+                    generation=0,
                 )
                 db.add(variant)
                 db.flush()
-                db.refresh(variant)
-
+            assert variant.id is not None
             variant_id = variant.id
-            variant_generation = variant.generation
-            db.commit()
+            variant.generation += 1
+            generation = variant.generation
+            output_path = build_generation_clip_path(
+                compute_result["formal_path"], variant_id, generation, lease.lease_token
+            )
+            variant.file_path = output_path
+            variant.file_hash = compute_result["content_hash"]
+            variant.duration_s = compute_result["duration_s"]
+            variant.render_status = RenderStatus.QUEUED
+            variant.backup_path = None
+            db.add(variant)
 
-        # ═══ 文件阶段: backup → atomic move ═══
-        backup_path = _backup_and_move(temp_path, formal_path, variant_id, variant_generation)
+        Path(temp_path).replace(output_path)
 
-        if backup_path is None and not Path(formal_path).exists():
-            _logger.warning("render_move_failed: task=%s temp=%s -> formal=%s", lease.task_id, temp_path, formal_path)
-            with get_session() as db:
-                task = db.get(SegmentTask, lease.task_id)
-                if task is not None:
-                    mark_failed(task, "文件移动失败: temp->formal", permanent=False)
-                    db.add(task)
-                    var = db.get(ClipVariant, variant_id)
-                    if var is not None:
-                        var.render_status = RenderStatus.FAILED
-                        db.add(var)
-                    db.commit()
-            _safe_delete_temp(temp_path)
-            return
-
-        # ═══ 短事务2: 标记 READY + 推进 Task ═══
-        try:
-            with get_session() as db:
-                var = db.get(ClipVariant, variant_id)
-                if var is None:
-                    _mark_move_failed_and_restore(formal_path, backup_path, variant_id, lease.task_id)
-                    return
-
-                if var.generation != variant_generation:
-                    _logger.warning(
-                        "render_generation_stale: variant=%s expected_gen=%s actual_gen=%s",
-                        variant_id,
-                        variant_generation,
-                        var.generation,
-                    )
-                    _safe_delete_temp(formal_path)
-                    return
-
-                if var.render_status == RenderStatus.DONE:
-                    _safe_delete_temp(temp_path)
-                    _remove_backup(backup_path)
-                    return
-
-                var.render_status = RenderStatus.DONE
-                var.backup_path = None
-                db.add(var)
-
-                from sqlmodel import select as _sel2
-
-                existing_clip = db.exec(_sel2(FinalClip).where(FinalClip.candidate_id == candidate_id)).first()
-                if existing_clip is not None:
-                    existing_clip.file_path = formal_path
-                    existing_clip.duration_s = duration_s
-                    existing_clip.content_hash = content_hash
-                    existing_clip.status = ClipStatus.GENERATED
-                    db.add(existing_clip)
-                    db.flush()
-                else:
-                    clip = FinalClip(
-                        candidate_id=candidate_id,
-                        file_path=formal_path,
-                        duration_s=duration_s,
-                        content_hash=content_hash,
-                        status=ClipStatus.GENERATED,
-                    )
-                    db.add(clip)
-                    db.flush()
-                    db.refresh(clip)
-
-                cand = db.get(HighlightCandidate, candidate_id)
-                if cand is not None:
-                    cand.status = CandidateStatus.CLIPPED
-                    db.add(cand)
-
-                _update_task_and_commit(db, task, variant_id, ms)
-                _remove_backup(backup_path)
-
-        except Exception:
-            _logger.warning("render_db_commit_failed: task=%s variant=%s — restoring backup", lease.task_id, variant_id)
-            _restore_from_backup(formal_path, backup_path, variant_id)
-            raise
-
+        with get_session() as db:
+            if db.get_bind().dialect.name == "sqlite":
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            task, candidate = _render_context(db, lease, compute_result)
+            variant = db.get(ClipVariant, variant_id)
+            if variant is None or variant.generation != generation or variant.file_path != output_path:
+                raise LeaseLostError()
+            variant.render_status = RenderStatus.DONE
+            db.add(variant)
+            clip = _clip_for_variant(db, variant, candidate.id)
+            candidate.status = CandidateStatus.CLIPPED
+            db.add(candidate)
+            _update_rendered_task(db, task, clip, ms)
+        output_path = ""  # 已提交的产物由成片生命周期管理。
     except LeaseLostError:
-        _logger.warning("stale_result_discarded: render task=%s 已失去租约, 丢弃临时文件", lease.task_id)
+        _logger.warning("stale_result_discarded: render task=%s", lease.task_id)
+    except (OSError, ValueError) as exc:
+        with get_session() as db:
+            if db.get_bind().dialect.name == "sqlite":
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            if still_owns_lease(db, lease):
+                task = db.get(SegmentTask, lease.task_id)
+                assert task is not None
+                mark_failed(task, f"渲染提交失败: {exc}", permanent=isinstance(exc, ValueError))
+                db.add(task)
+            variant = db.get(ClipVariant, variant_id) if variant_id is not None else None
+            if (
+                variant is not None
+                and variant.generation == generation
+                and variant.render_status == RenderStatus.QUEUED
+            ):
+                variant.render_status = RenderStatus.FAILED
+                db.add(variant)
+    finally:
         _safe_delete_temp(temp_path)
+        if output_path:
+            # 提交异常可能发生在服务器实际提交之后；仍被引用的文件不能删除。
+            try:
+                with get_session() as db:
+                    if db.get_bind().dialect.name == "sqlite":
+                        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                    referenced = db.exec(select(FinalClip.id).where(FinalClip.file_path == output_path)).first()
+                    if referenced is None:
+                        _safe_delete_temp(output_path)
+                        variant = db.get(ClipVariant, variant_id)
+                        if (
+                            variant is not None
+                            and variant.generation == generation
+                            and variant.file_path == output_path
+                        ):
+                            variant.render_status = RenderStatus.FAILED
+                            db.add(variant)
+            except SQLAlchemyError:
+                _logger.exception("render_cleanup_deferred: task=%s path=%s", lease.task_id, output_path)
 
 
-def _update_task_and_commit(db, task: SegmentTask, variant_id: int, ms: int) -> None:
-    """推进 Task 到 RENDERED 并提交。"""
+def _update_rendered_task(db: Session, task: SegmentTask, clip: FinalClip, ms: int) -> None:
+    """使用实际 FinalClip 主键推进任务，不混用 ClipVariant 主键。"""
+    assert clip.id is not None
     mark_completed(task, ms)
-    enqueue_next(task, TaskStatus.RENDERED, clip_id=variant_id)
+    enqueue_next(task, TaskStatus.RENDERED, clip_id=clip.id)
     db.add(task)
-    db.commit()
-
-
-def _backup_and_move(temp_path: str, formal_path: str, variant_id: int, generation: int) -> str | None:
-    """备份旧正式文件 (若内容不同) 并原子移动 temp → formal。
-
-    使用 content_hash (SHA-256) 而非文件大小判断内容是否相同。
-    """
-    tp = Path(temp_path)
-    fp = Path(formal_path)
-
-    if not tp.exists():
-        return None
-
-    backup: str | None = None
-    if fp.exists():
-        existing_hash = _compute_content_hash(str(fp))
-        new_hash = _compute_content_hash(str(tp))
-        if existing_hash == new_hash:
-            _logger.info("content_identical: formal=%s (hash same, skip)", str(fp))
-            tp.unlink(missing_ok=True)
-            return ""
-        backup = build_backup_path(variant_id, generation)
-        try:
-            fp.rename(backup)
-            _logger.info("backup_created: old=%s backup=%s", str(fp), backup)
-        except OSError as exc:
-            _logger.error("backup_failed: %s -> %s error=%s", str(fp), backup, exc)
-            return None
-
-    try:
-        tp.rename(fp)
-        _logger.info("atomic_move: %s -> %s", str(tp), str(fp))
-        return backup
-    except OSError as exc:
-        _logger.error("move_failed: %s -> %s error=%s", str(tp), str(fp), exc)
-        return None
-
-
-def _mark_move_failed_and_restore(formal_path: str, backup_path: str | None, variant_id: int, task_id: int) -> None:
-    """文件移动成功但 DB 更新失败时恢复旧文件。"""
-    with get_session() as db:
-        var = db.get(ClipVariant, variant_id)
-        if var is not None:
-            var.render_status = RenderStatus.FAILED
-            var.file_path = backup_path or ""
-            db.add(var)
-            db.commit()
-
-    if backup_path and Path(backup_path).exists():
-        if Path(formal_path).exists():
-            Path(formal_path).unlink(missing_ok=True)
-        try:
-            Path(backup_path).rename(formal_path)
-            _logger.info("restored_backup: variant=%s %s -> %s", variant_id, backup_path, formal_path)
-        except OSError as exc:
-            _logger.error("restore_failed: %s -> %s error=%s", backup_path, formal_path, exc)
-
-
-def _restore_from_backup(formal_path: str, backup_path: str | None, variant_id: int) -> None:
-    """DB commit 失败 — 恢复 old 文件。"""
-    if not backup_path or not Path(backup_path).exists():
-        return
-    if Path(formal_path).exists():
-        Path(formal_path).unlink(missing_ok=True)
-    try:
-        Path(backup_path).rename(formal_path)
-        _logger.info("db_failure_restored: variant=%s %s -> %s", variant_id, backup_path, formal_path)
-    except OSError as exc:
-        _logger.error("db_failure_restore_failed: variant=%s error=%s", variant_id, exc)
-
-
-def _remove_backup(path: str | None) -> None:
-    """安全删除 backup 文件。"""
-    if path:
-        Path(path).unlink(missing_ok=True)
 
 
 def _is_render_error_permanent(exc: Exception) -> bool:
@@ -430,6 +344,8 @@ def _is_render_error_permanent(exc: Exception) -> bool:
 
 def _safe_delete_temp(temp_path: str) -> None:
     """安全删除租约临时文件, 不抛异常。"""
+    if not temp_path:
+        return
     try:
         tp = Path(temp_path)
         if tp.exists():

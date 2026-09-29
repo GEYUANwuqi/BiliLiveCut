@@ -362,8 +362,7 @@ class PluginManager:
                 if "live_source" in record.manifest.capabilities and not isinstance(exc, (PluginError, SourceError))
                 else str(exc)
             )
-            for imported_name in module_names:
-                sys.modules.pop(imported_name, None)
+            self._unload_modules(record.directory)
             record.module_name = None
             record.module_names = ()
             if isinstance(exc, asyncio.CancelledError):
@@ -390,8 +389,7 @@ class PluginManager:
             record.error = "停用钩子失败，请检查插件资源清理实现"
             logger.error("插件 {} 停用钩子失败", record.manifest.id)
         finally:
-            for imported_name in record.module_names:
-                sys.modules.pop(imported_name, None)
+            self._unload_modules(record.directory)
             record.module_name = None
             record.module_names = ()
 
@@ -423,8 +421,7 @@ class PluginManager:
             factory = getattr(module, symbol)
             instance = factory()
         except Exception:
-            for imported_name in self._module_names_from_root(root, previous_modules):
-                sys.modules.pop(imported_name, None)
+            self._unload_modules(root)
             raise
         finally:
             if sys.path and sys.path[0] == root_entry:
@@ -436,8 +433,7 @@ class PluginManager:
                     pass
         module_names = self._module_names_from_root(root, previous_modules)
         if not isinstance(instance, BiliLiveCutPlugin):
-            for imported_name in module_names:
-                sys.modules.pop(imported_name, None)
+            self._unload_modules(record.directory)
             raise PluginValidationError("入口对象不满足 BiliLiveCutPlugin 契约")
         return cast(BiliLiveCutPlugin, instance), module_name, module_names
 
@@ -448,14 +444,47 @@ class PluginManager:
         for name in set(sys.modules).difference(previous_modules):
             module = sys.modules.get(name)
             raw_path = getattr(module, "__file__", None)
-            if not isinstance(raw_path, str):
+            paths = [raw_path] if isinstance(raw_path, str) else list(getattr(module, "__path__", ()))
+            for location in paths:
+                try:
+                    Path(location).resolve().relative_to(root)
+                except (OSError, ValueError, TypeError):
+                    continue
+                names.append(name)
+                break
+        owned = set(names)
+        for name in names:
+            module = sys.modules.get(name)
+            if getattr(module, "__file__", None) is not None:
                 continue
-            try:
-                Path(raw_path).resolve().relative_to(root)
-            except (OSError, ValueError):
-                continue
-            names.append(name)
-        return tuple(sorted(names))
+            paths = list(getattr(module, "__path__", ()))
+            shared_path = any(not Path(location).resolve().is_relative_to(root) for location in paths)
+            shared_child = any(child.startswith(name + ".") and child not in owned for child in tuple(sys.modules))
+            if shared_path or shared_child:
+                owned.discard(name)
+        return tuple(sorted(owned))
+
+    @classmethod
+    def _unload_modules(cls, root: Path) -> None:
+        """清除插件生命周期内加载的全部本地模块及其字节码缓存。"""
+        root = root.resolve()
+        names = cls._module_names_from_root(root, set())
+        for name in sorted(names, key=lambda value: value.count("."), reverse=True):
+            module = sys.modules.get(name)
+            cached = getattr(module, "__cached__", None)
+            if isinstance(cached, str):
+                cache_path = Path(cached).resolve()
+                if cache_path.is_relative_to(root) and cache_path.suffix == ".pyc":
+                    try:
+                        cache_path.unlink(missing_ok=True)
+                    except OSError as exc:
+                        logger.warning("插件字节码缓存清理失败: {} {}", name, exc)
+            parent_name, _, child = name.rpartition(".")
+            parent = sys.modules.get(parent_name)
+            if parent is not None and getattr(parent, child, None) is module:
+                delattr(parent, child)
+            sys.modules.pop(name, None)
+        importlib.invalidate_caches()
 
     def _validate_capabilities(self, record: _PluginRecord, instance: BiliLiveCutPlugin) -> None:
         """校验声明能力的接口形状及单提供者约束。"""

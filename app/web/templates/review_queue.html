@@ -24,10 +24,17 @@
     <button id="refresh">刷新</button>
   </div>
   <main id="queue" class="queue-grid"></main>
+  <nav class="queue-filters" aria-label="审核队列分页">
+    <button id="previous-page" disabled>上一页</button>
+    <span id="page-info" class="hint"></span>
+    <button id="next-page" disabled>下一页</button>
+  </nav>
 </div>
   <script>
     let currentStatus = "pending";
     let queueLoadGeneration = 0;
+    let queueOffset = 0;
+    const queuePageSize = 100;
     const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
     async function api(url, options = {}) {
       const response = await fetch(url, {headers:{"Content-Type":"application/json"}, ...options});
@@ -38,10 +45,13 @@
     async function loadQueue() {
       const generation = ++queueLoadGeneration;
       const mine = document.querySelector("#mine").checked ? "&mine=true" : "";
-      const data = await api(`/review/api/queue?status=${currentStatus}${mine}`);
+      const data = await api(`/review/api/queue?status=${currentStatus}${mine}&offset=${queueOffset}&limit=${queuePageSize}`);
       if (generation !== queueLoadGeneration) return;
       document.querySelector("#viewer").textContent = `${data.actor} · ${data.role}${data.blind_mode ? " · 已启用盲审" : ""}`;
       for (const key of ["pending","claimed","reviewed"]) document.querySelector(`#count-${key}`).textContent = data.counts[key];
+      document.querySelector("#previous-page").disabled = queueOffset === 0;
+      document.querySelector("#next-page").disabled = !data.has_more;
+      document.querySelector("#page-info").textContent = `第 ${Math.floor(queueOffset / queuePageSize) + 1} 页 · 共 ${data.total} 项`;
       const root = document.querySelector("#queue");
       if (!data.items.length) { root.innerHTML = '<div class="card empty">当前筛选下没有候选</div>'; return; }
       root.innerHTML = data.items.map(item => `<article class="card queue-item">
@@ -59,10 +69,13 @@
     }
     document.querySelectorAll("[data-status]").forEach(button => button.addEventListener("click", () => {
       document.querySelectorAll("[data-status]").forEach(item => item.classList.remove("active"));
-      button.classList.add("active"); currentStatus = button.dataset.status; loadQueue();
+      button.classList.add("active"); currentStatus = button.dataset.status; refreshQueue();
     }));
-    document.querySelector("#mine").addEventListener("change", loadQueue);
-    document.querySelector("#refresh").addEventListener("click", loadQueue);
+    function refreshQueue() { queueOffset = 0; return loadQueue(); }
+    document.querySelector("#previous-page").addEventListener("click", () => { queueOffset = Math.max(0, queueOffset - queuePageSize); loadQueue(); });
+    document.querySelector("#next-page").addEventListener("click", () => { queueOffset += queuePageSize; loadQueue(); });
+    document.querySelector("#mine").addEventListener("change", refreshQueue);
+    document.querySelector("#refresh").addEventListener("click", refreshQueue);
     loadQueue().catch(error => document.querySelector("#queue").innerHTML = `<div class="card empty">${esc(error.message)}</div>`);
   </script>
 </body>

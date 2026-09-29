@@ -194,6 +194,35 @@ async def test_disable_during_metadata_cancels_start_without_session(runtime: Ru
         assert not db.exec(select(RecordingSession)).all()
 
 
+@pytest.mark.parametrize("disable_recording", [True, False])
+async def test_automatic_start_rechecks_switches_after_metadata(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, disable_recording: bool
+) -> None:
+    from app.web.services.rooms import RecorderManager, update_room
+
+    room = await register_room("123", True, "external")
+    update_room(room.id, {"auto_record": True, "auto_analyze": True, "auto_render": True})
+    runtime.requested.clear()
+    runtime.info_gate = asyncio.Event()
+    manager = RecorderManager()
+    callbacks: list[object] = []
+
+    async def record(self: Recorder) -> None:
+        callbacks.append(self.on_segment)
+
+    monkeypatch.setattr(Recorder, "run", record)
+    starting = asyncio.create_task(manager.start(room.id, pipeline=True, produce=True, automatic=True))
+    await asyncio.wait_for(runtime.requested.wait(), 2)
+    update_room(room.id, {"auto_record": not disable_recording, "auto_analyze": False, "auto_render": False})
+    runtime.info_gate.set()
+    await starting
+    await asyncio.sleep(0)
+    assert callbacks == ([] if disable_recording else [None])
+    with get_session() as db:
+        saved = db.get(LiveRoom, room.id)
+        assert not saved.auto_analyze and not saved.auto_render
+
+
 async def test_auth_failure_ends_without_exhausting_retry_budget(runtime: RuntimeSource) -> None:
     room = await register_room("123", True, "external")
     runtime.failure = SourceAuthenticationError("credential-secret")

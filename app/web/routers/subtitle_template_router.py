@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -243,6 +244,8 @@ async def update_template(template_id: int, request: Request) -> dict[str, str]:
         "is_default",
     }
     with get_session() as db:
+        if db.get_bind().dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
         t = db.get(SubtitleTemplate, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="模板不存在")
@@ -258,6 +261,7 @@ async def update_template(template_id: int, request: Request) -> dict[str, str]:
                 raise HTTPException(status_code=422, detail=f"{k} 不能为负数")
         if body.get("is_default") is not None and not isinstance(body.get("is_default"), bool):
             raise HTTPException(status_code=422, detail="is_default 必须为布尔值")
+        if body.get("is_default") is True:
             # 只有一个默认模板
             defaults = db.exec(
                 _sql_select(SubtitleTemplate).where(SubtitleTemplate.is_default == True)  # noqa: E712
@@ -382,5 +386,10 @@ def export_template(template_id: int, request: Request) -> PlainTextResponse:
     return PlainTextResponse(
         content=text,
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={t.name.replace(chr(13), '').replace(chr(10), '')}.ass"},
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=subtitle-{template_id}.ass; "
+                f"filename*=UTF-8''{quote(t.name.replace(chr(13), '').replace(chr(10), '') + '.ass', safe='')}"
+            )
+        },
     )

@@ -14,6 +14,7 @@ from uuid import uuid4
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.analysis.transcription.content import refined_transcript_text, transcript_text
 from app.core.runtime_settings import configured_task
 from app.db.entities import (
     ClipVariant,
@@ -436,10 +437,10 @@ def list_transcripts(limit: int = 30, session_id: int | None = None) -> list[dic
                 "id": transcript.id,
                 "segment_id": transcript.segment_id,
                 "language": transcript.language,
-                "text": transcript.final_text,
+                "text": transcript_text(transcript),
                 "raw_text": transcript.base_text or transcript.final_text,
                 "summary": str(refinement.get("summary", "")),
-                "llm_refined": refinement.get("applied") is True,
+                "llm_refined": refined_transcript_text(transcript) is not None,
                 "primary_backend": transcript.primary_backend,
                 "created_at": transcript.created_at.isoformat() if transcript.created_at else None,
                 "session_id": segment.session_id if segment else None,

@@ -6,6 +6,7 @@ NOT just by candidate_id, to support multi-variant, multi-config rendering.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -53,3 +54,10 @@ def build_backup_path(variant_id: int, generation: int = 1) -> str:
     """
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return str(Path(clips_dir()) / f"clip_backup_{variant_id}_gen{generation}_{ts}.bak")
+
+
+def build_generation_clip_path(base_path: str, variant_id: int, generation: int, lease_token: str) -> str:
+    """为一次租约提交生成独占路径，防止过期任务覆盖新产物。"""
+    path = Path(base_path)
+    token_hash = hashlib.sha256(lease_token.encode()).hexdigest()[:16]
+    return str(path.with_name(f"{path.stem}.v{variant_id}.g{generation}.{token_hash}{path.suffix}"))

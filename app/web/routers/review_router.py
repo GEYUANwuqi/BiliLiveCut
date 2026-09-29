@@ -299,8 +299,11 @@ def get_review_queue(
     status: Literal["pending", "claimed", "reviewed", "all"] = "pending",
     mine: bool = False,
     limit: int = 100,
+    offset: int = 0,
 ) -> dict:
     """返回可领取、审核中或已完成的候选队列。"""
+    from datetime import UTC, datetime
+
     from app.core.config import settings
     from app.db.entities import HighlightCandidate, HighlightEvent, ReviewStatus
     from app.db.session import get_session
@@ -309,52 +312,63 @@ def get_review_queue(
 
     actor, role = review_actor(request)
     safe_limit = max(1, min(limit, 500))
-    with get_session() as db:
-        candidates = db.exec(
-            _sql_select(HighlightCandidate).order_by(HighlightCandidate.created_at.asc()).limit(500)
-        ).all()
-        ids = [candidate.id for candidate in candidates if candidate.id is not None]
-        events = db.exec(_sql_select(HighlightEvent).where(HighlightEvent.candidate_id.in_(ids))).all() if ids else []
-        event_by_candidate = {event.candidate_id: event for event in events}
-        missing = [candidate_id for candidate_id in ids if candidate_id not in event_by_candidate]
-        if missing:
-            raise HTTPException(status_code=409, detail=f"候选数据不完整：缺少审核事件 candidate_ids={missing}")
-        sources = source_identities_for_sessions(db, (candidate.session_id for candidate in candidates))
-
+    safe_offset = max(0, offset)
+    now = datetime.now(UTC)
     items = []
     counts = {"pending": 0, "claimed": 0, "reviewed": 0}
-    for candidate in candidates:
-        event = event_by_candidate[candidate.id]
-        claim = claim_state(event)
-        reviewed = event.review_status != ReviewStatus.PENDING
-        category = "reviewed" if reviewed else ("claimed" if claim["active"] else "pending")
-        counts[category] += 1
-        if status != "all" and category != status:
-            continue
-        if mine and claim["claimed_by"] != actor:
-            continue
-        blinded = bool(settings.review_blind_mode and role == "reviewer" and not reviewed)
-        items.append(
-            {
-                "id": candidate.id,
-                "session_id": candidate.session_id,
-                "start_ts": candidate.start_ts.isoformat(),
-                "end_ts": candidate.end_ts.isoformat(),
-                "status": category,
-                "review_status": event.review_status,
-                "score": None if blinded else candidate.highlight_score,
-                "reason": None if blinded else candidate.reason,
-                "claim": claim,
-                "blinded": blinded,
-                **sources.get(candidate.session_id, unknown_source_identity()),
-            }
+    total = 0
+    with get_session() as db:
+        # 分批读取全部候选，按领取过期规则分类后分页，历史记录不再遮挡待审项。
+        rows = db.exec(
+            _sql_select(HighlightCandidate, HighlightEvent)
+            .outerjoin(HighlightEvent, HighlightEvent.candidate_id == HighlightCandidate.id)
+            .order_by(HighlightCandidate.created_at.asc(), HighlightCandidate.id.asc())
+            .execution_options(yield_per=500)
         )
+        for candidate, event in rows:
+            if event is None:
+                raise HTTPException(
+                    status_code=409, detail=f"候选数据不完整：缺少审核事件 candidate_ids={[candidate.id]}"
+                )
+            claim = claim_state(event, now=now)
+            reviewed = event.review_status != ReviewStatus.PENDING
+            category = "reviewed" if reviewed else ("claimed" if claim["active"] else "pending")
+            counts[category] += 1
+            if status != "all" and category != status:
+                continue
+            if mine and claim["claimed_by"] != actor:
+                continue
+            total += 1
+            if total <= safe_offset or len(items) >= safe_limit:
+                continue
+            blinded = bool(settings.review_blind_mode and role == "reviewer" and not reviewed)
+            items.append(
+                {
+                    "id": candidate.id,
+                    "session_id": candidate.session_id,
+                    "start_ts": candidate.start_ts.isoformat(),
+                    "end_ts": candidate.end_ts.isoformat(),
+                    "status": category,
+                    "review_status": event.review_status,
+                    "score": None if blinded else candidate.highlight_score,
+                    "reason": None if blinded else candidate.reason,
+                    "claim": claim,
+                    "blinded": blinded,
+                }
+            )
+        sources = source_identities_for_sessions(db, (item["session_id"] for item in items))
+        for item in items:
+            item.update(sources.get(item["session_id"], unknown_source_identity()))
     return {
-        "items": items[:safe_limit],
+        "items": items,
         "counts": counts,
         "actor": actor,
         "role": role,
         "blind_mode": settings.review_blind_mode,
+        "total": total,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "has_more": safe_offset + len(items) < total,
     }
 
 

@@ -571,11 +571,18 @@ def test_transcript_api_exposes_summary_and_raw_asr(temp_db: None) -> None:
             Transcript(
                 segment_id=9,
                 language="zh",
-                final_text="整理后的可读正文。",
+                final_text="原始没有标点的转写",
                 base_text="原始没有标点的转写",
                 primary_backend="funasr-nano",
                 auxiliary_json=json.dumps(
-                    {"transcript_refinement": {"applied": True, "summary": "片段摘要"}},
+                    {
+                        "transcript_refinement": {
+                            "version": 1,
+                            "applied": True,
+                            "clean_text": "整理后的可读正文。",
+                            "summary": "片段摘要",
+                        }
+                    },
                     ensure_ascii=False,
                 ),
             )

@@ -57,6 +57,36 @@ def _seed_candidate() -> int:
     return candidate_id
 
 
+def test_queue_filters_before_pagination_and_counts_all_history(review_client: TestClient) -> None:
+    from app.db.entities import HighlightCandidate, HighlightEvent
+    from app.db.session import get_session
+
+    now = datetime.now(UTC)
+    ids: list[int] = []
+    with get_session() as db:
+        for index in range(504):
+            candidate = HighlightCandidate(
+                session_id=1, peak_ts=now, start_ts=now, end_ts=now, dedup_hash=f"page-{index}", created_at=now
+            )
+            db.add(candidate)
+            db.flush()
+            ids.append(candidate.id)
+            db.add(
+                HighlightEvent(
+                    candidate_id=candidate.id, session_id=1, review_status="approved_solo" if index < 500 else "pending"
+                )
+            )
+    with review_client as client:
+        first = client.get("/review/api/queue?limit=2", auth=("alice", "alice-pass")).json()
+        second = client.get("/review/api/queue?limit=2&offset=2", auth=("alice", "alice-pass")).json()
+        assert first["counts"] == {"pending": 4, "claimed": 0, "reviewed": 500}
+        assert first["total"] == 4 and first["has_more"] and not second["has_more"]
+        assert [row["id"] for row in first["items"] + second["items"]] == ids[500:]
+        client.post(f"/review/api/{ids[-1]}/claim", json={"force": False}, auth=("alice", "alice-pass"))
+        mine = client.get("/review/api/queue?status=all&mine=true&limit=1", auth=("alice", "alice-pass")).json()
+        assert mine["total"] == 1 and mine["items"][0]["id"] == ids[-1]
+
+
 @pytest.fixture()
 def review_client(temp_db: None, monkeypatch: MonkeyPatch) -> Iterator[TestClient]:
     """启用管理员和两个审核员账号。"""
