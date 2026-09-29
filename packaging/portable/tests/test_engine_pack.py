@@ -438,7 +438,7 @@ class TestEnginePackInstall:
         installed = models_dir / "engine-pack-installed.json"
         assert installed.exists()
         info = json.loads(installed.read_text(encoding="utf-8"))
-        assert info["schema_version"] == 6
+        assert info["schema_version"] == 7
         assert len(info["model_set_fingerprint"]) == 64
         assert "engine_pack_version" not in info
 
@@ -571,8 +571,13 @@ class TestCheckInstalledModels:
         ok, _ = check_installed_models(tmp_app_root / "models")
         assert not ok
 
-    def test_release_version_does_not_invalidate_content(self, tmp_app_root: Path) -> None:
-        """应用版本变化不应让相同模型内容失效。"""
+    @pytest.mark.parametrize(
+        "field,value", [("release_version", "0.1.18.4-alpha"), ("source_commit", "0" * 40), ("release_version", None)]
+    )
+    def test_old_release_identity_rejects_identical_content(
+        self, tmp_app_root: Path, field: str, value: str | None
+    ) -> None:
+        """旧版本、旧源码或缺失身份均不能复用相同模型文件。"""
         from blc_portable.engine_pack.installer import check_installed_models
 
         models_dir = tmp_app_root / "models"
@@ -583,8 +588,13 @@ class TestCheckInstalledModels:
         manifest = installed_manifest(models_dir)
         (models_dir / "engine-pack-installed.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-        ok1, _ = check_installed_models(models_dir)
-        assert ok1
+        if value is None:
+            manifest.pop(field)
+        else:
+            manifest[field] = value
+        (models_dir / "engine-pack-installed.json").write_text(json.dumps(manifest), encoding="utf-8")
+        ok1, errors = check_installed_models(models_dir)
+        assert not ok1 and errors
 
     def test_installed_and_valid(self, tmp_app_root: Path) -> None:
         """正确安装时返回 True。"""

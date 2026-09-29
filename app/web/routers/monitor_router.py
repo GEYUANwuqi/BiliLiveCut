@@ -54,7 +54,7 @@ def get_monitor_data() -> dict:
 
     # 录制状态。
     from app.pipeline.live_monitor import live_monitor
-    from app.web.service import recorder_manager
+    from app.web.services.rooms import recorder_manager
 
     running_rooms = recorder_manager.running_ids()
     monitor_status = live_monitor.status()

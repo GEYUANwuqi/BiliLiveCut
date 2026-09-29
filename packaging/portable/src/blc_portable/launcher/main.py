@@ -1025,16 +1025,10 @@ def _run_doctor(app_root: Path) -> int:
 
     # 5. Models
     models_dir = app_root / "models"
-    if models_dir.exists():
-        for engine_id in ("whisper", "paraformer", "sensevoice", "funasr_nano"):
-            epath = models_dir / engine_id
-            _check(
-                f"engine {engine_id}",
-                epath.exists() and any(epath.iterdir()),
-                f"{sum(1 for _ in epath.rglob('*') if _.is_file()) if epath.exists() else 0} files",
-            )
-    else:
-        _check("models dir", False, "not found")
+    from blc_portable.engine_pack.installer import check_installed_models
+
+    models_ok, model_errors = check_installed_models(models_dir)
+    _check("models", models_ok, "; ".join(model_errors) if model_errors else "current release verified")
 
     # 6. FFmpeg
     ffmpeg = app_root / "bin" / "ffmpeg.exe"

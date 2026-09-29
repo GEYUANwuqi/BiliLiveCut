@@ -364,7 +364,7 @@ def test_resolve_event_id_returns_existing_event(temp_db: None) -> None:
         db.flush()
         db.refresh(event)
 
-    from app.clipping.clipper import _resolve_event_id
+    from app.clipping.core import _resolve_event_id
 
     with get_session() as db:
         resolved = _resolve_event_id(db, cand.id)

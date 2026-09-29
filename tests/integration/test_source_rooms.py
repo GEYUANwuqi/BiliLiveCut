@@ -24,6 +24,7 @@ from app.plugins.live_source import (
 )
 from app.sources.registry import SourceRegistry, source_registry
 from app.sources.rooms import register_room, room_source
+from tests.source_fixtures import bind_bilibili_room
 
 
 class ExternalSource:
@@ -55,6 +56,7 @@ async def test_parallel_alias_registration_is_idempotent_and_preserves_platforms
         bili = LiveRoom(platform="bilibili", room_id=123, input_url="123", authorized=True)
         db.add(bili)
         db.flush()
+        bind_bilibili_room(db, bili)
         bili_id = bili.id
     source_registry.register_many("external-plugin", [ExternalSource()])
     results = await asyncio.gather(
@@ -72,7 +74,7 @@ async def test_parallel_alias_registration_is_idempotent_and_preserves_platforms
         assert room_source(db.get(LiveRoom, bili_id), db).platform == "bilibili"
         assert room_source(room, db).source_id == "123"
         settings_rows = db.exec(select(AppSetting).where(AppSetting.key.startswith("source_"))).all()
-        assert len(settings_rows) == 2
+        assert len(settings_rows) == 4
     await source_registry.unregister_owner("external-plugin")
     # 卸载不改身份/历史，重新注册后仍命中相同 DB 房间。
     source_registry.register_many("external-plugin", [ExternalSource()])
@@ -80,7 +82,7 @@ async def test_parallel_alias_registration_is_idempotent_and_preserves_platforms
     await source_registry.unregister_owner("external-plugin")
 
 
-async def test_existing_bilibili_room_keeps_history_and_schema(
+async def test_current_bilibili_registration_preserves_history_and_schema(
     temp_db: None, isolated_sources: None, monkeypatch: MonkeyPatch
 ) -> None:
     from app.db.schema import SchemaMeta, compute_schema_fingerprint, validate_schema
@@ -97,6 +99,7 @@ async def test_existing_bilibili_room_keeps_history_and_schema(
         db.add(RecordingSession(room_id=original.id))
         meta = db.get(SchemaMeta, 1).model_dump()
         fingerprint = compute_schema_fingerprint()
+        bind_bilibili_room(db, original)
         original_id = original.id
     room = await register_room("1", True)
     assert room.id == original_id and room.auto_analyze and room.title == "新标题"

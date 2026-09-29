@@ -409,7 +409,6 @@ def _refresh_representative_danmaku(db: Session, event: HotspotEvent) -> None:
     representatives = select_representative_danmaku(
         [row.content for row in rows],
         limit=3,
-        include_role=True,
     )
     event.representative_danmaku_json = json.dumps(
         representatives,

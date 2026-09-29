@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.web import service
+from app.web.services import dashboard as dashboard_service
 
 router = APIRouter()
 
@@ -14,4 +14,4 @@ router = APIRouter()
 @router.get("/dashboard")
 def get_dashboard() -> dict[str, Any]:
     """返回仪表盘概览数据。"""
-    return service.dashboard_state()
+    return dashboard_service.dashboard_state()

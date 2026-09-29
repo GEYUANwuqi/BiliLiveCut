@@ -14,15 +14,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app.analysis.transcription import (
-    ASRPipeline,
-    ASRSegmentResult,
-    ASRTranscriptResult,
+from app.analysis.transcription.backends import (
     _compute_review_risk_score,
     _merge_review_text,
     _normalize_confidence_sentence,
     _normalize_whisper_logprob,
 )
+from app.analysis.transcription.models import ASRSegmentResult, ASRTranscriptResult
+from app.analysis.transcription.pipeline import ASRPipeline
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch

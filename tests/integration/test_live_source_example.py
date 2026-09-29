@@ -314,7 +314,8 @@ async def test_loaded_plugin_real_ffmpeg_reconnect_and_durable_pipeline(
             segments = db.exec(select(RawSegment).order_by(RawSegment.seq)).all()
             tasks = db.exec(select(SegmentTask)).all()
             assert recording.status == "stopped" and recording.reconnect_count == 1
-            assert recording.stream_url is None and recording.ended_at is not None
+            assert "stream_url" not in recording.model_dump()
+            assert recording.ended_at is not None
             assert len(segments) >= 2 and len(tasks) == len(segments)
             assert len({item.file_path for item in segments}) == len(segments)
             assert all(Path(item.file_path).stat().st_size > 1024 and item.duration_s > 1 for item in segments)

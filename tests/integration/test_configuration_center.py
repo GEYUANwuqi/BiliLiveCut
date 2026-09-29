@@ -18,7 +18,6 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import Settings, get_settings, settings
 from app.core.configuration import (
     BOOTSTRAP,
-    REPLACED,
     ConfigurationChange,
     ConfigurationConflict,
     RuntimeOptions,
@@ -42,7 +41,7 @@ def test_registry_covers_every_core_runtime_field_without_secrets(temp_db: None)
     assert set(fields) == set(Settings.model_fields) | set(RuntimeOptions.model_fields)
     assert len(fields) == len(response["fields"])
     assert all(item["label"] != item["key"] for item in fields.values())
-    assert all(not fields[key]["editable"] and fields[key]["reason"] for key in BOOTSTRAP | REPLACED)
+    assert all(not fields[key]["editable"] and fields[key]["reason"] for key in BOOTSTRAP)
     encoded = json.dumps(response, ensure_ascii=False)
     assert "mail-private-value" not in encoded
     assert "private-token" not in encoded
@@ -178,23 +177,24 @@ def test_scoring_values_drive_actual_scoring_reader(temp_db: None) -> None:
     assert get_scoring_config().pre_roll_s == baseline["pre_roll_s"]
 
 
-def test_legacy_invalid_combination_does_not_save_port(temp_db: None, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
-    from app.web.services.settings import update_settings
+def test_port_endpoint_rejects_mixed_business_settings(temp_db: None, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     from config.launcher_settings import load_launcher_config
 
     monkeypatch.setenv("BLC_APP_ROOT", str(tmp_path))
-    with pytest.raises(ValueError):
-        update_settings({"web_port": 8088, "biliup_enabled": True, "trend_schedule_end": "25:10"})
+    from app.web.main import app
+
+    with TestClient(app) as client:
+        response = client.patch("/api/settings/port", json={"web_port": 8088, "biliup_enabled": True})
+    assert response.status_code == 422
     assert load_launcher_config(tmp_path).web_port == 8000
     assert get_setting("biliup_enabled") == "false"
 
 
-def test_database_commit_failure_restores_launcher_and_runtime(
+def test_database_commit_failure_preserves_configuration_and_port(
     temp_db: None, monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     from sqlmodel import Session
 
-    from app.web.services.settings import update_settings
     from config.launcher_settings import load_launcher_config
 
     monkeypatch.setenv("BLC_APP_ROOT", str(tmp_path))
@@ -205,7 +205,7 @@ def test_database_commit_failure_restores_launcher_and_runtime(
     with monkeypatch.context() as scoped:
         scoped.setattr(Session, "commit", fail_commit)
         with pytest.raises(OperationalError):
-            update_settings({"web_port": 8088, "clip_video_crf": 33})
+            save_configuration(ConfigurationChange(values={"clip_video_crf": 33}))
     assert load_launcher_config(tmp_path).web_port == 8000
     assert get_setting("clip_video_crf", "missing") == "missing"
     assert settings.clip_video_crf == 20

@@ -22,7 +22,7 @@ Payload 从 **EXE 内置资源**释放，版本固定并校验 SHA-256，安装�
 - GMT+8 场次时间线展示所有活动热点。低于成片阈值的事件仍显示来源评分与代表弹幕，但明确标记为“仅时间线，不生成视频”；有候选的事件才进入既有精审、渲染和发布流程。
 - 首次在线模型准备由 `.venv` Python 子进程执行并一次性预检下载依赖；程序管理的损坏 venv 会自动重建，真实不支持的 Python 会明确拒绝，准备中断可续跑。
 - Engine Pack 与应用版本解耦。四个模型按不可变来源和逐引擎内容指纹独立复用/更新；版本号、ZIP 名称、构建时间和应用提交只作溯源，不决定模型内容是否相同。
-- Engine Pack 内容清单只接受 schema 5，安装后的模型目录只接受 schema 6；其他 schema 不会被迁移或改写。当前清单中的相同内容可来自 Engine Pack、在线下载或另一台机器复制的有效目录。
+- Engine Pack 内容清单只接受 schema 5，安装后的模型目录只接受 schema 7；其他 schema 不会被迁移或改写。只接受当前发行版本及源码身份生成的清单；本版本内可复用校验通过的完整引擎，旧版本安装状态不复用。
 - 候选聚类和弹幕文本特征使用 Rust/rayon；音频峰值、静音区间和滚动稳健增幅使用 Cython。Payload 强制携带当前 Python ABI 的 C、Cython、Rust 三个 `app.accelerators` 原生模块，不提供旧模块路径。
 - 设置页可保存下次启动 Web 端口；当前服务保持原端口，重启后 Launcher 从根目录 `config/launcher.json` 读取并仍只监听 `127.0.0.1`。
 - 数据库只接受当前版本创建的 Schema v5；历史数据库会被明确拒绝，不执行备份、迁移或字段补写。
@@ -309,7 +309,7 @@ python build_exe.py --without-engine-pack
 python build_full_bundle.py
 ```
 
-若还需独立模型包，执行 `python build_engine_pack.py --from-cache`（已有完整缓存）或 `python build_engine_pack.py`（联网下载）。构建器仍生成当前发行版审计元数据，但 Launcher 的模型兼容性只取决于逐引擎内容指纹。
+若还需独立模型包，执行 `python build_engine_pack.py --from-cache`（已有完整缓存）或 `python build_engine_pack.py`（联网下载）。构建缓存必须有当前发行版与锁定模型定义的下载记录；缺失时先运行 `python download_engines.py`。Launcher 同时校验发行身份和逐引擎内容指纹，拒绝旧版本包及安装状态。
 
 ---
 
@@ -458,8 +458,6 @@ ASR_FALLBACK_DEVICE=cpu                 # 兜底引擎设备
 ASR_SENSEVOICE=true                     # 情感/笑声/音乐/事件检测（需 funasr + modelscope）
 ASR_FUNASR_REVIEW=true                  # Paraformer 主路径下启用低置信片段 FunASR 复核
 ASR_FALLBACK_WHISPER=true               # 主引擎失败时自动回退 Whisper
-ASR_CONFIDENCE_THRESHOLD=-0.6           # 低于此置信度的片段触发复核
-ASR_MODEL_REVISION=v2.0.4               # 模型版本锁定
 WHISPER_MODEL=small                      # Whisper 兜底模型
 WHISPER_DEVICE=cpu                       # Whisper 设备
 WHISPER_COMPUTE_TYPE=int8                # CPU 推荐 int8
@@ -527,7 +525,6 @@ CLIP_PRESET=veryfast             # 编码速度：ultrafast / veryfast / medium 
 ### 上传
 
 ```ini
-UPLOADER=manual                  # manual=仅产出文件不投稿（零风险，推荐）
 UPLOAD_MAX_RETRIES=3             # 上传失败重试次数
 UPLOAD_MAX_PER_HOUR=5            # 每小时投稿上限（频控）
 TITLE_MAX_LEN=80                 # 标题长度上限

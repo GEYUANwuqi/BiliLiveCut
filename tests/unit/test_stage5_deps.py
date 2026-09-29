@@ -15,7 +15,6 @@ def test_settings_has_sensible_defaults() -> None:
     assert s.asr_primary == "funasr_nano"
     assert s.whisper_model == "small"
     assert s.whisper_compute_type == "int8"
-    assert s.asr_model_revision == "v2.0.4"
     assert s.asr_primary_max_concurrency == 1
     assert s.asr_resource_policy in ("strict", "warn")
 

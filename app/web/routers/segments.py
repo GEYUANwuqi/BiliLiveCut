@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.web import service
+from app.web.services import dashboard as dashboard_service
+from app.web.services import rooms as rooms_service
+from app.web.services import transcripts as transcripts_service
 from app.web.services.transcripts import (
     TranscriptMediaError,
     TranscriptNotFoundError,
@@ -48,7 +50,7 @@ class ReanalysisRequest(BaseModel):
 @router.get("/recording")
 def get_recording() -> list[dict[str, Any]]:
     """返回录制会话状态列表。"""
-    return service.recording_status()
+    return rooms_service.recording_status()
 
 
 @router.get("/sessions/timeline")
@@ -64,7 +66,7 @@ def get_session_timelines(
 @router.get("/sessions/history")
 def get_session_history() -> list[dict[str, Any]]:
     """返回全部录制场次及转写、弹幕数量，供历史列表选择。"""
-    return service.list_recording_session_history()
+    return transcripts_service.list_recording_session_history()
 
 
 @router.get("/sessions/{session_id}/timeline")
@@ -124,7 +126,7 @@ def regenerate_session_timeline_summary(session_id: int) -> dict[str, int | bool
 def get_transcripts(limit: int = 30, session_id: int | None = None) -> list[dict[str, Any]]:
     """返回全局最近或指定场次的转写文本。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.list_transcripts(limit=limit, session_id=session_id)
+    return transcripts_service.list_transcripts(limit=limit, session_id=session_id)
 
 
 @router.get("/transcripts/{transcript_id}/source-mp4")
@@ -150,7 +152,7 @@ def export_transcript_source_mp4(transcript_id: int) -> FileResponse:
 def retranscribe_transcript(transcript_id: int) -> dict[str, int]:
     """安全清理旧自动分析结果并重新排队识别。"""
     try:
-        return service.retranscribe_transcript(transcript_id)
+        return transcripts_service.retranscribe_transcript(transcript_id)
     except TranscriptNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TranscriptRetranscribeConflict as exc:
@@ -166,7 +168,7 @@ def correct_transcript(
     """保存人工纠错、回流房间词典并安全重排场次分析。"""
     actor = str(getattr(request.state, "auth_user", "local-admin"))
     try:
-        return service.correct_transcript(
+        return transcripts_service.correct_transcript(
             transcript_id,
             payload.corrected_text,
             aliases=payload.aliases,
@@ -203,4 +205,4 @@ def get_danmaku(limit: int = 50, session_id: int | None = None) -> dict[str, Any
     :param session_id: 仅查询指定会话(可选)。
     """
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.danmaku_overview(limit=limit, session_id=session_id)
+    return dashboard_service.danmaku_overview(limit=limit, session_id=session_id)

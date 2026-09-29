@@ -23,19 +23,19 @@ def test_journal_replay_preserves_success_written_during_replay(
 
     monkeypatch.setattr(journal, "_JOURNAL_DIR", tmp_path)
     assert journal.write_remote_success("first", 1, 1, 1, "BV1")
-    original = journal._atomic_write
+    original = Path.unlink
 
-    def write_during_replay(path: Path, content: str) -> None:
-        monkeypatch.setattr(journal, "_atomic_write", original)
+    def write_during_replay(path: Path, missing_ok: bool = False) -> None:
+        monkeypatch.setattr(Path, "unlink", original)
         assert journal.write_remote_success("second", 1, 2, 2, "BV2")
-        original(path, content)
+        original(path, missing_ok=missing_ok)
 
-    monkeypatch.setattr(journal, "_atomic_write", write_during_replay)
+    monkeypatch.setattr(Path, "unlink", write_during_replay)
     assert journal.mark_replayed("first", 1)
     assert [entry["attempt_token"] for entry in journal.read_pending_entries()] == ["second"]
 
 
-def test_journal_corrupt_legacy_line_does_not_hide_later_success(
+def test_journal_rejects_old_multiline_file_and_preserves_current_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.publishing import journal
@@ -44,21 +44,24 @@ def test_journal_corrupt_legacy_line_does_not_hide_later_success(
     (tmp_path / "publish_journal_20200101.jsonl").write_text(
         'broken\nnull\n{"attempt_token":"valid","publish_generation":1,"remote_id":"BV1"}\n', encoding="utf-8"
     )
+    assert journal.read_pending_entries() == []
+    assert not journal.mark_replayed("valid", 1)
+    assert journal.write_remote_success("valid", 1, 1, 1, "BV1")
     assert [entry["attempt_token"] for entry in journal.read_pending_entries()] == ["valid"]
     assert journal.mark_replayed("valid", 1)
     assert journal.read_pending_entries() == []
 
 
-def test_journal_failed_replace_preserves_unreplayed_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_journal_failed_delete_preserves_unreplayed_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.publishing import journal
 
     monkeypatch.setattr(journal, "_JOURNAL_DIR", tmp_path)
     assert journal.write_remote_success("first", 1, 1, 1, "BV1")
 
-    def fail_replace(source: Path, target: Path) -> None:
+    def fail_delete(path: Path, missing_ok: bool = False) -> None:
         raise OSError("disk failure")
 
-    monkeypatch.setattr(journal.os, "replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_delete)
     assert not journal.mark_replayed("first", 1)
     assert [entry["attempt_token"] for entry in journal.read_pending_entries()] == ["first"]
 

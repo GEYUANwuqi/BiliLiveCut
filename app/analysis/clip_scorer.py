@@ -563,8 +563,6 @@ def _dynamic_event_bounds(
         available_start=context.block_start,
         available_end=context.block_end,
         peak_offset_s=datetime_epoch(context.event_peak) - segment_start_epoch,
-        pre_roll_s=config.pre_roll_s,
-        post_roll_s=config.post_roll_s,
         suggested_start_offset_s=datetime_epoch(context.event_start) - segment_start_epoch,
         suggested_end_offset_s=datetime_epoch(context.event_end) - segment_start_epoch,
         silences=silences,

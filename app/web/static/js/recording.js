@@ -420,7 +420,7 @@ async function loadDanmaku() {
   const sessions = data.sessions || [];
   const evidenceLabels = {
     unsupported: "来源不支持弹幕", disabled: "本场未启用弹幕", connecting: "弹幕连接中",
-    available: "已连接采集", failed: "弹幕采集失败", legacy_unknown: "旧场次采集覆盖未知",
+    available: "已连接采集", failed: "弹幕采集失败", unavailable: "缺少弹幕采集证据",
   };
   $("#danmaku-sessions").innerHTML = sessions.length ? sessions.map((s) => `
     <div class="item">

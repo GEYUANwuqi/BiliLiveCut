@@ -151,11 +151,11 @@ class TestDbSession:
 class TestWebInit:
     """app.web.__init__ coverage."""
 
-    def test_web_service_imports(self) -> None:
-        """web.service imports."""
-        from app.web import service
+    def test_web_service_modules_import(self) -> None:
+        """实际房间服务提供录制入口。"""
+        from app.web.services import rooms
 
-        assert service is not None
+        assert callable(rooms.recorder_manager.start)
 
 
 # ── Monitoring metrics coverage ───────────────────────

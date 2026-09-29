@@ -344,7 +344,7 @@ async function saveWebPort() {
   if (!port.value || !port.checkValidity()) { port.focus(); return toast("端口必须为 1～65535 的整数。"); }
   try {
     const revision = webPortRevision;
-    await api("PATCH", "/api/settings", {
+    await api("PATCH", "/api/settings/port", {
       web_port: Number(port.value),
     });
     if (webPortRevision !== revision) {

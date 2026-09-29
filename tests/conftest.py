@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from _pytest.monkeypatch import MonkeyPatch
 
 
@@ -25,7 +28,7 @@ def isolated_model_pool() -> Iterator[None]:
 
 
 @pytest.fixture()
-def temp_db(tmp_path, monkeypatch: MonkeyPatch) -> Iterator[None]:
+def temp_db(tmp_path: Path, monkeypatch: MonkeyPatch) -> Iterator[None]:
     """创建一个临时 SQLite 数据库并重建引擎。
 
     通过环境变量覆盖 ``DATABASE_URL`` 与 ``STORAGE_ROOT``,清空配置缓存后
@@ -35,6 +38,10 @@ def temp_db(tmp_path, monkeypatch: MonkeyPatch) -> Iterator[None]:
     :param monkeypatch: 用于设置环境变量。
     :yields: 无返回值,仅在测试期间提供隔离环境。
     """
+    # 每个隔离应用保留自己的限流窗口，不能消费上一测试的请求配额。
+    web_main = sys.modules.get("app.web.main")
+    if web_main is not None:
+        monkeypatch.setattr(web_main, "_rate_buckets", {})
     db_file = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file.as_posix()}")
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))

@@ -103,13 +103,13 @@ class TestAtomicInstall:
                 )
             manifest = _read_installed_manifest(models_dir)
             assert manifest is not None
-            assert manifest["schema_version"] == 6
+            assert manifest["schema_version"] == 7
             assert manifest["engines"]["whisper"]["installation_source"] == "engine_pack"
             assert manifest["engines"]["whisper"]["zip_sha256"] is None
             assert "engine_pack_version" not in manifest
-            assert "source_commit" not in manifest
+            assert len(manifest["source_commit"]) == 40
 
-    def test_installed_manifest_uses_only_content_identity(self) -> None:
+    def test_installed_manifest_rejects_identity_changes(self) -> None:
         from blc_portable.engine_pack.installer import (  # noqa: E402
             check_installed_models,
             install_engine_from_staging,

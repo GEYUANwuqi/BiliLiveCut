@@ -163,7 +163,7 @@ def preload_models() -> None:
             whisper = FasterWhisperBackend()
             loads.append(("fallback", whisper.model_identity, whisper._load_model))
         else:
-            if settings.asr_primary in {"funasr", "funasr_nano", "nano"}:
+            if settings.asr_primary == "funasr_nano":
                 loads.append(("primary", backend.nano_identity, lambda: backend._load_funasr(for_primary=True)))
                 loads.append(("primary", backend.primary_identity, backend._load_primary))
             else:

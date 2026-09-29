@@ -123,6 +123,3 @@ def get_scoring_config() -> ScoringConfig:
     raw = get_setting("scoring_configuration", "")
     options = ScoringOptions.model_validate_json(raw) if raw else scoring_defaults()
     return ScoringConfig(**options.model_dump())
-
-
-get_scoring_config.cache_clear = get_scoring_baseline.cache_clear

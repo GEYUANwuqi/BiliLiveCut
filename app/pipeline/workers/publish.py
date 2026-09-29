@@ -288,10 +288,9 @@ def execute_remote_upload(attempt_token: str) -> dict[str, Any]:
             "error_message": classified.error_message,
             "request_may_have_been_sent": classified.request_may_have_been_sent,
         }
-    outcome = result.outcome or ("success" if result.success else "remote_result_unknown")
     return {
         **base,
-        "outcome": outcome,
+        "outcome": result.outcome,
         "remote_id": result.remote_id,
         "error_message": None if result.success else result.message,
         "request_may_have_been_sent": result.request_may_have_been_sent,

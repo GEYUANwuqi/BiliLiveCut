@@ -187,7 +187,7 @@ class TestLiveMonitor:
     ) -> None:
         """延迟窗口结束时必须复核：恢复直播不停止，仍离线才停止。"""
         from app.pipeline import live_monitor as live_monitor_module
-        from app.web import service as service_module
+        from app.web.services import rooms as rooms_service
 
         live_state = {"value": 1}
 
@@ -219,7 +219,7 @@ class TestLiveMonitor:
         monkeypatch.setattr("app.sources.bilibili.source.BilibiliLiveClient", lambda **_kwargs: FakeClient())
         monkeypatch.setattr("app.sources.bilibili.source.get_bilibili_cookie", lambda: "")
         monkeypatch.setattr(live_monitor_module.settings, "live_session_end_delay_s", 0)
-        monkeypatch.setattr(service_module, "recorder_manager", manager)
+        monkeypatch.setattr(rooms_service, "recorder_manager", manager)
         monitor = live_monitor_module.LiveMonitor()
         monitor._stop = asyncio.Event()  # noqa: SLF001
 

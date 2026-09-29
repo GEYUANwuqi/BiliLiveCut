@@ -790,7 +790,7 @@ async def adjust_boundary(
     from datetime import UTC, timedelta
     from datetime import datetime as _dt
 
-    from app.clipping.clipper import ClipOptions, validate_clip_boundary
+    from app.clipping.core import ClipOptions, validate_clip_boundary
     from app.db.entities import HighlightCandidate
     from app.db.session import get_session
     from app.web.services.review_workflow import (
@@ -1054,7 +1054,7 @@ async def rerender_clip(candidate_id: int, request: Request) -> dict:
     :param candidate_id: 候选 id。
     :returns: 新的 clip 信息或状态。
     """
-    from app.clipping.clipper import ClipOptions, validate_clip_boundary
+    from app.clipping.core import ClipOptions, validate_clip_boundary
     from app.db.entities import HighlightCandidate
     from app.db.session import get_session
     from app.web.services.background_jobs import web_job_manager

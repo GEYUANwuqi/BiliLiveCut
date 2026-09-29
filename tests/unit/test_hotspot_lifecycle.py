@@ -19,6 +19,7 @@ from app.db.entities import (
     SessionStatus,
 )
 from app.db.session import get_session
+from tests.source_fixtures import add_danmaku_evidence
 
 _START = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 _CONFIG = HotspotLifecycleConfig(
@@ -335,6 +336,7 @@ def test_empty_followup_confirms_event_and_saves_diverse_danmaku(temp_db: None) 
     receive_ts = event_start + timedelta(seconds=10, milliseconds=7500)
     messages = ["???"] * 8 + ["666"] * 7 + ["主播说明周六晚上挑战新模式"] * 3 + ["这波节目效果太好笑了"] * 2
     with get_session() as db:
+        add_danmaku_evidence(db, session_id, _START, segment_end)
         for message in messages:
             db.add(Danmaku(session_id=session_id, room_id=8001, ts=receive_ts, content=message))
         reconcile_hotspot_events(
@@ -365,8 +367,8 @@ def test_empty_followup_confirms_event_and_saves_diverse_danmaku(temp_db: None) 
 def test_representative_selection_does_not_let_two_reactions_crowd_out_context() -> None:
     messages = ["???"] * 10 + ["666"] * 9 + ["主播宣布周六晚上挑战新模式"] * 2
 
-    first = select_representative_danmaku(messages, limit=2, include_role=True)
-    second = select_representative_danmaku(messages, limit=2, include_role=True)
+    first = select_representative_danmaku(messages, limit=2)
+    second = select_representative_danmaku(messages, limit=2)
 
     assert first == second
     assert [item["role"] for item in first] == ["reaction", "information"]

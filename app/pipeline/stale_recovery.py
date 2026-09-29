@@ -151,7 +151,6 @@ def recover_pending_clips() -> int:
     - ClipVariant.render_status == QUEUED (PENDING)
     - partial 存在 → 未完成, 标记 FAILED 等待重试
     - formal 存在 → 文件已就位, 标记 DONE (READY)
-    - backup 存在 → 非正常状态, 恢复 backup → formal, 标记 FAILED
     - 无任何文件 → 标记 FAILED
 
     :returns: 恢复的 ClipVariant 数量。
@@ -177,21 +176,6 @@ def recover_pending_clips() -> int:
                     var.event_id,
                     file_path,
                 )
-            elif var.backup_path and Path(var.backup_path).exists():
-                # backup 存在 — 恢复 backup, 标记 FAILED
-                try:
-                    Path(var.backup_path).rename(file_path)
-                    _logger.info(
-                        "clip_recovery_restore_backup: variant=%s backup=%s -> formal=%s",
-                        var.id,
-                        var.backup_path,
-                        file_path,
-                    )
-                except OSError:
-                    _logger.warning("clip_recovery_restore_failed: variant=%s", var.id)
-                var.render_status = RenderStatus.FAILED
-                db.add(var)
-                recovered += 1
             else:
                 # 无文件 — 标记 FAILED
                 var.render_status = RenderStatus.FAILED

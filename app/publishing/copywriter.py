@@ -21,7 +21,7 @@ from app.analysis import llm as llm_mod
 from app.analysis.keywords import match_keywords
 from app.analysis.transcript_windows import extract_transcript_window
 from app.analysis.transcription.content import refined_transcript_text
-from app.clipping.clipper import select_covering_segments
+from app.clipping.core import select_covering_segments
 from app.core.config import settings
 from app.core.paths import ready_to_upload_dir
 from app.core.runtime_settings import configured_task

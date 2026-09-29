@@ -47,10 +47,23 @@ def test_completed_engine_staging_resumes_without_network(tmp_path: Path, monkey
     desired = desired_engine_records(engines)
     whisper = engines[0]
     fingerprint = str(desired[whisper.engine_id]["content_fingerprint"])
-    staging = tmp_path / ".model-staging" / f"{whisper.engine_id}-{fingerprint[:16]}"
+    from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
+
+    staging = (
+        tmp_path
+        / ".model-staging"
+        / f"{RELEASE_VERSION}-{SOURCE_COMMIT_FULL}"
+        / f"{whisper.engine_id}-{fingerprint[:16]}"
+    )
     _write_files(staging, list(whisper.required_files))
     (staging / ".provision-complete.json").write_text(
-        json.dumps({"content_fingerprint": fingerprint}),
+        json.dumps(
+            {
+                "release_version": RELEASE_VERSION,
+                "source_commit": SOURCE_COMMIT_FULL,
+                "content_fingerprint": fingerprint,
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(

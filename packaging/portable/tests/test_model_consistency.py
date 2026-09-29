@@ -155,7 +155,7 @@ class TestModelCatalogSingleSource:
         assert not (tmp_path / "models" / "paraformer" / "cam++").exists()
         assert (tmp_path / "models" / "funasr_nano" / "Qwen3-0.6B" / "component_metadata.json").is_file()
 
-    def test_cache_copy_filters_removed_paraformer_submodels(
+    def test_cache_copy_rejects_obsolete_layout_without_silently_filtering(
         self,
         tmp_path: Path,
         monkeypatch: MonkeyPatch,
@@ -171,10 +171,21 @@ class TestModelCatalogSingleSource:
 
         monkeypatch.setattr(builder, "PORTABLE_DIR", tmp_path)
         staging = tmp_path / "staging"
+        from blc_portable.engine_pack.downloader import _state_identity
+        from model_catalog import load_engines
+
+        (tmp_path / ".model_cache" / "download_state.json").write_text(
+            json.dumps(
+                {"identity": _state_identity(), "downloaded": [e.engine_id for e in load_engines()], "progress": {}}
+            ),
+            encoding="utf-8",
+        )
         builder.copy_from_cache(staging)
 
         target = staging / "models" / "paraformer"
         assert (target / "fsmn-vad" / "model.bin").is_file()
         assert (target / "ct-punc" / "model.bin").is_file()
-        assert not (target / "cam++").exists()
-        assert not (target / "campplus").exists()
+        assert (target / "cam++").exists()
+        assert (target / "campplus").exists()
+        errors = builder.validate_prepared_models(staging)
+        assert any("removed sub-model directory" in error for error in errors)

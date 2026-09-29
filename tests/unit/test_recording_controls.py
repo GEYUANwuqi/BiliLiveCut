@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.plugins.live_source import SourceRoom, StreamSpec
+from tests.source_fixtures import bind_bilibili_room
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
@@ -64,6 +65,7 @@ async def test_start_uses_pipeline_default_and_enables_room_analysis(
         room = LiveRoom(input_url="pipeline-default", room_id=202, authorized=True, auto_analyze=False)
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         room_id = room.id
     assert room_id is not None
 
@@ -138,6 +140,7 @@ async def test_metadata_refresh_failure_preserves_cached_room_info(
         )
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         room_id = room.id
     assert room_id is not None
 
@@ -174,6 +177,7 @@ def _seed_room_session(tmp_path: Path) -> tuple[int, int, datetime]:
         room = LiveRoom(input_url="control", room_id=200, authorized=True, auto_record=True, enabled=True)
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         session = RecordingSession(
             room_id=room.id,
             status=SessionStatus.RECORDING,
@@ -192,19 +196,20 @@ def test_dashboard_uses_shared_recording_runtime(temp_db: None) -> None:
     """仪表盘必须读取录制控制 API 使用的同一份运行时状态。"""
     from app.db.entities import LiveRoom, SessionStatus
     from app.db.session import get_session
-    from app.web import service
+    from app.web.services import dashboard as dashboard_service
     from app.web.services.rooms import recorder_manager
 
     with get_session() as db:
         room = LiveRoom(input_url="dashboard-runtime", room_id=201, authorized=True)
         db.add(room)
         db.flush()
+        bind_bilibili_room(db, room)
         room_id = room.id
     assert room_id is not None
 
     recorder_manager._set_state(room_id, SessionStatus.RECORDING, session_id=42)  # noqa: SLF001
     try:
-        payload = service.dashboard_state()
+        payload = dashboard_service.dashboard_state()
         room_payload = next(item for item in payload["rooms"] if item["id"] == room_id)
         assert room_payload["running"] is False
         assert room_payload["recording_state"] == SessionStatus.RECORDING
@@ -663,7 +668,7 @@ async def test_retry_exhaustion_waits_for_a_real_offline_transition(
     from app.db.entities import LiveRoom
     from app.db.session import get_session
     from app.pipeline import live_monitor as live_monitor_module
-    from app.web import service as service_module
+    from app.web.services import rooms as rooms_service
     from app.web.services.rooms import RecorderManager
 
     room_id, session_id, _ = _seed_room_session(tmp_path)
@@ -710,7 +715,7 @@ async def test_retry_exhaustion_waits_for_a_real_offline_transition(
 
     monkeypatch.setattr("app.sources.bilibili.source.BilibiliLiveClient", lambda **_kwargs: FakeClient())
     monkeypatch.setattr("app.sources.bilibili.source.get_bilibili_cookie", lambda: "")
-    monkeypatch.setattr(service_module, "recorder_manager", manager)
+    monkeypatch.setattr(rooms_service, "recorder_manager", manager)
     monitor = live_monitor_module.LiveMonitor()
     monitor._stop = asyncio.Event()  # noqa: SLF001
     monkeypatch.setattr(monitor, "_start_recording", fake_start)

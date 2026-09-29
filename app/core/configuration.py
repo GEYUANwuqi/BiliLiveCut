@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import AbstractContextManager, ExitStack
 from threading import RLock
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
@@ -27,11 +26,6 @@ BOOTSTRAP = {
     "log_level": "日志输出在启动时配置；修改部署配置后重启。",
     "admin_password": "管理员凭据影响服务绑定与认证；在部署配置中修改后重启。",
     "reviewer_accounts_json": "审核员凭据在启动时加载；在部署配置中修改后重启。",
-}
-REPLACED = {
-    "asr_confidence_threshold": "原始置信度不能跨引擎比较；使用 asr_review_risk_threshold。",
-    "asr_model_revision": "模型版本由每个后端的模型目录统一锁定；不能使用全局版本覆盖。",
-    "uploader": "实际上传方式由 biliup_enabled 控制；关闭时使用手动导出。",
 }
 SECRETS = {
     "admin_password",
@@ -102,9 +96,7 @@ def _decode(key: str, value: str) -> JsonValue:
 
 def _validated(stored: dict[str, str]) -> tuple[Settings, RuntimeOptions]:
     values = {
-        key: _decode(key, value)
-        for key, value in stored.items()
-        if key in _known_keys() and key not in BOOTSTRAP | REPLACED
+        key: _decode(key, value) for key, value in stored.items() if key in _known_keys() and key not in BOOTSTRAP
     }
     core = get_settings().model_dump()
     core.update({key: value for key, value in values.items() if key in Settings.model_fields})
@@ -118,7 +110,7 @@ def _read_rows(db: Session | None = None) -> tuple[dict[str, str], int]:
         with get_session() as session:
             return _read_rows(session)
     rows = db.exec(select(AppSetting).where(AppSetting.key.in_(_known_keys() | {_REVISION}))).all()
-    values = {row.key: row.value for row in rows if row.key not in BOOTSTRAP | REPLACED}
+    values = {row.key: row.value for row in rows if row.key not in BOOTSTRAP}
     revision = int(values.pop(_REVISION, "0"))
     return values, revision
 
@@ -141,13 +133,9 @@ def _publication(
     db: Session, stored: dict[str, str], core: Settings, runtime: RuntimeOptions
 ) -> tuple[dict[str, object], dict[str, str]]:
     """在当前事务中准备完整快照，提交后不再进行可能失败的数据库读取。"""
-    overrides = {
-        key: getattr(core, key) for key in stored if key in Settings.model_fields and key not in BOOTSTRAP | REPLACED
-    }
+    overrides = {key: getattr(core, key) for key in stored if key in Settings.model_fields and key not in BOOTSTRAP}
     extras = {key: _encode(value) for key, value in runtime.model_dump().items()}
-    extras.update(
-        {key: _encode(getattr(core, key)) for key in Settings.model_fields if key not in BOOTSTRAP | REPLACED}
-    )
+    extras.update({key: _encode(getattr(core, key)) for key in Settings.model_fields if key not in BOOTSTRAP})
     for row in db.exec(
         select(AppSetting).where((AppSetting.key == "llm_providers") | AppSetting.key.startswith("plugin."))
     ).all():
@@ -160,9 +148,7 @@ def _encode(value: object) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
-def save_configuration(
-    change: ConfigurationChange, *, external_change: AbstractContextManager[None] | None = None
-) -> dict[str, JsonValue]:
+def save_configuration(change: ConfigurationChange) -> dict[str, JsonValue]:
     """完整验证后在一个 SQLite 事务内保存，非法或冲突请求零写入。"""
     requested = set(change.values) | set(change.clear) | set(change.reset)
     unknown = requested - _known_keys()
@@ -170,8 +156,8 @@ def save_configuration(
         raise ValueError("存在未注册的配置项")
     if any(not isinstance(value, str) for key, value in change.values.items() if key in SECRETS):
         raise ValueError("凭据必须为文本；清空请使用 clear 操作")
-    if requested & (BOOTSTRAP.keys() | REPLACED.keys()):
-        raise ValueError("请求包含只读部署配置或已替代的配置项")
+    if requested & BOOTSTRAP.keys():
+        raise ValueError("请求包含只读部署配置")
     if len(change.clear) != len(set(change.clear)) or len(change.reset) != len(set(change.reset)):
         raise ValueError("操作列表不能重复")
     if (
@@ -181,7 +167,7 @@ def save_configuration(
     ):
         raise ValueError("同一配置不能同时设置、清空或恢复；只有凭据支持清空")
     with _LOCK:
-        with ExitStack() as external, get_session() as db:
+        with get_session() as db:
             db.connection().execute(text("BEGIN IMMEDIATE"))
             rows = {
                 row.key: row
@@ -230,8 +216,6 @@ def save_configuration(
             db.add(version)
             overrides, extras = _publication(db, stored, core, runtime)
             response = _configuration_view(stored, revision + 1, core, runtime)
-            if external_change is not None:
-                external.enter_context(external_change)
         publish_settings(overrides, extras)
         return response
 
@@ -288,7 +272,7 @@ def _configuration_view(
     for key, schema in schemas.items():
         secret = key in SECRETS
         group = _group(key)
-        reason = BOOTSTRAP.get(key) or REPLACED.get(key)
+        reason = BOOTSTRAP.get(key)
         effect = "next_recording" if group == "recording" else "next_task"
         if group in {"review", "system"} or key == "asr_task_max_concurrency":
             effect = "immediate"

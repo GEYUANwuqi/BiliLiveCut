@@ -20,6 +20,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
+
 # ── 镜像配置 ──────────────────────────────────────────────
 
 HF_MIRRORS = [
@@ -104,7 +106,11 @@ def _staging_complete(
         payload = json.loads(marker.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
-    return payload == {"content_fingerprint": fingerprint}
+    return payload == {
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
+        "content_fingerprint": fingerprint,
+    }
 
 
 def _release_smoke_provider_enabled() -> bool:
@@ -255,7 +261,7 @@ def download_all_engines(
             "model_set_fingerprint": model_set_fingerprint(desired),
         }
 
-    staging_root = app_root / ".model-staging"
+    staging_root = app_root / ".model-staging" / f"{RELEASE_VERSION}-{SOURCE_COMMIT_FULL}"
     staging_root.mkdir(parents=True, exist_ok=True)
     installed_now: list[str] = []
     resumed: list[str] = []
@@ -313,7 +319,15 @@ def download_all_engines(
             if missing:
                 raise RuntimeError(f"Engine {engine_id} download incomplete; missing required files: {missing}")
             marker.write_text(
-                json.dumps({"content_fingerprint": fingerprint}, ensure_ascii=False, sort_keys=True),
+                json.dumps(
+                    {
+                        "release_version": RELEASE_VERSION,
+                        "source_commit": SOURCE_COMMIT_FULL,
+                        "content_fingerprint": fingerprint,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 encoding="utf-8",
             )
 

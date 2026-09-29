@@ -50,7 +50,7 @@ class PrecheckResult:
 
 @dataclass(slots=True)
 class UploadResult:
-    """一次上传执行的结果 (兼容上传器的 upload() 接口)。
+    """一次上传执行的显式结果。
 
     :param success: 是否成功。
     :param remote_id: 平台返回的稿件号(若有)。
@@ -58,9 +58,9 @@ class UploadResult:
     """
 
     success: bool
+    outcome: str
     remote_id: str | None = None
     message: str = ""
-    outcome: str | None = None
     request_may_have_been_sent: bool = False
 
 
@@ -215,7 +215,7 @@ class ManualUploader(Uploader):
         export_manifest(clip["id"])
         msg = "manual 模式:已导出待上传清单,请在 B 站官方渠道手动投稿(未调用任何平台接口)。"
         logger.info("[manual] clip={} {}", clip["id"], msg)
-        return UploadResult(success=True, remote_id="manual", message=msg)
+        return UploadResult(success=True, outcome="success", remote_id="manual", message=msg)
 
 
 class BiliupUploader(Uploader):

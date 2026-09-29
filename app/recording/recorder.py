@@ -787,7 +787,6 @@ class Recorder:
         *,
         status: str | None = None,
         stream_format: str | None = None,
-        quality: int | None = None,
         error_message: str | None = None,
         ended: bool = False,
         reconnected: bool = False,
@@ -796,7 +795,6 @@ class Recorder:
 
         :param status: 新状态。
         :param stream_format: 流协议。
-        :param quality: 清晰度码。
         :param error_message: 错误信息。
         :param ended: 是否标记结束时间。
         :param reconnected: 是否标记最近重连成功时间(V0.1.2 新增)。
@@ -811,8 +809,6 @@ class Recorder:
                 session.status = status
             if stream_format is not None:
                 session.stream_format = stream_format
-            if quality is not None:
-                session.quality = quality
             if error_message is not None:
                 session.error_message = error_message
             if ended:

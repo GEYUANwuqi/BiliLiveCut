@@ -1,4 +1,4 @@
-"""Path utilities for clip rendering — lease partial, final, backup paths.
+"""Path utilities for clip rendering — lease partial and final paths.
 
 All formal paths are keyed by (event_id, variant_type, render_config_hash),
 NOT just by candidate_id, to support multi-variant, multi-config rendering.
@@ -7,7 +7,6 @@ NOT just by candidate_id, to support multi-variant, multi-config rendering.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.paths import clips_dir
@@ -41,19 +40,6 @@ def build_final_clip_path(
     """
     short_hash = render_config_hash[:8] if render_config_hash else "default"
     return str(Path(clips_dir()) / f"clip_{event_id}_{variant_type}_{short_hash}.mp4")
-
-
-def build_backup_path(variant_id: int, generation: int = 1) -> str:
-    """生成旧正式文件的备份路径 (替换前备份)。
-
-    格式: clips_dir/clip_backup_{variant_id}_gen{generation}_{ts}.bak
-
-    :param variant_id: ClipVariant ID。
-    :param generation: 当前 generation 编号。
-    :returns: 备份文件绝对路径。
-    """
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    return str(Path(clips_dir()) / f"clip_backup_{variant_id}_gen{generation}_{ts}.bak")
 
 
 def build_generation_clip_path(base_path: str, variant_id: int, generation: int, lease_token: str) -> str:

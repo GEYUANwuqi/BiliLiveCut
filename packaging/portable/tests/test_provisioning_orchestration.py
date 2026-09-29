@@ -80,8 +80,24 @@ def test_clean_install_runs_real_external_provisioner(
     assert result["installed_engines"] == ["whisper", "paraformer", "sensevoice", "funasr_nano"]
     assert Path(result["provisioning_interpreter"]) == Path(sys.executable).resolve()
     installed = json.loads((tmp_path / "models" / "engine-pack-installed.json").read_text(encoding="utf-8"))
-    assert installed["schema_version"] == 6
+    assert installed["schema_version"] == 7
     assert set(installed["engines"]) == {"whisper", "paraformer", "sensevoice", "funasr_nano"}
+
+
+@pytest.mark.parametrize("field,value", [("schema_version", 6), ("release_version", "0.1.18.4-alpha")])
+def test_old_installed_models_are_reprovisioned_by_real_child(
+    tmp_path: Path, monkeypatch: MonkeyPatch, field: str, value: str | int
+) -> None:
+    _enable_tiny_provider(monkeypatch)
+    _prepare_with_real_child(tmp_path)
+    path = tmp_path / "models/engine-pack-installed.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old[field] = value
+    path.write_text(json.dumps(old), encoding="utf-8")
+    result = _prepare_with_real_child(tmp_path)
+    assert result["source"] == "online_download" and result["network_requests"] == 4
+    reused = _prepare_with_real_child(tmp_path)
+    assert reused["source"] == "already_installed"
 
 
 def test_relocated_frozen_provisioner_uses_explicit_config_root(

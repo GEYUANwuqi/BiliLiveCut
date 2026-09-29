@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.db.entities import CandidateStatus
-from app.web import service
+from app.web.services import candidates as candidates_service
+from app.web.services import clips as clips_service
 
 _MAX_QUERY_LIMIT = 500
 _MAX_QUERY_DAYS = 365
@@ -43,7 +44,7 @@ router = APIRouter()
 def get_candidates(limit: int = 50, status: str | None = None) -> list[dict[str, Any]]:
     """返回高光候选列表。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.list_candidates(limit=limit, status=status)
+    return candidates_service.list_candidates(limit=limit, status=status)
 
 
 @router.post("/candidates/{candidate_id}/approve")
@@ -80,7 +81,7 @@ def reject_candidate(candidate_id: int, request: Request) -> dict[str, str]:
 
     actor, _ = review_actor(request)
     try:
-        service.set_candidate_status(candidate_id, CandidateStatus.REJECTED, reviewed_by=actor)
+        candidates_service.set_candidate_status(candidate_id, CandidateStatus.REJECTED, reviewed_by=actor)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "rejected"}
@@ -89,7 +90,7 @@ def reject_candidate(candidate_id: int, request: Request) -> dict[str, str]:
 @router.delete("/candidates/{candidate_id}")
 def remove_candidate(candidate_id: int) -> dict[str, str]:
     """删除候选。"""
-    service.delete_candidate(candidate_id)
+    candidates_service.delete_candidate(candidate_id)
     return {"status": "deleted"}
 
 
@@ -131,13 +132,13 @@ async def batch_candidates(request: BatchRequest, http_request: Request) -> dict
                 from app.web.services.review_workflow import review_actor
 
                 actor, _ = review_actor(http_request)
-                service.set_candidate_status(cid, CandidateStatus.REJECTED, reviewed_by=actor)
+                candidates_service.set_candidate_status(cid, CandidateStatus.REJECTED, reviewed_by=actor)
                 results.append({"candidate_id": cid, "status": "rejected"})
             elif request.action == "publish":
-                result = service.publish_clip(cid)
+                result = clips_service.publish_clip(cid)
                 results.append({"candidate_id": cid, "status": "ready", **result})
             elif request.action == "delete":
-                service.delete_candidate(cid)
+                candidates_service.delete_candidate(cid)
                 results.append({"candidate_id": cid, "status": "deleted"})
             else:
                 raise HTTPException(status_code=400, detail=f"未知操作: {request.action}")

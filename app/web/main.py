@@ -26,7 +26,6 @@ from loguru import logger
 from app import __version__, __version_label__
 from app.core.logging import setup_logging
 from app.db.session import init_db
-from app.web import service
 from app.web.routers.api import router as api_router
 from app.web.routers.collection_router import collection_router
 from app.web.routers.intro_template_router import router as intro_template_router
@@ -34,6 +33,9 @@ from app.web.routers.monitor_router import monitor_router
 from app.web.routers.plugins import page_router as plugin_page_router
 from app.web.routers.review_router import review_router
 from app.web.routers.subtitle_template_router import router as subtitle_template_router
+from app.web.services import notifications as notifications_service
+from app.web.services import rooms as rooms_service
+from app.web.services import schedules as schedules_service
 
 _BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
@@ -116,7 +118,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from app.plugins.manager import plugin_manager
     from app.trends.scheduler import trend_scheduler
 
-    trend_scheduler.start(recording_active=lambda: bool(service.recorder_manager.running_ids()))
+    trend_scheduler.start(recording_active=lambda: bool(rooms_service.recorder_manager.running_ids()))
     await plugin_manager.start()
 
     # V0.1.6:启动持久化任务队列 Worker。
@@ -129,7 +131,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # V0.1.2:自动恢复中断的录制会话。
     try:
-        recovered = await service.auto_recover_interrupted_sessions()
+        recovered = await rooms_service.auto_recover_interrupted_sessions()
         if recovered:
             logger.info("已恢复 {} 个中断的录制会话。", len(recovered))
     except Exception as exc:  # noqa: BLE001
@@ -154,7 +156,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             pass
         await trend_scheduler.stop()
         await live_monitor.stop()
-        await service.recorder_manager.stop_all()
+        await rooms_service.recorder_manager.stop_all()
         await plugin_manager.stop()
         await web_job_manager.stop()
         await task_worker.stop()
@@ -181,17 +183,19 @@ async def _run_due_schedules() -> None:
     from app.db.session import get_session
     from app.web.services.schedules import complete_schedule_occurrence
 
-    for item in service.get_due_schedules():
+    for item in schedules_service.get_due_schedules():
         error: str | None = None
         try:
-            if not service.recorder_manager.is_running(item["room_id"]):
+            if not rooms_service.recorder_manager.is_running(item["room_id"]):
                 with get_session() as db:
                     room = db.get(LiveRoom, item["room_id"])
                     if room is None:
                         raise ValueError("预约直播间已不存在")
                     pipeline, produce = room.auto_analyze, room.auto_render
-                await service.recorder_manager.start(item["room_id"], pipeline=pipeline, produce=produce)
-                service.push_notification(f"预约触发：房间 #{item['room_id']} 已开始录制。", kind="success")
+                await rooms_service.recorder_manager.start(item["room_id"], pipeline=pipeline, produce=produce)
+                notifications_service.push_notification(
+                    f"预约触发：房间 #{item['room_id']} 已开始录制。", kind="success"
+                )
         except (ValueError, RuntimeError) as exc:
             error = str(exc)
             logger.warning("预约触发失败 room={}: {}", item["room_id"], exc)

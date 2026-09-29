@@ -2,7 +2,7 @@
 
 覆盖:
 - 三个导入路径的类型 identity (backends / pipeline / models 返回相同类)
-- 每引擎使用自身 revision (不共用全局 settings.asr_model_revision)
+- 每引擎使用自身 revision (按模型目录独立锁定)
 - provenance 字段 (model_source / model_catalog_id / loaded_from)
 - catalog 与 Engine Pack model lock 一致
 - production 门禁 (无短 hash / tag / 空 files)
@@ -55,8 +55,8 @@ class TestTypeIdentity:
 
     def test_transcriber_backend_is_same_object(self) -> None:
         """TranscriberBackend 在公共 API 中是同一对象。"""
-        from app.analysis.transcription import TranscriberBackend as b_type
         from app.analysis.transcription.models import TranscriberBackend as m_type
+        from app.analysis.transcription.pipeline import TranscriberBackend as b_type
 
         assert m_type is b_type, "TranscriberBackend differs"
 
@@ -65,7 +65,7 @@ class TestTypeIdentity:
 
 
 class TestPerEngineRevision:
-    """验证每个引擎使用自身 revision，不共用 settings.asr_model_revision。"""
+    """验证每个引擎使用自身 revision，由模型目录独立锁定。"""
 
     def test_funasr_backend_has_per_engine_revisions(self) -> None:
         """FunASRBackend 有独立 per-engine revision 属性。"""
@@ -86,16 +86,14 @@ class TestPerEngineRevision:
         assert FunASRBackend._REVISION_NANO is not None
 
     def test_model_revision_not_using_global_setting_directly(self) -> None:
-        """model_revision property 使用 _REVISION_PRIMARY 而非 settings.asr_model_revision。"""
+        """model_revision property 使用目录锁定的 _REVISION_PRIMARY。"""
         # Verify by inspection: the property code uses _REVISION_PRIMARY
         import inspect
 
         from app.analysis.transcription.backends import FunASRBackend
 
         source = inspect.getsource(FunASRBackend.model_revision.fget)  # type: ignore[arg-type]
-        assert "_REVISION_PRIMARY" in source, (
-            "model_revision should use _REVISION_PRIMARY, not settings.asr_model_revision"
-        )
+        assert "_REVISION_PRIMARY" in source, "model_revision should use catalog-locked _REVISION_PRIMARY"
 
     def test_load_primary_uses_per_engine_revision(self) -> None:
         """_load_primary 使用 _REVISION_PRIMARY 而非 settings。"""
@@ -242,11 +240,11 @@ class TestModelCatalogConsistency:
 # ── 公共 facade 类型一致性 ─────────────────────────────
 
 
-class TestFacadeTypeConsistency:
-    """公共 facade 导出的类型与 backend 实际返回类型完全相同。"""
+class TestTranscriptionModuleBoundaries:
+    """模型定义归属唯一，已移除的聚合导入不再暴露。"""
 
-    def test_init_exports_correct_types(self) -> None:
-        """__init__.py 导出正确的类型。"""
+    def test_package_does_not_export_old_single_module_symbols(self) -> None:
+        """旧单模块符号不能从包级别导入。"""
         import app.analysis.transcription as t
 
         for name in [
@@ -259,7 +257,7 @@ class TestFacadeTypeConsistency:
             "FasterWhisperBackend",
             "ASRPipeline",
         ]:
-            assert hasattr(t, name), f"__init__.py missing export: {name}"
+            assert not hasattr(t, name), f"unexpected old export: {name}"
 
     def test_models_are_single_source(self) -> None:
         """数据模型只在 models.py 中定义，不在 backends.py / pipeline.py 重复。"""

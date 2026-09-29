@@ -25,7 +25,7 @@ def recover_publish_results() -> int:
     1. 读取所有待回填 Journal 条目
     2. 按 attempt_token + publish_generation 查找对应 UploadAttempt
     3. 若 attempt 存在且非 SUCCESS → 更新为 SUCCESS + 更新 UploadTask
-    4. 回填成功 → 从 Journal 中删除对应行
+    4. 回填成功 → 从 Journal 中删除对应独立文件
 
     :returns: 恢复的条目数量。
     """

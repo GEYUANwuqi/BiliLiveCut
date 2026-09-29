@@ -34,6 +34,7 @@ htmlcov/
 /tests/*
 !/tests/test_version_consistency.py
 !/tests/test_model_catalog.py
+!/tests/source_fixtures.py
 !/tests/unit/
 !/tests/unit/test_asr_architecture.py
 !/tests/unit/test_native_parity.py

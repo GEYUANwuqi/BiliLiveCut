@@ -23,7 +23,7 @@ def _journal_path() -> Path:
     """每次写入独立文件，避免回放重写覆盖同时追加的成功结果。"""
     _JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now(UTC).strftime("%Y%m%d")
-    return _JOURNAL_DIR / f"publish_journal_{today}_{uuid4().hex}.jsonl"
+    return _JOURNAL_DIR / f"publish_journal_{today}_{uuid4().hex}.json"
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -49,7 +49,7 @@ def write_remote_success(
     platform: str = "bilibili",
     finished_at: str | None = None,
 ) -> bool:
-    """持久化远程成功结果（独立行式 JSON 文件，原子写入）。
+    """持久化远程成功结果（独立 JSON 文件，原子写入）。
 
     调用时机: 远程返回 SUCCESS 但 DB submit 失败时。
 
@@ -87,68 +87,39 @@ def write_remote_success(
         return False
 
 
+def _read_entry(path: Path) -> dict[str, str | int | None] | None:
+    """只读取当前单条 JSON 文件，损坏文件留在原处供排查。"""
+    try:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning("journal_read_error: {} error={}", path, exc)
+        return None
+    if isinstance(entry, dict) and all(value is None or isinstance(value, (str, int)) for value in entry.values()):
+        return entry
+    return None
+
+
 def read_pending_entries() -> list[dict[str, str | int | None]]:
-    """读取所有尚未回填的 Journal 条目。
-
-    :returns: 条目列表 (按时间顺序)。
-    """
-    entries: list[dict[str, str | int | None]] = []
-    if not _JOURNAL_DIR.exists():
-        return entries
-
-    for path in sorted(_JOURNAL_DIR.glob("publish_journal_*.jsonl")):
-        try:
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError as exc:
-                            logger.warning("journal_read_error: {} error={}", path, exc)
-                            continue
-                        if isinstance(entry, dict) and all(
-                            value is None or isinstance(value, (str, int)) for value in entry.values()
-                        ):
-                            entries.append(entry)
-        except OSError as exc:
-            logger.warning("journal_read_error: {} error={}", path, exc)
-
-    return entries
+    """按文件时间顺序读取当前独立日志，不读取或迁移旧多行日志。"""
+    return [
+        entry
+        for path in sorted(_JOURNAL_DIR.glob("publish_journal_*.json"))
+        if (entry := _read_entry(path)) is not None
+    ]
 
 
 def mark_replayed(attempt_token: str, publish_generation: int) -> bool:
-    """标记某个 Journal 条目已被回填 (删除对应行)。
-
-    兼容旧版多行日志；原子重写去除对应行，新写入使用独立文件。
-
-    :param attempt_token: 已回填的 attempt 令牌。
-    :param publish_generation: 对应代数。
-    :returns: True 表示操作成功。
-    """
-    for path in sorted(_JOURNAL_DIR.glob("publish_journal_*.jsonl")):
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            new_lines: list[str] = []
-            for line in lines:
-                line_s = line.strip()
-                if not line_s:
-                    continue
-                try:
-                    entry = json.loads(line_s)
-                except json.JSONDecodeError:
-                    new_lines.append(line)
-                    continue
-                if isinstance(entry, dict) and (
-                    entry.get("attempt_token") == attempt_token
-                    and entry.get("publish_generation") == publish_generation
-                ):
-                    continue
-                new_lines.append(line)
-            if len(new_lines) < len(lines):
-                _atomic_write(path, "".join(new_lines))
+    """回填成功后仅删除对应独立文件，不重写其他成功结果。"""
+    for path in sorted(_JOURNAL_DIR.glob("publish_journal_*.json")):
+        entry = _read_entry(path)
+        if (
+            entry is not None
+            and entry.get("attempt_token") == attempt_token
+            and entry.get("publish_generation") == publish_generation
+        ):
+            try:
+                path.unlink(missing_ok=True)
                 return True
-        except OSError as exc:
-            logger.warning("journal_mark_replayed_failed: {} error={}", path, exc)
-
+            except OSError as exc:
+                logger.warning("journal_mark_replayed_failed: {} error={}", path, exc)
     return False

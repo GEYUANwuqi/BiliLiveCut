@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.entities import Danmaku, LiveRoom, RawSegment, RecordingSession, Transcript
 from app.db.session import get_session
 from app.pipeline.highlight_plugins import build_highlight_scoring_request
+from tests.source_fixtures import add_danmaku_evidence
 
 
 def test_host_builds_complete_highlight_request_without_exposing_orm(
@@ -29,6 +30,7 @@ def test_host_builds_complete_highlight_request_without_exposing_orm(
         db.add(recording)
         db.flush()
         assert recording.id is not None
+        add_danmaku_evidence(db, recording.id, started_at, started_at + timedelta(seconds=120))
         segment = RawSegment(
             session_id=recording.id,
             seq=0,

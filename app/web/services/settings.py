@@ -46,38 +46,14 @@ def get_settings_view() -> dict[str, Any]:
         "auto_upload": settings_store.auto_upload_enabled(),
         "upload_active": settings_store.upload_active(),
         "biliup_cmd_configured": bool(settings.biliup_upload_cmd.strip()),
-        "default_uploader": settings.uploader,
         "clips_dir": str(clips_dir()),
         "ready_dir": str(ready_to_upload_dir()),
     }
 
 
-def update_settings(fields: dict[str, Any]) -> dict[str, Any]:
-    """整体校验后保存；保留旧接口的端口与开关联合提交契约。"""
-    from collections.abc import Iterator
-    from contextlib import contextmanager
-
-    from sqlalchemy.exc import SQLAlchemyError
-
-    from app.core.configuration import ConfigurationChange, save_configuration
-
-    values = {key: value for key, value in fields.items() if value is not None and key != "web_port"}
-    port = validate_web_port(fields["web_port"]) if fields.get("web_port") is not None else None
-
-    @contextmanager
-    def launcher_change() -> Iterator[None]:
-        if port is None:
-            yield
-            return
-        previous = load_launcher_config(runtime_app_root(), warn=logger.warning).web_port
-        save_launcher_config(runtime_app_root(), web_port=port)
-        try:
-            yield
-        except (SQLAlchemyError, OSError, ValueError, RuntimeError):
-            save_launcher_config(runtime_app_root(), web_port=previous)
-            raise
-
-    save_configuration(ConfigurationChange(values=values), external_change=launcher_change())
+def update_web_port(port: int) -> dict[str, Any]:
+    """校验并保存启动端口，业务设置统一由配置中心处理。"""
+    save_launcher_config(runtime_app_root(), web_port=validate_web_port(port))
     return get_settings_view()
 
 

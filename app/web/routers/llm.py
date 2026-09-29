@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from app.web import service
+from app.web.services import settings as settings_service
 
 
 class LLMProviderIn(BaseModel):
@@ -42,14 +42,14 @@ router = APIRouter()
 @router.get("/llm-providers")
 def get_llm_providers() -> dict[str, Any]:
     """返回多大模型配置(key 掩码)与可用数量。"""
-    return service.list_llm_providers()
+    return settings_service.list_llm_providers()
 
 
 @router.put("/llm-providers")
 def put_llm_providers(req: LLMProvidersRequest) -> dict[str, Any]:
     """保存多大模型配置(按优先级失败回退；未填 key 保留已保存值)。"""
     try:
-        return service.save_llm_providers([p.model_dump() for p in req.providers])
+        return settings_service.save_llm_providers([p.model_dump() for p in req.providers])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -58,4 +58,4 @@ def put_llm_providers(req: LLMProvidersRequest) -> dict[str, Any]:
 async def test_llm_providers(req: LLMProvidersRequest | None = None) -> dict[str, Any]:
     """逐个测试当前表单或已保存大模型的连通性，不持久化草稿。"""
     items = None if req is None else [p.model_dump() for p in req.providers]
-    return await service.test_llm_providers(items)
+    return await settings_service.test_llm_providers(items)

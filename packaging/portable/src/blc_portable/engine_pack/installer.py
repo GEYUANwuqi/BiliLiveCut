@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.atomic_fs import replace_with_retry
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
 
 from .identity import (
     IDENTITY_SCHEMA_VERSION,
@@ -25,9 +26,11 @@ from .identity import (
 
 CHUNK_SIZE = 8 * 1024 * 1024
 INSTALLED_MANIFEST_NAME = "engine-pack-installed.json"
-INSTALLED_MANIFEST_SCHEMA = 6
+INSTALLED_MANIFEST_SCHEMA = 7
 _CURRENT_MANIFEST_FIELDS = {
     "schema_version",
+    "release_version",
+    "source_commit",
     "identity_schema_version",
     "model_set_fingerprint",
     "installed_at",
@@ -161,7 +164,7 @@ def _new_engine_record(
     installation_source: str,
     zip_sha256: str | None,
 ) -> dict[str, object]:
-    """Create one schema-6 installed-engine record."""
+    """Create one current installed-engine record."""
     entries = _collect_engine_files(engine_dir)
     if not entries:
         raise RuntimeError(f"Engine directory is empty: {engine_id}")
@@ -183,10 +186,12 @@ def _write_current_manifest(
     engine_records: Mapping[str, Mapping[str, object]],
     desired: Mapping[str, Mapping[str, object]],
 ) -> None:
-    """Atomically write the release-independent installed-model manifest."""
+    """Atomically write the installed-model manifest for this release."""
     models_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": INSTALLED_MANIFEST_SCHEMA,
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
         "identity_schema_version": IDENTITY_SCHEMA_VERSION,
         "model_set_fingerprint": model_set_fingerprint(desired),
         "installed_at": dt.datetime.now(dt.UTC).isoformat(),
@@ -267,7 +272,9 @@ def _load_current_manifest(models_dir: Path) -> tuple[dict[str, Any] | None, lis
     if installed.get("schema_version") != INSTALLED_MANIFEST_SCHEMA:
         return None, [f"Installed manifest schema unsupported: {installed.get('schema_version')}"]
     if set(installed) != _CURRENT_MANIFEST_FIELDS:
-        return None, ["Installed manifest schema-6 fields invalid"]
+        return None, ["Installed manifest fields invalid"]
+    if installed["release_version"] != RELEASE_VERSION or installed["source_commit"] != SOURCE_COMMIT_FULL:
+        return None, ["Installed manifest release identity mismatch"]
     if installed.get("identity_schema_version") != IDENTITY_SCHEMA_VERSION:
         return None, ["Installed manifest identity schema mismatch"]
     if not isinstance(installed.get("engines"), dict):

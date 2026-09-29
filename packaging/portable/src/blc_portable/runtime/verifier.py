@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from blc_portable.runtime.activation import RUNTIME_SCHEMA_VERSION
+from blc_portable.runtime.activation import read_current_json
 
 
 def _streaming_sha256(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
@@ -42,30 +42,9 @@ def verify_runtime(app_root: Path) -> tuple[bool, list[str]]:
         errors.append("current.json 不存在")
         return False, errors
 
-    try:
-        info = json.loads(current_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        errors.append(f"current.json 无法解析: {exc}")
-        return False, errors
-
-    # 2. Release ID
-    expected_fields = {
-        "runtime_schema",
-        "release_id",
-        "release_version",
-        "source_commit",
-        "source_commit_short",
-        "builder_commit",
-        "payload_sha256",
-        "manifest_sha256",
-        "python_abi",
-        "platform",
-        "architecture",
-        "activated_at",
-    }
-    if set(info) != expected_fields:
-        errors.append("current.json 字段不符合当前 Runtime Schema")
-        return False, errors
+    info = read_current_json(app_root)
+    if info is None:
+        return False, ["current.json 不符合当前发行版本、源码身份或 Runtime Schema"]
 
     rid = info["release_id"]
     if not rid:
@@ -96,11 +75,6 @@ def verify_runtime(app_root: Path) -> tuple[bool, list[str]]:
     payload_sha = info["payload_sha256"]
     if not payload_sha:
         errors.append("current.json payload_sha256 为空")
-
-    # 7. Schema
-    schema = info["runtime_schema"]
-    if schema != RUNTIME_SCHEMA_VERSION:
-        errors.append(f"runtime_schema invalid: {schema}, expected={RUNTIME_SCHEMA_VERSION}")
 
     return len(errors) == 0, errors
 

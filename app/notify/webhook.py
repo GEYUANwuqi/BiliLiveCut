@@ -6,7 +6,7 @@
 - SMTP 邮件
 
 典型调用点:
-- 切片完成(clipper.py produce_clip 末尾)
+- 切片完成(clipping/core.py produce_clip 末尾)
 - 磁盘告警(monitor 阈值触发)
 - 任务永久失败(task worker)
 """

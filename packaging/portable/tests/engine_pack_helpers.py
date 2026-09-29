@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
+
 
 def current_manifest(files: dict[str, dict[str, object]] | None = None) -> dict[str, Any]:
     """构造字段完整、身份固定的当前内部 Manifest。"""
@@ -74,6 +76,8 @@ def installed_manifest(
         }
     return {
         "schema_version": INSTALLED_MANIFEST_SCHEMA,
+        "release_version": RELEASE_VERSION,
+        "source_commit": SOURCE_COMMIT_FULL,
         "identity_schema_version": 1,
         "model_set_fingerprint": model_set_fingerprint(desired),
         "installed_at": "2026-08-12T00:00:00+00:00",

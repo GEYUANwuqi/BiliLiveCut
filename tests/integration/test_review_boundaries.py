@@ -176,7 +176,7 @@ def test_rerender_uses_committed_adjusted_boundary_and_versioned_path(
 
 def test_validate_clip_boundary_rejects_recording_gap(temp_db: None, tmp_path: Path) -> None:
     """跨越真实录像缺口的剪辑边界必须被拒绝。"""
-    from app.clipping.clipper import validate_clip_boundary
+    from app.clipping.core import validate_clip_boundary
     from app.db.entities import LiveRoom, RawSegment, RecordingSession
     from app.db.session import get_session
 

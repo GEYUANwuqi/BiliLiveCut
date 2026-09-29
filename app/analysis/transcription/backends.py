@@ -103,7 +103,7 @@ class FunASRBackend:
 
     首次调用时懒加载模型, 进程内单例缓存。
 
-    V0.1.14.11: 每引擎使用 model catalog 独立 revision, 不再共用 settings.asr_model_revision。
+    每个引擎使用 model catalog 锁定的独立 revision。
 
     :param primary: Paraformer 模型名, 默认 paraformer-zh。
     :param sensevoice: 是否加载 SenseVoice-Small。
@@ -114,7 +114,7 @@ class FunASRBackend:
     MODEL_ID_SENSEVOICE = "iic/SenseVoiceSmall"
     MODEL_ID_NANO = "FunAudioLLM/Fun-ASR-Nano-2512"
 
-    # Per-engine revisions from model catalog — overrides global settings.asr_model_revision
+    # Per-engine revisions are locked by the model catalog.
     _REVISION_PRIMARY = "v2.0.4"
     _REVISION_SENSEVOICE = "7bf452403abd7353a300cd760f7adae7701c92c1"
     _REVISION_NANO = "05201c46f1c38592b1567f857c0d56eab3d0d8ef"
@@ -179,7 +179,7 @@ class FunASRBackend:
     def _load_primary(self) -> object:
         """Load Paraformer-zh main engine (Chinese ASR + punctuation + timestamps).
 
-        Uses self._REVISION_PRIMARY (per-engine), not global settings.asr_model_revision.
+        Uses the per-engine self._REVISION_PRIMARY.
         """
         try:
             from funasr import AutoModel

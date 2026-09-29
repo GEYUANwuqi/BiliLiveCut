@@ -248,7 +248,6 @@ def commit_render(lease: TaskLease, compute_result: dict[str, Any], ms: int) -> 
             variant.file_hash = compute_result["content_hash"]
             variant.duration_s = compute_result["duration_s"]
             variant.render_status = RenderStatus.QUEUED
-            variant.backup_path = None
             db.add(variant)
 
         Path(temp_path).replace(output_path)

@@ -1456,8 +1456,6 @@ def _score_segment_draft(
         available_start=available_start,
         available_end=available_end,
         peak_offset_s=peak_off,
-        pre_roll_s=cfg.pre_roll_s,
-        post_roll_s=cfg.post_roll_s,
         suggested_start_offset_s=judgement.suggested_start_offset if judgement else None,
         suggested_end_offset_s=judgement.suggested_end_offset if judgement else None,
         silences=feats.silences,

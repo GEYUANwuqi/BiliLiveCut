@@ -7,7 +7,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from app.web import service
+from app.web.services import clips as clips_service
+from app.web.services import notifications as notifications_service
+from app.web.services import publishing as publishing_service
+from app.web.services import settings as settings_service
 
 _MAX_QUERY_LIMIT = 500
 _MAX_QUERY_DAYS = 365
@@ -17,21 +20,12 @@ def _clamp(v, lo, hi):
     return max(lo, min(v, hi))
 
 
-class SettingsRequest(BaseModel):
-    """运行时开关与上传配置请求体。"""
+class WebPortRequest(BaseModel):
+    """下次启动时生效的 Web 端口。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    recording_pipeline_enabled: bool | None = None
-    transcript_llm_refine_enabled: bool | None = None
-    asr_task_max_concurrency: int | None = None
-    web_port: int | None = None
-    biliup_enabled: bool | None = None
-    auto_upload: bool | None = None
-    trend_schedule_enabled: bool | None = None
-    trend_schedule_start: str | None = None
-    trend_schedule_end: str | None = None
-    trend_schedule_interval_min: int | None = None
+    web_port: int
 
 
 router = APIRouter()
@@ -65,14 +59,14 @@ def patch_configuration(req: ConfigurationChange) -> dict[str, Any]:
 @router.get("/settings")
 def get_settings() -> dict[str, Any]:
     """返回可切换的运行时开关与上传配置概览。"""
-    return service.get_settings_view()
+    return settings_service.get_settings_view()
 
 
-@router.patch("/settings")
-def patch_settings(req: SettingsRequest) -> dict[str, Any]:
-    """更新运行时开关(含 biliup 上传总开关、网感定时采集)。"""
+@router.patch("/settings/port")
+def patch_web_port(req: WebPortRequest) -> dict[str, Any]:
+    """更新下次启动的端口。"""
     try:
-        return service.update_settings(req.model_dump(exclude_none=True))
+        return settings_service.update_web_port(req.web_port)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -81,7 +75,7 @@ def patch_settings(req: SettingsRequest) -> dict[str, Any]:
 def get_uploads(limit: int = 50) -> list[dict[str, Any]]:
     """返回上传任务队列。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return service.list_uploads(limit=limit)
+    return publishing_service.list_uploads(limit=limit)
 
 
 @router.post("/clips/{clip_id}/enqueue")
@@ -133,10 +127,10 @@ async def retry_upload(task_id: int, request: Request) -> dict[str, Any]:
 @router.get("/notifications")
 def get_notifications(since_id: int = 0) -> list[dict[str, Any]]:
     """返回比 since_id 更新的通知(供前端轮询弹出提示)。"""
-    return service.get_notifications(since_id=since_id)
+    return notifications_service.get_notifications(since_id=since_id)
 
 
 @router.post("/open-clips-dir")
 def open_clips_dir() -> dict[str, str]:
     """在本机文件管理器打开切片目录。"""
-    return {"clips_dir": service.open_clips_directory()}
+    return {"clips_dir": clips_service.open_clips_directory()}

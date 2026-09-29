@@ -14,7 +14,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal, cast
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -98,15 +98,13 @@ class Settings(BaseSettings):
 
     # ---------- AI:多引擎 ASR 流水线 (V0.1.12) ----------
     # 主引擎: funasr_nano / paraformer / whisper, 默认 Fun-ASR-Nano
-    asr_primary: Literal["funasr_nano", "funasr", "nano", "paraformer", "whisper"] = "funasr_nano"
+    asr_primary: Literal["funasr_nano", "paraformer", "whisper"] = "funasr_nano"
     # 辅助特征提取: SenseVoice-Small (情感/笑声/音乐/事件)
     asr_sensevoice: bool = True
     # 低置信度复核: Fun-ASR-Nano
     asr_funasr_review: bool = True
     # 最终兜底: Whisper (large-v3 / turbo), 保留切换
     asr_fallback_whisper: bool = True
-    # 低置信度阈值 (logprob < 此值触发复核, V0.1.12.2 改为 review_risk_threshold)
-    asr_confidence_threshold: float = -0.6
     # V0.1.12.2: 统一复核风险阈值 (0-1, review_risk_score >= 此值触发复核)
     asr_review_risk_threshold: float = 0.65
     # V0.1.12.2: SenseVoice 使用开关 (独立于模型加载开关 asr_sensevoice)
@@ -114,9 +112,7 @@ class Settings(BaseSettings):
     # FunASR 长音频先由 FSMN-VAD 切为短句，避免生成式解码器处理五分钟单句。
     asr_vad_max_segment_s: int = Field(default=30, ge=5, le=120)
     # 同时执行的分段 ASR 任务数；实际模型实例由共享池按角色并发上限分配。
-    asr_task_max_concurrency: int = Field(
-        default=1, ge=1, le=8, validation_alias=AliasChoices("asr_task_max_concurrency", "MAX_TRANSCRIBING")
-    )
+    asr_task_max_concurrency: int = Field(default=1, ge=1, le=8)
 
     # ---------- V0.1.12.2: 分后端设备与并发控制 ----------
     asr_primary_device: str = "cpu"
@@ -134,8 +130,6 @@ class Settings(BaseSettings):
     asr_fallback_keep_loaded: bool = False
     asr_model_idle_unload_seconds: int = Field(default=900, ge=0, le=86400)
     asr_preload_on_start: bool = False
-    # V0.1.12.2: 固定模型 revision (不再默认 master)
-    asr_model_revision: str = "v2.0.4"
 
     # ---------- AI:大模型(OpenAI 兼容协议,境内推荐 DeepSeek/通义/Kimi/GLM) ----------
     llm_daily_budget: float = Field(default=0.0, ge=0.0)
@@ -227,7 +221,6 @@ class Settings(BaseSettings):
     critical_disk_threshold_gb: float = Field(default=5.0, ge=0.1)
 
     # ---------- 上传 ----------
-    uploader: str = "manual"  # 默认上传器(manual 时不触碰平台接口)
     upload_max_retries: int = Field(default=3, ge=0, le=10)
     upload_max_per_hour: int = Field(default=5, ge=1)  # 投稿频率上限(每小时)
     title_max_len: int = Field(default=80, ge=10, le=200)

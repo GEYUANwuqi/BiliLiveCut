@@ -853,7 +853,6 @@ def recording_status() -> list[dict[str, Any]]:
                     "room_id": s.room_id,
                     "status": s.status,
                     "stream_format": s.stream_format,
-                    "quality": s.quality,
                     "reconnect_count": s.reconnect_count,
                     "last_reconnected_at": s.last_reconnected_at.isoformat() if s.last_reconnected_at else None,
                     "segments": n_seg,
