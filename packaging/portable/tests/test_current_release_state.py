@@ -2,6 +2,7 @@
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,30 @@ import pytest
 _PORTABLE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PORTABLE_DIR / "src"))
 sys.path.insert(0, str(_PORTABLE_DIR / "config"))
+sys.path.insert(0, str(_PORTABLE_DIR / "tests"))
 
 from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL, SOURCE_COMMIT_SHORT
+
+
+def test_payload_core_schema_matches_business_database() -> None:
+    from blc_portable.payload.manifest import _get_core_api_level
+
+    from app.db.schema import CURRENT_SCHEMA_VERSION
+
+    assert _get_core_api_level() == CURRENT_SCHEMA_VERSION
+
+
+def test_payload_rejects_wrong_core_schema(tmp_path: Path) -> None:
+    from blc_portable.payload.manifest import _get_core_api_level, validate_manifest
+    from payload_helpers import manifest_for_zip
+
+    payload = tmp_path / "payload.zip"
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.write(_PORTABLE_DIR.parent.parent / "LICENSE", "LICENSE")
+    manifest = manifest_for_zip(payload)
+    manifest["core_api_level"] = _get_core_api_level() - 1
+    errors = validate_manifest(manifest, payload)
+    assert any("core_api_level 不匹配" in error for error in errors)
 
 
 @pytest.mark.parametrize("change", ["missing", "release_version", "source_commit", "model_definitions_sha256"])

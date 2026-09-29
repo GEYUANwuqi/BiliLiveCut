@@ -1,10 +1,11 @@
 {
   "release_version": "0.1.18.5-alpha",
   "version_label": "V0.1.18.5 Alpha",
-  "source_commit_short": "ef6ab46",
-  "source_commit_full": "ef6ab464119026e7f99a2275dbfb3b7a843a9d3d",
+  "source_commit_short": "7aea419",
+  "source_commit_full": "7aea4199f09c0492b2c6c36182f70eef4f0ba5f4",
   "engine_pack_version": "0.1.18.5-alpha",
   "runtime_schema": 5,
+  "core_schema": 6,
   "engine_pack_schema": 5,
   "payload_schema": 7,
   "model_lock_schema": 5,
