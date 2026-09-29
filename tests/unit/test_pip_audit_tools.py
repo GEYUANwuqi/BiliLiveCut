@@ -6,6 +6,7 @@ import json
 import subprocess
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -168,7 +169,7 @@ def test_audit_lock_retries_when_scanner_emits_no_json(tmp_path: Path, monkeypat
         return next(results)
 
     monkeypatch.setattr(lock_audit.subprocess, "run", fake_run)
-    monkeypatch.setattr(lock_audit.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(lock_audit, "time", SimpleNamespace(sleep=lambda _seconds: None))
 
     assert lock_audit.audit_lock(lock)
     assert calls == 2
@@ -188,7 +189,7 @@ def test_audit_lock_fails_closed_after_retry_limit(tmp_path: Path, monkeypatch: 
         return subprocess.CompletedProcess([], 2, stdout="", stderr="network timeout")
 
     monkeypatch.setattr(lock_audit.subprocess, "run", fake_run)
-    monkeypatch.setattr(lock_audit.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(lock_audit, "time", SimpleNamespace(sleep=lambda _seconds: None))
 
     assert not lock_audit.audit_lock(lock)
     assert calls == lock_audit.AUDIT_ATTEMPTS

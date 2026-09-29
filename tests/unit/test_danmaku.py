@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -52,7 +53,7 @@ async def test_logged_error_immediately_falls_back_to_anonymous(monkeypatch: Mon
             )
         return anonymous
 
-    monkeypatch.setattr("app.sources.bilibili.danmaku.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr("app.sources.bilibili.danmaku.time", SimpleNamespace(monotonic=lambda: 100.0))
     monkeypatch.setattr(client, "_fetch_server", fetch_server)
 
     access = await client._select_access()  # noqa: SLF001

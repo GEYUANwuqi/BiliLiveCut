@@ -1,17 +1,29 @@
 """Phase 4: Behavioral tests for app.db.optimize — record_lock, retry, transaction.
 
 Target coverage: app.db.optimize ≥90%, total ≥51%.
-All tests use mock Session, no real database, no real sleep.
+Database retry tests use mock Session and isolated sleeps, without a real database.
 """
 
 from __future__ import annotations
 
 import random
 import time
+from threading import Thread
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.exc import OperationalError
+
+
+@pytest.fixture(autouse=True)
+def isolated_retry_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把时钟与随机数替身限定在被测模块，避免改写其他线程共享的标准库。"""
+    from app.db import optimize
+
+    monkeypatch.setattr(optimize, "time", SimpleNamespace(monotonic=time.monotonic, sleep=time.sleep))
+    monkeypatch.setattr(optimize, "random", SimpleNamespace(uniform=random.uniform))
+
 
 # ═══════════════════════════════════════════════════════════
 # record_lock_wait
@@ -172,7 +184,12 @@ class TestWithRetryOnLock:
 
         sleeps: list[float] = []
         with up("app.db.optimize.time.sleep", side_effect=lambda v: sleeps.append(v)):
-            with up.object(random, "uniform", return_value=0.01):
+            # 同时出现其他线程的等待时，只能记录数据库重试本身的两次退避。
+            unrelated = Thread(target=lambda: time.sleep(0))
+            unrelated.start()
+            unrelated.join(timeout=5)
+            assert not unrelated.is_alive()
+            with up("app.db.optimize.random.uniform", return_value=0.01):
                 result = wrapped()
 
         assert result == "ok"
@@ -192,7 +209,7 @@ class TestWithRetryOnLock:
 
         sleeps: list[float] = []
         with up("app.db.optimize.time.sleep", side_effect=lambda v: sleeps.append(v)):
-            with up.object(random, "uniform", return_value=0.0):
+            with up("app.db.optimize.random.uniform", return_value=0.0):
                 result = wrapped()
 
         assert result == "ok"
@@ -411,7 +428,7 @@ class TestRetryTransaction:
 
         with (
             patch("app.db.optimize.time.sleep", return_value=None) as mock_sleep,
-            patch.object(random, "uniform", return_value=0.0),
+            patch("app.db.optimize.random.uniform", return_value=0.0),
         ):
             with pytest.raises(OperationalError):
                 retry_transaction(session, "test", fn, max_retries=1, base_delay=0.5)
