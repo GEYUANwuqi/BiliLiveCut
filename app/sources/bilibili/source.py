@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.cookie import get_bilibili_cookie
@@ -29,6 +30,9 @@ from app.sources.bilibili.client import (
     HttpErrorType,
     parse_room_id,
 )
+
+if TYPE_CHECKING:
+    from app.recording.danmaku_archive import DanmakuArchive
 
 
 class BilibiliSource:
@@ -94,14 +98,15 @@ class BilibiliSource:
     async def aclose(self) -> None:
         """请求作用域已关闭所有 HTTP 连接，无共享连接需要释放。"""
 
-    def danmaku_for_session(self, session_id: int) -> DanmakuSource:
+    def danmaku_for_session(self, session_id: int, *, archive: DanmakuArchive | None = None) -> DanmakuSource:
         """宿主内部会话适配，保留 Bilibili 既有事件类型、采样和存储语义。"""
-        return _BilibiliSessionDanmaku(session_id)
+        return _BilibiliSessionDanmaku(session_id, archive)
 
 
 class _BilibiliSessionDanmaku:
-    def __init__(self, session_id: int) -> None:
+    def __init__(self, session_id: int, archive: DanmakuArchive | None) -> None:
         self.session_id = session_id
+        self.archive = archive
 
     async def collect_danmaku(self, room: SourceRoom, emit: DanmakuSink, state: DanmakuStateSink) -> None:
         """现有客户端负责 Bili 事件入库，不重复发送为普通文本事件。"""
@@ -112,6 +117,7 @@ class _BilibiliSessionDanmaku:
             session_id=self.session_id,
             cookie=get_bilibili_cookie(),
             on_state=state,
+            archive=self.archive,
         )
         try:
             await client.run()

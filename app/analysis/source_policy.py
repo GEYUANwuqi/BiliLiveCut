@@ -69,6 +69,7 @@ def session_danmaku_view(session_id: int) -> dict[str, object]:
                 "interrupted": evidence.interrupted,
                 "available": bool(evidence.intervals),
                 "ended_at": evidence.ended_at.isoformat() if evidence.ended_at else None,
+                "archive_error": evidence.archive_error,
             }
         if is_local_session(session_id, db):
             available = session_has_danmaku(session_id)

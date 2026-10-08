@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-from datetime import timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
 
+from loguru import logger
 from sqlmodel import select
 
 from app.core.config import settings
@@ -21,8 +21,6 @@ from app.db.entities import (
 from app.db.entities import SegmentStatus as OldStatus
 from app.db.session import get_session
 from app.pipeline.lifecycle import now_utc
-
-_logger = logging.getLogger(__name__)
 
 
 def resume_stage(failed_stage: str | None) -> str:
@@ -54,7 +52,10 @@ def recover_stale() -> None:
     stale_threshold = now_utc() - timedelta(seconds=settings.stale_timeout_s)
 
     with get_session() as db:
-        stale = db.exec(
+        # 在读取心跳前锁定 SQLite 写事务，避免读取后心跳刷新或租约转移仍被回收。
+        if db.get_bind().dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        active = db.exec(
             select(SegmentTask).where(
                 SegmentTask.stage.in_(
                     [
@@ -65,9 +66,20 @@ def recover_stale() -> None:
                     ]
                 ),
                 SegmentTask.heartbeat_at.is_not(None),
-                SegmentTask.heartbeat_at < stale_threshold,
             )
         ).all()
+        # 比较实际 UTC 时刻，不依赖 SQLite TEXT 的分隔符或时区表示。
+        stale = [
+            task
+            for task in active
+            if task.heartbeat_at is not None
+            and (
+                task.heartbeat_at.replace(tzinfo=UTC)
+                if task.heartbeat_at.tzinfo is None
+                else task.heartbeat_at.astimezone(UTC)
+            )
+            < stale_threshold
+        ]
 
         published_skipped = 0
         for task in stale:
@@ -85,8 +97,8 @@ def recover_stale() -> None:
                     "in_progress",
                     UploadStatus.RECONCILIATION_REQUIRED,
                 ):
-                    _logger.warning(
-                        "stale_publish_skipped: task=%s clip=%s attempt=%s status=%s",
+                    logger.warning(
+                        "stale_publish_skipped: task={} clip={} attempt={} status={}",
                         task.id,
                         task.clip_id,
                         last_attempt.attempt_token,
@@ -112,7 +124,7 @@ def recover_stale() -> None:
 
         if stale:
             skipped_msg = f" (跳过 {published_skipped} 个发布任务)" if published_skipped else ""
-            _logger.warning("Stale 恢复: 回退 %d 个心跳超时任务。%s", len(stale) - published_skipped, skipped_msg)
+            logger.warning("recover_stale: 回退 {} 个心跳超时任务。{}", len(stale) - published_skipped, skipped_msg)
         db.commit()
 
 
@@ -141,7 +153,7 @@ def recover_orphans() -> None:
             )
             db.add(t)
         if orphan_segs:
-            _logger.info("恢复: 为 %d 个孤立片段创建任务。", len(orphan_segs))
+            logger.info("恢复: 为 {} 个孤立片段创建任务。", len(orphan_segs))
 
 
 def recover_pending_clips() -> int:
@@ -170,8 +182,8 @@ def recover_pending_clips() -> int:
                 var.render_status = RenderStatus.DONE
                 db.add(var)
                 recovered += 1
-                _logger.info(
-                    "clip_recovery_mark_ready: variant=%s event=%s path=%s",
+                logger.info(
+                    "clip_recovery_mark_ready: variant={} event={} path={}",
                     var.id,
                     var.event_id,
                     file_path,
@@ -184,7 +196,7 @@ def recover_pending_clips() -> int:
 
         if recovered:
             db.commit()
-            _logger.info("clip_recovery: 恢复 %d 个 PENDING ClipVariant", recovered)
+            logger.info("clip_recovery: 恢复 {} 个 PENDING ClipVariant", recovered)
 
     return recovered
 
@@ -228,8 +240,8 @@ def recover_stale_upload_attempts() -> int:
                 upload_task.updated_at = datetime.now(UTC)
                 db.add(upload_task)
             recovered += 1
-            _logger.warning(
-                "upload_attempt_stale_recovery: attempt=%s clip=%s → %s",
+            logger.warning(
+                "upload_attempt_stale_recovery: attempt={} clip={} → {}",
                 attempt.attempt_token,
                 attempt.clip_id,
                 attempt.status,
@@ -237,7 +249,7 @@ def recover_stale_upload_attempts() -> int:
 
         if recovered:
             db.commit()
-            _logger.info("upload_attempt_recovery: recovered=%d", recovered)
+            logger.info("upload_attempt_recovery: recovered={}", recovered)
 
     return recovered
 

@@ -321,6 +321,8 @@ globalThis.fetch = async (path, options = {}) => {
         source_label: "测试主播 · 房间 23771139",
         count: selectedSessionId === 20 ? 1 : 2,
         intensity: selectedSessionId === 20 ? 0.4 : 0.8,
+        archive: { available: selectedSessionId === 21 },
+        evidence: { state: "available", archive_error: selectedSessionId === 20 ? "写档失败 <error>" : null },
       }],
       recent: [{
         session_id: selectedSessionId,
@@ -568,11 +570,15 @@ try {
   const danmakuSelect = element("danmaku-session-select");
   assert.equal(danmakuSelect.value, "21", "danmaku page did not default to the latest recording session");
   assert.match(element("danmaku-list").innerHTML, /本场弹幕/);
+  assert.match(element("danmaku-sessions").innerHTML, /href="\/api\/sessions\/21\/danmaku-archive"/);
   danmakuSelect.value = "20";
   await danmakuSelect.emit("change");
   await settle();
   assert.equal(danmakuSelect.value, "20", "danmaku session selection was not retained after loading");
   assert.match(element("danmaku-list").innerHTML, /上一场弹幕/);
+  assert.match(element("danmaku-sessions").innerHTML, /本场暂无弹幕原始档/);
+  assert.match(element("danmaku-sessions").innerHTML, /写档失败 &lt;error&gt;/);
+  assert.doesNotMatch(element("danmaku-sessions").innerHTML, /danmaku-archive/);
   const danmakuWritesBeforePoll = element("danmaku-list").innerHTMLWriteCount;
   await danmakuTab.emit("click");
   await settle();

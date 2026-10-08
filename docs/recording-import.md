@@ -21,6 +21,8 @@
 - JSON 接受事件数组，或以 `comments`、`danmaku`、`body` 之一为键的事件数组对象。每条必须有且只有一个时间字段 `offset_s`、`time`、`from`，以及一个文本字段 `text`、`content`；可选 `user`、`to`（结束时间）。数字时间单位为秒，也接受 `HH:MM:SS.mmm`，不推断 Unix 时间戳或毫秒。
 - SRT 按字幕开始时间产生一条文本事件。ASS 读取 `[Events]` 中的 `Format` 和 `Dialogue`；Text 必须在最后一列，保留正文逗号，移除样式、换行控制和纯矢量绘图。字幕只作为可选文本互动信号，不冒充 ASR 转写。
 
+直播场次导出的 `danmaku.jsonl` 是原始消息档案，不是此处的媒体相对时间 JSON 输入。再次导入前，需要按对应录像起点和录制缺口将消息转换成上述相对秒数结构；不要仅把 `.jsonl` 改名为 `.json`。直播存档说明见[使用指南](usage.md#弹幕数据库与原始档)。
+
 JSON 示例：
 
 ```json
