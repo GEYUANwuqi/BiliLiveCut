@@ -107,6 +107,7 @@ async def collect_danmaku(
 `DanmakuSource.collect_danmaku(room, emit, state)` 为独立可选异步长任务协议。
 `emit` 接收 `DanmakuEvent(occurred_at, content, user_name=None)`，时间必须带时区，统一转 UTC。
 跨平台公共事件只表示普通文本计数，不直接接收礼物金额或平台人气。
+宿主在数据库写入前将校验通过的事件追加到 `storage/raw/session_<id>/danmaku.jsonl`，`kind=normalized`，`payload` 为公共事件 JSON；插件无需改接口或自行操作文件。内置 Bilibili 使用 `kind=raw` 保存采样前的解码消息。文件错误单独显示，数据库采集继续；协议版本仍为 `1`。
 宿主区分 `DanmakuStatus` 的 unsupported、disabled、connecting、available、failed。
 采集器只能向 `state` 报告 connecting、available、failed；是否支持和是否启用由宿主决定。
 available 必须在实际连接完成后报告，零条事件仍可 available；采集暂时失败与不支持能力不同。
@@ -150,7 +151,7 @@ python -m app.cli list-rooms
 ## 当前数据契约与备份
 
 当前 Schema 为 `6`，应用版本与模型指纹均严格校验，不提供旧数据库迁移。
-应用版本升级仍遵循现有严格策略：`0.1.18.5-alpha` 不直接打开 `0.1.18.4-alpha` 的数据库。
+应用版本升级仍遵循现有严格策略：`0.1.18.6-alpha` 不直接打开任何旧版本的数据库，包括 `0.1.18.5-alpha`。
 升级请保留旧程序、数据库和媒体，在独立目录初始化新版本；回滚使用原版本与其原数据库。
 所有直播房间必须具有完整来源绑定，不从历史数字房号推断或补写。
 沿用已有 AppSetting 业务元数据方式，在创建/更新 LiveRoom 的同一事务中保存两份严格版本化绑定：
@@ -278,7 +279,7 @@ Launcher 只核对其锁内依赖，不会替插件恢复额外包；环境重�
 与核心版本冲突的插件须由插件作者解决约束，不能靠修改宿主运行时锁绕过。
 
 本次只同步了未来 Payload 收录规则，**没有生成包含新接口的 Portable EXE/Full Bundle**。
-`0.1.18.5-alpha` 的冻结源码包含本接口，具体 source_commit 以 Portable 的 version.json 和 Payload 清单为准。
+`0.1.18.6-alpha` 的冻结源码包含本接口，具体 source_commit 以 Portable 的 version.json 和 Payload 清单为准。
 发行维护者必须先提交业务源码，再冻结并构建、验证 Portable；构建器拒绝与冻结基线不同的工作区源码。
 不能将工作区复制进旧 Payload，也不能把 `0.1.18.3-alpha` 旧包的通过结果当作本功能已打包。
 

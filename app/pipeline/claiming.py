@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+from loguru import logger
+from sqlalchemy import DateTime, bindparam
 from sqlalchemy import text as sa_text
 from sqlmodel import select
 
@@ -23,9 +25,6 @@ def pop_and_claim(queued_stage: str) -> SegmentTask | None:
     :param queued_stage: 排队阶段 (如 QUEUED_FOR_TRANS)。
     :returns: 已被当前 Worker 认领的任务; 无可用任务或竞争失败时返回 None。
     """
-    import logging
-
-    _logger = logging.getLogger(__name__)
     now = now_utc()
     act_stage = active_stage(queued_stage)
     lease_token = uuid.uuid4().hex
@@ -58,11 +57,11 @@ def pop_and_claim(queued_stage: str) -> SegmentTask | None:
                    last_error = NULL
                WHERE id = :task_id
                  AND stage = :queued_stage"""
-            ),
+            ).bindparams(bindparam("now", type_=DateTime())),
             params={
                 "active": act_stage,
                 "worker_id": _WORKER_ID,
-                "now": now.isoformat(),
+                "now": now,
                 "lease_token": lease_token,
                 "task_id": task_id,
                 "queued_stage": queued_stage,
@@ -70,15 +69,15 @@ def pop_and_claim(queued_stage: str) -> SegmentTask | None:
         )
 
         if result.rowcount != 1:
-            _logger.info("原子领取失败 task_id=%s 已被其他 Worker 抢占", task_id)
+            logger.info("原子领取失败 task_id={} 已被其他 Worker 抢占", task_id)
             return None
 
         task = db.get(SegmentTask, task_id)
         if task is None:
             return None
 
-        _logger.info(
-            "原子领取成功 task_id=%s stage=%s segment=%s worker=%s lease=%s",
+        logger.info(
+            "原子领取成功 task_id={} stage={} segment={} worker={} lease={}",
             task_id,
             act_stage,
             segment_id,

@@ -23,6 +23,7 @@ from app.plugins.live_source import (
     SourceRoom,
     SourceTemporaryError,
 )
+from app.recording.danmaku_archive import DanmakuArchive
 from app.recording.metadata import read_metadata
 
 
@@ -45,6 +46,7 @@ class DanmakuEvidence(BaseModel):
     ended_at: AwareDatetime | None = None
     confirmed_until: AwareDatetime | None = None
     interrupted: bool = False
+    archive_error: str | None = None
 
 
 def read_evidence(db: Session, session_id: int) -> DanmakuEvidence | None:
@@ -81,9 +83,10 @@ class DanmakuCapture:
         self.room = room
         self.db_room_id = db_room_id
         self.session_id = session_id
+        self.archive = DanmakuArchive(session_id, room)
         # 内置适配保留原有礼物、SC、进场及采样单位；不向外部契约暴露数据库。
         self.collector: DanmakuSource | None = (
-            source.danmaku_for_session(session_id)
+            source.danmaku_for_session(session_id, archive=self.archive)
             if isinstance(source, BilibiliSource)
             else source
             if isinstance(source, DanmakuSource)
@@ -115,6 +118,7 @@ class DanmakuCapture:
 
     async def _save(self) -> None:
         self.evidence.confirmed_until = datetime.now(UTC)
+        self.evidence.archive_error = self.archive.error
         payload = self.evidence.model_dump_json()
         await self._write(lambda: self._save_sync(payload))
 
@@ -142,6 +146,7 @@ class DanmakuCapture:
         await self._state(DanmakuStatus.AVAILABLE)
 
         def insert() -> None:
+            self.archive.append([event.model_dump(mode="json")], event_format="normalized")
             with get_session() as db:
                 db.add(
                     Danmaku(
@@ -159,6 +164,8 @@ class DanmakuCapture:
 
     async def start(self) -> None:
         """先落证据状态，再启动可选采集任务。"""
+        if self.evidence.status == DanmakuStatus.CONNECTING:
+            await self._write(self.archive.start)
         await self._save()
         if self.evidence.status == DanmakuStatus.CONNECTING:
             self._task = asyncio.create_task(self._run())

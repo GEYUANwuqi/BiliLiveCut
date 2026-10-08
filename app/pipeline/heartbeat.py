@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import threading
 
+from loguru import logger
+from sqlalchemy import DateTime, bindparam
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.entities import SegmentTask
 from app.db.session import get_session
@@ -29,9 +32,6 @@ def start_heartbeat_thread(
     :param expected_stage: 期望的阶段状态 (如 TRANSCRIBING)。
     :returns: stop Event, 调用 .set() 停止心跳。
     """
-    import logging
-
-    _logger = logging.getLogger(__name__)
     stop = threading.Event()
 
     def _beat() -> None:
@@ -47,9 +47,9 @@ def start_heartbeat_thread(
                                      AND claimed_by = :worker_id
                                      AND lease_token = :lease_token
                                      AND stage = :expected_stage"""
-                            ),
+                            ).bindparams(bindparam("now", type_=DateTime())),
                             params={
-                                "now": now_utc().isoformat(),
+                                "now": now_utc(),
                                 "task_id": task_id,
                                 "worker_id": _WORKER_ID,
                                 "lease_token": lease_token,
@@ -57,7 +57,7 @@ def start_heartbeat_thread(
                             },
                         )
                         if result.rowcount == 0:
-                            _logger.warning("lease_lost: task=%s 心跳更新失败, 租约已被接管", task_id)
+                            logger.warning("lease_lost: task={} 心跳更新失败, 租约已被接管", task_id)
                             break
                     elif lease_token:
                         result = db.exec(
@@ -67,24 +67,24 @@ def start_heartbeat_thread(
                                    WHERE id = :task_id
                                      AND claimed_by = :worker_id
                                      AND lease_token = :lease_token"""
-                            ),
+                            ).bindparams(bindparam("now", type_=DateTime())),
                             params={
-                                "now": now_utc().isoformat(),
+                                "now": now_utc(),
                                 "task_id": task_id,
                                 "worker_id": _WORKER_ID,
                                 "lease_token": lease_token,
                             },
                         )
                         if result.rowcount == 0:
-                            _logger.warning("lease_lost: task=%s 心跳更新失败, 租约已被接管", task_id)
+                            logger.warning("lease_lost: task={} 心跳更新失败, 租约已被接管", task_id)
                             break
                     else:
                         t = db.get(SegmentTask, task_id)
                         if t is not None:
                             mark_heartbeat(t)
                             db.add(t)
-            except Exception:
-                pass
+            except SQLAlchemyError:
+                logger.exception("heartbeat_failed: task={} 心跳写入失败，将在下一周期重试", task_id)
             stop.wait(_HEARTBEAT_POLL_S)
 
     t = threading.Thread(target=_beat, daemon=True, name=f"hb-{task_id}")
@@ -101,9 +101,6 @@ def clear_heartbeat_if_own(task_id: int, lease_token: str | None = None) -> None
     :param task_id: SegmentTask ID。
     :param lease_token: 租约令牌。
     """
-    import logging
-
-    _logger = logging.getLogger(__name__)
     try:
         with get_session() as db:
             if lease_token:
@@ -122,13 +119,13 @@ def clear_heartbeat_if_own(task_id: int, lease_token: str | None = None) -> None
                     },
                 )
                 if result.rowcount == 0:
-                    _logger.debug("clear_heartbeat_if_own: task=%s 租约已转移, 跳过清除", task_id)
+                    logger.debug("clear_heartbeat_if_own: task={} 租约已转移, 跳过清除", task_id)
                     return
-                _logger.debug("clear_heartbeat_if_own: task=%s heartbeat 已清除", task_id)
+                logger.debug("clear_heartbeat_if_own: task={} heartbeat 已清除", task_id)
             else:
                 t = db.get(SegmentTask, task_id)
                 if t is not None and t.stage not in ("COMPLETED", "FAILED"):
                     t.heartbeat_at = None
                     db.add(t)
-    except Exception:
-        pass
+    except SQLAlchemyError:
+        logger.exception("heartbeat_clear_failed: task={} 心跳清理失败", task_id)

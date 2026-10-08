@@ -22,7 +22,7 @@ import time
 import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import brotli
 from loguru import logger
@@ -40,6 +40,9 @@ from app.sources.bilibili.client import (
     HttpErrorType,
     parse_uid_from_cookie,
 )
+
+if TYPE_CHECKING:
+    from app.recording.danmaku_archive import DanmakuArchive
 
 # 操作码(operation)
 OP_HEARTBEAT = 2
@@ -232,6 +235,7 @@ class DanmakuClient:
         cookie: str = "",
         *,
         on_state: DanmakuStateSink | None = None,
+        archive: DanmakuArchive | None = None,
         login_retry_max_attempts: int | None = None,
         login_retry_interval_s: float | None = None,
     ) -> None:
@@ -247,6 +251,7 @@ class DanmakuClient:
             raise ValueError("login_retry_interval_s 必须 > 0")
 
         self._on_state = on_state
+        self._archive = archive
         self.room_id = room_id
         self.session_id = session_id
         self.popularity = 0
@@ -551,8 +556,14 @@ class DanmakuClient:
 
             self._sampler = get_sampler(self.room_id)
 
+        decoded = decode(frame)
+        if self._archive is not None:
+            self._archive.append(
+                [parsed for op, parsed in decoded if op == OP_MESSAGE and isinstance(parsed, dict)],
+                event_format="raw",
+            )
         rows: list[Danmaku] = []
-        for op, parsed in decode(frame):
+        for op, parsed in decoded:
             if op == OP_HEARTBEAT_REPLY and isinstance(parsed, int):
                 self.popularity = parsed
             elif op == OP_MESSAGE and isinstance(parsed, dict):

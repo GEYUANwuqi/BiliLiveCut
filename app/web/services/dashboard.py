@@ -127,6 +127,7 @@ def danmaku_overview(limit: int = 50, session_id: int | None = None) -> dict[str
         sources = source_identities_for_sessions(db, source_session_ids)
 
     from app.analysis.source_policy import session_danmaku_view
+    from app.recording.danmaku_archive import archive_view
 
     evidence = {sid: session_danmaku_view(sid) for sid in source_session_ids}
     counts: dict[int, dict[str, float]] = {sid: {"count": 0.0, "intensity": 0.0} for sid in source_session_ids}
@@ -144,6 +145,7 @@ def danmaku_overview(limit: int = 50, session_id: int | None = None) -> dict[str
             if sources.get(sid, unknown_source_identity())["platform"] == "bilibili"
             else "普通文本条数",
             "evidence": evidence[sid],
+            "archive": archive_view(sid),
             **sources.get(sid, unknown_source_identity()),
         }
         for sid, v in sorted(counts.items(), reverse=True)

@@ -427,6 +427,7 @@ async function loadDanmaku() {
       <div class="sub">${esc(s.source_label || "未知来源")} · 会话 #${s.session_id}</div>
       <div class="title">弹幕 ${s.count ?? "未知"} 条 · ${esc(s.intensity_unit || "事件权重")} ${s.intensity ?? "未知"}</div>
       <div class="sub">${esc(evidenceLabels[s.evidence?.state] || "采集状态未知")}${s.evidence?.interrupted ? " · 上次异常中断" : s.evidence?.ended_at ? " · 已结束" : ""}</div>
+      <div class="sub">${s.archive?.available ? `<a href="/api/sessions/${Number(s.session_id)}/danmaku-archive" download>下载原始弹幕（JSONL）</a>` : "本场暂无弹幕原始档"}${s.evidence?.archive_error ? ` · ${esc(s.evidence.archive_error)}` : ""}</div>
     </div>`).join("") : `<div class="empty">暂无场次弹幕信息。支持弹幕的直播源可在录制时采集；未提供弹幕仍可转写和分析。</div>`;
   const recent = data.recent || [];
   $("#danmaku-list").innerHTML = recent.length ? recent.map((d) => `

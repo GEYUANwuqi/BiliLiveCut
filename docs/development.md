@@ -12,6 +12,8 @@ pip install -e ".[dev,web,asr-all,llm]"
 
 源码依赖要求 `sqlmodel>=0.0.22,<0.0.45`，Portable 完整锁继续使用 `0.0.39`。当前 Schema 与 API 使用既有无时区 UTC 时间约定；[SQLModel 0.0.45 起改变默认日期时间行为](https://sqlmodel.tiangolo.com/advanced/datetime/#upgrade-existing-applications)，直接升级会影响入库、查询、时间比较与响应格式。依赖上限用于保持现有数据契约，不触发数据库迁移。
 
+Portable 依赖锁固定 `hydra-core==1.3.7` 和 `urllib3==2.8.0`，对应 [Hydra 安全修复](https://github.com/hydra-ecosystem/hydra/releases/tag/v1.3.7)与 [urllib3 安全修复](https://github.com/urllib3/urllib3/releases/tag/2.8.0)。两者沿用现有依赖范围，纯 Python wheel 适用于两个 Windows ABI；更新时核对实际下载文件的 SHA-256，运行双 ABI 依赖解析及审计。Hydra 会拒绝危险配置目标，urllib3 更严格地隔离 HTTPS 代理和目标站点 TLS 配置；自定义第三方配置不能依赖旧的不安全行为。
+
 Windows 的 `FFMPEG_PATH`、`FFPROBE_PATH` 应指向真实二进制文件，避免指向 Chocolatey 的 `bin` 包装程序。包装进程可能在停止时留下仍持有管道的 FFmpeg 子进程；CI 安装后从 Chocolatey 包的 `tools` 目录解析真实路径并设置这两个变量。Portable Full 已使用随包二进制的绝对路径。
 
 Python 镜像配置见[使用指南](usage.md#python-依赖源)。普通源码运行缺少原生扩展时可按函数回退到 Python 参考实现；完整验证和 Portable 发行需要对应 ABI 的 C、Cython、Rust 三个扩展。Windows C/Cython 构建需要可用的 MSVC 工具链，Rust 需要 Rust 工具链。

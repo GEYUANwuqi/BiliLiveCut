@@ -26,6 +26,7 @@ from loguru import logger
 from sqlmodel import select
 
 from app.accelerators.dispatcher import group_srt_blocks
+from app.analysis.transcript_windows import extract_transcript_window
 from app.clipping.models import ClipOptions
 from app.core.config import settings
 from app.core.ffmpeg_errors import classify_ffmpeg_error
@@ -210,11 +211,18 @@ def _build_audio_filter(options: ClipOptions) -> str:
     return ",".join(filters)
 
 
+def _escape_filter_value(value: str) -> str:
+    """Escape an option value and then its filtergraph, without a shell layer."""
+    for characters in ("\\':", "\\'[],;"):
+        value = "".join("\\" + char if char in characters else char for char in value)
+    return value
+
+
 def _build_video_filter(options: ClipOptions, srt_path: Path | None) -> str:
     """构造视频滤镜链。
 
     * 竖屏重构:等比缩放到不超过 1080x1920,再用黑边居中填充(避免裁切丢内容)。
-    * 字幕:用 ``subtitles`` 滤镜烧录(Windows 下对路径中的冒号做转义)。
+    * 字幕:用 ``subtitles`` 滤镜烧录，分别处理选项值与滤镜图两层转义。
     * ``setpts``:让首个真实视频帧从 MP4 的 0 秒开始，消除 TS 转码首帧空窗。
 
     :param options: 切片选项。
@@ -231,9 +239,17 @@ def _build_video_filter(options: ClipOptions, srt_path: Path | None) -> str:
             f"pad={_VERT_W}:{_VERT_H}:(ow-iw)/2:(oh-ih)/2:black"
         )
     if options.subtitle and srt_path is not None:
-        escaped = str(srt_path).replace("\\", "/").replace(":", "\\:")
-        filters.append(f"subtitles='{escaped}'")
+        escaped = _escape_filter_value(srt_path.resolve().as_posix())
+        filters.append(f"subtitles=filename={escaped}:charenc=UTF-8")
     return ",".join(filters)
+
+
+def _clip_filters(options: ClipOptions, srt_path: Path | None, cut_offset: float, duration: float) -> tuple[str, str]:
+    """先在拼接流内精剪，再归零并烧录剪辑相对字幕，不依赖 concat 随机寻址。"""
+    bounds = f"start={cut_offset:.6f}:duration={duration:.6f}"
+    audio = f"asetpts=PTS-STARTPTS,atrim={bounds}," + _build_audio_filter(options)
+    video = f"setpts=PTS-STARTPTS,trim={bounds}," + _build_video_filter(options, srt_path)
+    return audio, video
 
 
 def _write_concat_list(segments: list[RawSegment], work_dir: Path) -> Path:
@@ -378,7 +394,7 @@ def _render_text_card(
         f"color=c={safe_bg_color}:s={width}x{height}:d={duration_s}",
         "-vf",
         (
-            f"drawtext=textfile='{tf.name}':"
+            f"drawtext=textfile={_escape_filter_value(Path(tf.name).as_posix())}:"
             f"font='{safe_font}':"
             f"fontcolor={safe_font_color}:fontsize={font_size}:"
             f"x=(w-text_w)/2:y=(h-text_h)/2:"
@@ -390,8 +406,7 @@ def _render_text_card(
         "18",
         "-preset",
         "ultrafast",
-        "-c:a",
-        "an",
+        "-an",
         "-y",
         str(out_path),
     ]
@@ -428,8 +443,80 @@ def _resolve_variables(text: str, vars_dict: dict[str, str]) -> str:
     return re.sub(r"\{(\w+)\}", _repl, text)
 
 
+def _prepend_intro_cards(
+    candidate_id: int,
+    output_path: Path,
+    options: ClipOptions,
+    *,
+    audio_bitrate: str = "160k",
+    cancel_check: Callable[[], bool] | None = None,
+) -> float:
+    """Prepend cards after cutting and subtitle burn-in; return their actual duration."""
+    with tempfile.TemporaryDirectory(prefix="blc_intro_", dir=output_path.parent) as tmp:
+        work_dir = Path(tmp)
+        cards = _render_intro_outro_cards(candidate_id, work_dir, options)
+        if not cards:
+            return 0.0
+        _, width, height = probe_media(str(output_path))
+        if width <= 0 or height <= 0:
+            raise RuntimeError("无法确认主片分辨率，不能拼接片头")
+        durations = [probe_media(str(card))[0] for card in cards]
+        if any(value <= 0 for value in durations):
+            raise RuntimeError("片头媒体时长无效")
+        command = [settings.ffmpeg_path, "-hide_banner", "-loglevel", "error", "-y"]
+        for path in [*cards, output_path]:
+            command += ["-i", str(path)]
+        filters = []
+        for index in range(len(cards) + 1):
+            filters.append(
+                f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v{index}]"
+            )
+            if index < len(cards):
+                filters.append(
+                    f"anullsrc=r=48000:cl=stereo,atrim=duration={durations[index]:.6f},asetpts=PTS-STARTPTS[a{index}]"
+                )
+            else:
+                filters.append(
+                    f"[{index}:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{index}]"
+                )
+        inputs = "".join(f"[v{index}][a{index}]" for index in range(len(cards) + 1))
+        filters.append(f"{inputs}concat=n={len(cards) + 1}:v=1:a=1[v][a]")
+        destination = work_dir / "with_intro.mp4"
+        command += [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-crf",
+            str(options.crf),
+            "-preset",
+            options.preset,
+            "-pix_fmt",
+            "yuv420p",
+            "-fps_mode",
+            "vfr",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-movflags",
+            "+faststart",
+            str(destination),
+        ]
+        result = run_cancellable(command, capture_output=True, timeout=1800, cancel_check=cancel_check)
+        if result.returncode != 0:
+            raise RuntimeError(f"片头拼接失败: {result.stderr.decode('utf-8', errors='replace')}")
+        destination.replace(output_path)
+        return sum(durations)
+
+
 def _build_srt(segments: list[RawSegment], cut_offset: float, duration: float) -> str:
-    """从覆盖片段的转写词级时间戳构造剪辑相对时间轴的 SRT 字幕。
+    """从转写构造剪辑相对字幕，无词级时间戳时按正文长度与片段时长估时。
 
     片段内时间戳相对各自起点(录制时 reset),需按片段在拼接流中的累计偏移换算,
     再减去剪辑起点偏移,落在 ``[0, duration]`` 的词才保留。
@@ -443,19 +530,6 @@ def _build_srt(segments: list[RawSegment], cut_offset: float, duration: float) -
     with get_session() as db:
         rows = db.exec(select(Transcript).where(Transcript.segment_id.in_(seg_ids))).all()  # type: ignore[attr-defined]
     by_seg = {t.segment_id: t for t in rows}
-
-    entries: list[tuple[float, float, str]] = []
-    cumulative = 0.0
-    for seg in segments:
-        t = by_seg.get(seg.id)
-        if t and t.words_json:
-            for w in json.loads(t.words_json):
-                start = cumulative + float(w["start"]) - cut_offset
-                end = cumulative + float(w["end"]) - cut_offset
-                if end < 0 or start > duration:
-                    continue
-                entries.append((max(0.0, start), min(duration, end), str(w["w"]).strip()))
-        cumulative += seg.duration_s or float(settings.segment_duration_s)
 
     # V0.1.8 P1.3:加载字幕模板断句配置。
     max_chars = 14
@@ -474,10 +548,89 @@ def _build_srt(segments: list[RawSegment], cut_offset: float, duration: float) -
             max_ms = tmpl.max_display_ms
             line_gap = tmpl.line_gap_ms
 
+    entries: list[tuple[float, float, str]] = []
+    cumulative = 0.0
+    estimated = False
+    for seg in segments:
+        segment_duration = seg.duration_s
+        if segment_duration is None and seg.start_ts is not None and seg.end_ts is not None:
+            segment_duration = (_as_utc_naive(seg.end_ts) - _as_utc_naive(seg.start_ts)).total_seconds()
+        if segment_duration is None or segment_duration <= 0:
+            raise ValueError(f"原始片段 {seg.id} 缺少有效时长，无法定位字幕。")
+        transcript = by_seg.get(seg.id)
+        start_s = max(0.0, cut_offset - cumulative)
+        end_s = min(segment_duration, cut_offset + duration - cumulative)
+        if transcript and end_s > start_s:
+            window = extract_transcript_window(
+                transcript.final_text,
+                transcript.words_json,
+                start_s=start_s,
+                end_s=end_s,
+                duration_s=segment_duration,
+            )
+            if window.precise:
+                for word in window.words:
+                    start = cumulative + float(word["start"]) - cut_offset
+                    end = cumulative + float(word["end"]) - cut_offset
+                    if end > start and str(word["w"]).strip():
+                        entries.append((max(0.0, start), min(duration, end), str(word["w"]).strip()))
+            elif window.text:
+                estimated = True
+                start = cumulative + start_s - cut_offset
+                end = cumulative + end_s - cut_offset
+                sentences = re.findall(r"[^，。！？；,.!?;\n]+[，。！？；,.!?;]*", window.text)
+                chunks = [
+                    sentence[index : index + max_chars].strip()
+                    for sentence in sentences
+                    for index in range(0, len(sentence), max_chars)
+                    if sentence[index : index + max_chars].strip()
+                ]
+                total_chars = sum(map(len, chunks))
+                cursor = start
+                for chunk in chunks:
+                    next_cursor = min(end, cursor + (end - start) * len(chunk) / total_chars)
+                    entries.append((cursor, next_cursor, chunk))
+                    cursor = next_cursor
+        cumulative += segment_duration
+    if estimated:
+        logger.info("字幕使用正文估时：部分转写无词级时间戳，字幕时间近似定位")
+
     # 把词聚合成短句字幕(每约 N 个字或遇到停顿断行)。 V0.1.10: 使用加速版 SRT 组装。
-    return group_srt_blocks(
-        entries, max_chars=max_chars, min_display_ms=min_ms, max_display_ms=max_ms, line_gap_ms=line_gap
+    return _bound_srt(
+        group_srt_blocks(
+            entries, max_chars=max_chars, min_display_ms=min_ms, max_display_ms=max_ms, line_gap_ms=line_gap
+        ),
+        duration,
     )
+
+
+def _bound_srt(srt: str, duration: float) -> str:
+    """限制生成字幕的最短显示延长，避免相邻块重叠或越过剪辑结束。"""
+
+    def milliseconds(value: str) -> int:
+        hours, minutes, seconds, fraction = map(int, value.replace(",", ":").split(":"))
+        return ((hours * 60 + minutes) * 60 + seconds) * 1000 + fraction
+
+    def timestamp(value: int) -> str:
+        seconds, fraction = divmod(value, 1000)
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02}:{minutes:02}:{seconds:02},{fraction:03}"
+
+    blocks: list[tuple[int, int, str]] = []
+    for block in srt.strip().split("\n\n"):
+        if not block:
+            continue
+        _, timing, content = block.split("\n", 2)
+        start, end = timing.split(" --> ")
+        blocks.append((milliseconds(start), milliseconds(end), content))
+    rendered = []
+    limit = round(duration * 1000)
+    for index, (start, end, content) in enumerate(blocks):
+        end = min(end, limit, blocks[index + 1][0] if index + 1 < len(blocks) else limit)
+        if start < end:
+            rendered.append(f"{len(rendered) + 1}\n{timestamp(start)} --> {timestamp(end)}\n{content}\n")
+    return "\n".join(rendered)
 
 
 def _group_srt(
@@ -591,15 +744,6 @@ def render_clip_to_file(
         work_dir = _P(tmp)
         concat_list = _write_concat_list(segments, work_dir)
 
-        intro_cards = _render_intro_outro_cards(candidate_id, work_dir, options)
-        if intro_cards:
-            card_lines = [f"file '{card.as_posix()}'" for card in intro_cards]
-            existing = concat_list.read_text(encoding="utf-8")
-            new_concat = work_dir / "concat_with_intro.txt"
-            new_concat.write_text("\n".join(card_lines) + "\n" + existing, encoding="utf-8")
-            concat_list = new_concat
-            logger.info("片头卡片已注入 concat,共 {} 段", len(intro_cards))
-
         srt_path: _P | None = None
         if options.subtitle:
             srt_text = _build_srt(segments, cut_offset, duration)
@@ -608,6 +752,7 @@ def render_clip_to_file(
                 srt_path.write_text(srt_text, encoding="utf-8")
 
         _run_ffmpeg_clip(concat_list, output_path, cut_offset, duration, options, srt_path)
+        peak_rel += _prepend_intro_cards(candidate_id, output_path, options)
 
     real_duration, width, height = probe_media(str(output_path))
 
@@ -700,19 +845,8 @@ def produce_clip(
         work_dir = Path(tmp)
         concat_list = _write_concat_list(segments, work_dir)
 
-        # V0.1.8 P1.2:生成片头/片尾标题卡。
-        intro_cards = _render_intro_outro_cards(candidate_id, work_dir, options)
-        if intro_cards:
-            # 将片头卡片插入 concat 列表最前面。
-            card_lines = [f"file '{card.as_posix()}'" for card in intro_cards]
-            existing = concat_list.read_text(encoding="utf-8")
-            new_concat = work_dir / "concat_with_intro.txt"
-            new_concat.write_text("\n".join(card_lines) + "\n" + existing, encoding="utf-8")
-            concat_list = new_concat
-            logger.info("片头卡片已注入 concat,共 {} 段", len(intro_cards))
-
         srt_path: Path | None = None
-        if options.subtitle:
+        if options.subtitle or render_variants:
             srt_text = _build_srt(segments, cut_offset, duration)
             if srt_text:
                 srt_path = work_dir / "sub.srt"
@@ -729,6 +863,7 @@ def produce_clip(
                 srt_path,
                 cancel_check=cancel_check,
             )
+            peak_rel += _prepend_intro_cards(candidate_id, out_path, options, cancel_check=cancel_check)
         except ProcessCancelledError:
             out_path.unlink(missing_ok=True)
             raise
@@ -783,7 +918,9 @@ def produce_clip(
 
     if render_variants:
         # V0.1.8: 生成多版本 ClipVariant 记录。
-        _create_clip_variants(clip, options, segments, cut_offset)
+        _create_clip_variants(
+            clip, options, segments, cut_offset, subtitle_rendered=options.subtitle and srt_path is not None
+        )
 
         # 在持久化目录中重建 concat 清单和 SRT,供变体渲染使用。
         _recon_dir = Path(clip.file_path).parent
@@ -836,6 +973,8 @@ def _create_clip_variants(
     options: ClipOptions,
     segments: list[RawSegment],
     cut_offset: float,
+    *,
+    subtitle_rendered: bool,
 ) -> None:
     """为成品切片创建多版本 ClipVariant 记录。
 
@@ -849,6 +988,7 @@ def _create_clip_variants(
     :param options: 渲染选项。
     :param segments: 覆盖片段列表。
     :param cut_offset: 裁剪偏移。
+    :param subtitle_rendered: 主视频实际是否包含字幕，不能只根据开关推断。
     """
     with get_session() as db:
         # V0.1.11-alpha:用真实 HighlightEvent.id 作为 event_id。
@@ -862,14 +1002,14 @@ def _create_clip_variants(
                 file_path=clip.file_path,
                 duration_s=clip.duration_s,
                 resolution=f"{clip.width}x{clip.height}" if clip.width and clip.height else None,
-                has_subtitles=options.subtitle,
+                has_subtitles=subtitle_rendered,
                 render_status=RenderStatus.DONE,
                 version_number=1,
                 created_at=clip.created_at,
             )
         )
         # 按字幕状态标记。
-        if options.subtitle:
+        if subtitle_rendered:
             db.add(
                 ClipVariant(
                     event_id=event_id,
@@ -900,7 +1040,7 @@ def _create_clip_variants(
             ClipVariant(
                 event_id=event_id,
                 variant_type=ClipVariantType.ARCHIVE,
-                has_subtitles=options.subtitle,
+                has_subtitles=subtitle_rendered,
                 render_status=RenderStatus.QUEUED,
                 version_number=1,
             )
@@ -909,7 +1049,7 @@ def _create_clip_variants(
             ClipVariant(
                 event_id=event_id,
                 variant_type=ClipVariantType.COMPRESSED,
-                has_subtitles=options.subtitle,
+                has_subtitles=subtitle_rendered,
                 render_status=RenderStatus.QUEUED,
                 version_number=1,
             )
@@ -917,7 +1057,7 @@ def _create_clip_variants(
         logger.info(
             "ClipVariant 队列已创建 candidate={} variants={}",
             clip.candidate_id,
-            "SUBTITLED" if options.subtitle else "NO_SUBTITLES",
+            "SUBTITLED" if subtitle_rendered else "NO_SUBTITLES",
         )
 
 
@@ -936,7 +1076,7 @@ def _run_ffmpeg_clip(
     参数说明:
 
     * ``-f concat -safe 0 -i list``:用 concat demuxer 把多个 ts 当作单一输入;
-    * ``-ss`` 置于输入后:对拼接流做帧精确定位(再编码,慢但准);
+    * ``trim`` / ``atrim``:在滤镜内逐帧精剪，随后归零并烧录本地时间轴字幕;
     * ``-t duration``:截取时长;
     * ``-af`` / ``-vf``:音/视频后处理并把各自首个有效帧的时间戳归零;
     * ``-c:v libx264 -crf -preset``:H.264 编码,CRF 控质量;
@@ -952,8 +1092,7 @@ def _run_ffmpeg_clip(
     :param cancel_check: 可选的取消检查。
     :raises RuntimeError: FFmpeg 失败时。
     """
-    af = _build_audio_filter(options)
-    vf = _build_video_filter(options, srt_path)
+    af, vf = _clip_filters(options, srt_path, cut_offset, duration)
 
     cmd = [
         settings.ffmpeg_path,
@@ -966,8 +1105,6 @@ def _run_ffmpeg_clip(
         "0",
         "-i",
         str(concat_list),
-        "-ss",
-        f"{cut_offset:.3f}",
         "-t",
         f"{duration:.3f}",
     ]
@@ -1099,25 +1236,16 @@ def _render_variants(
         cancel_check=cancel_check,
     )
 
+    if srt_path is None:
+        # 无字幕证据时主片已是净版，不能把另一个净版登记为字幕版。
+        _report_progress(progress_callback, 90, "派生版本已完成（本窗口无字幕）")
+        return
     _report_progress(progress_callback, 84, "正在生成字幕互补版本")
     _raise_if_cancelled(cancel_check)
     # --- 互补字幕版 ---
     counterpart_subtitle = not options.subtitle
     if counterpart_subtitle:
-        # 主干无字幕 → 渲染带字幕版:用候选关联的 session 查找 segments 构建 SRT。
-        counterpart_srt: Path | None = None
-        from app.db.entities import HighlightCandidate as HC
-
-        with get_session() as db:
-            cand = db.get(HC, clip.candidate_id)
-            if cand:
-                segs = db.exec(
-                    select(RawSegment).where(RawSegment.session_id == cand.session_id).order_by(RawSegment.seq)
-                ).all()
-                srt_text = _build_srt(list(segs), cut_offset, duration)
-                if srt_text:
-                    counterpart_srt = variants_dir / f"clip_{clip.candidate_id}_sub.srt"
-                    counterpart_srt.write_text(srt_text, encoding="utf-8")
+        # 使用主流程按相同覆盖分段生成的字幕，不能把整场起点混入剪辑偏移。
         sub_path = variants_dir / f"clip_{clip.candidate_id}_subtitled.mp4"
         _render_single_variant(
             concat_list,
@@ -1128,17 +1256,11 @@ def _render_variants(
             preset=options.preset,
             audio_bitrate="160k",
             subtitle=True,
-            srt_path=counterpart_srt,
+            srt_path=srt_path,
             variant_type=ClipVariantType.SUBTITLED,
             clip=clip,
             cancel_check=cancel_check,
         )
-        # 清理临时字幕
-        if counterpart_srt and counterpart_srt.exists():
-            try:
-                counterpart_srt.unlink()
-            except OSError:
-                pass
     else:
         # 主干有字幕 → 渲染无字幕净版
         clean_path = variants_dir / f"clip_{clip.candidate_id}_clean.mp4"
@@ -1199,8 +1321,7 @@ def _render_single_variant(
         subtitle=subtitle,
     )
 
-    af = _build_audio_filter(var_opts)
-    vf = _build_video_filter(var_opts, srt_path)
+    af, vf = _clip_filters(var_opts, srt_path, cut_offset, duration)
 
     cmd = [
         settings.ffmpeg_path,
@@ -1213,8 +1334,6 @@ def _render_single_variant(
         "0",
         "-i",
         str(concat_list),
-        "-ss",
-        f"{cut_offset:.3f}",
         "-t",
         f"{duration:.3f}",
     ]
@@ -1242,6 +1361,14 @@ def _render_single_variant(
     logger.info("渲染变体 {} {} -> {} (CRF={} preset={})", variant_type, clip.candidate_id, out_path.name, crf, preset)
     try:
         result = run_cancellable(cmd, capture_output=True, timeout=1800, cancel_check=cancel_check)
+        if result.returncode == 0:
+            _prepend_intro_cards(
+                clip.candidate_id,
+                out_path,
+                var_opts,
+                audio_bitrate=audio_bitrate,
+                cancel_check=cancel_check,
+            )
     except ProcessCancelledError:
         out_path.unlink(missing_ok=True)
         raise
@@ -1254,13 +1381,15 @@ def _render_single_variant(
                 ClipVariant.variant_type == variant_type,
             )
         ).first()
+        if variant is None:
+            variant = ClipVariant(event_id=event_id, variant_type=variant_type, has_subtitles=False)
         if variant:
             if result.returncode == 0:
                 real_dur, w, h = probe_media(str(out_path))
                 variant.file_path = str(out_path)
                 variant.duration_s = real_dur or duration
                 variant.resolution = f"{w}x{h}" if w and h else None
-                variant.has_subtitles = subtitle
+                variant.has_subtitles = subtitle and srt_path is not None
                 variant.render_status = RenderStatus.DONE
                 logger.success("变体 {} candidate={} 渲染完成 -> {}", variant_type, clip.candidate_id, out_path.name)
             else:

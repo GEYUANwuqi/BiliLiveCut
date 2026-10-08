@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.background import BackgroundTask
 
 from app.web.services import dashboard as dashboard_service
 from app.web.services import rooms as rooms_service
@@ -104,6 +106,48 @@ def get_session_titles(session_id: int) -> dict[str, object]:
             if observation:
                 changes.append(observation.model_dump(mode="json"))
         return {"snapshot": snapshot.model_dump(mode="json") if snapshot else None, "changes": changes}
+
+
+@router.get("/sessions/{session_id}/danmaku-archive")
+def download_danmaku_archive(session_id: int) -> StreamingResponse:
+    """Download complete JSONL records up to a fixed boundary, including during capture."""
+    from app.db.entities import RecordingSession
+    from app.db.session import get_session
+    from app.recording.danmaku_archive import open_archive_snapshot
+
+    with get_session() as db:
+        if db.get(RecordingSession, session_id) is None:
+            raise HTTPException(status_code=404, detail="场次不存在")
+    try:
+        stream, size = open_archive_snapshot(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="本场尚未生成弹幕原始档") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="弹幕档案路径不可用") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="暂时无法读取弹幕原始档") from exc
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            remaining = size
+            while remaining:
+                chunk = stream.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            stream.close()
+
+    return StreamingResponse(
+        chunks(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="danmaku-session-{session_id}.jsonl"',
+        },
+        background=BackgroundTask(stream.close),
+    )
 
 
 @router.post("/sessions/{session_id}/timeline-summary")
