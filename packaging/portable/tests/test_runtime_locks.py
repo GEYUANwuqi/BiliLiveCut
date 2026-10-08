@@ -85,6 +85,7 @@ def test_runtime_locks_keep_security_upgrades_pinned() -> None:
         "fastapi": "0.141.1",
         "faster-whisper": "1.2.1",
         "funasr": "1.3.30",
+        "hydra-core": "1.3.7",
         "jinja2": "3.1.6",
         "modelscope": "1.39.0",
         "openai": "2.51.0",
@@ -97,6 +98,7 @@ def test_runtime_locks_keep_security_upgrades_pinned() -> None:
         "starlette": "1.3.1",
         "torch": "2.13.0",
         "torchaudio": "2.11.0",
+        "urllib3": "2.8.0",
         "uvicorn": "0.52.0",
         "websockets": "17.0",
     }
