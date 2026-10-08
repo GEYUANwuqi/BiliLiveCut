@@ -589,6 +589,6 @@ BILIUP_UPLOAD_CMD=                          # 自定义上传命令模板
 
 此 `packaging/portable/` 目录是**发布给最终用户的即插即用版本**，源码固定于 `v0.1.18.6-Alpha` 的发布基线 Commit。
 
-- **主仓库**: `D:\Vibe\BiliLiveCut\README.md`
-- **完整变更日志**: `D:\Vibe\BiliLiveCut\CHANGELOG.md`
+- **主仓库**: [README](../../README.md)
+- **完整变更日志**: [CHANGELOG](../../CHANGELOG.md)
 - **Portable 构建文档**: 本文件及 `packaging/portable/` 下的 Python 模块
