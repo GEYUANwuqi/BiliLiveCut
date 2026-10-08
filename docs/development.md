@@ -41,6 +41,8 @@ node scripts/check_configuration_interactions.mjs
 
 GitHub Actions 的 macOS 全量测试仅在 `main` 推送时运行。覆盖率测试步骤上限为 90 分钟，整个 job 上限为 120 分钟，为依赖安装和报告上传保留余量。超时配置更新仅对使用新提交的运行生效，重跑旧提交仍使用其原有时限。
 
+macOS 字幕和片头测试需要带 `subtitles`、`drawtext` 滤镜的 FFmpeg。CI 安装 Homebrew 的 [`ffmpeg-full`](https://formulae.brew.sh/formula/ffmpeg-full)，通过 `brew --prefix --installed ffmpeg-full` 解析路径，并显式设置 `FFMPEG_PATH`、`FFPROBE_PATH` 和后续步骤的 `PATH`。该配方为 keg-only，仅安装它不会替换默认路径中的普通 `ffmpeg`；普通版缺少这些滤镜时会导致真实烧录测试失败。安装步骤检查两个可执行文件和所需滤镜，缺失时在完整测试前直接报错，不跳过字幕或片头测试。
+
 测试重试和退避时，应先隔离被测模块持有的时钟与随机数引用，再替换等待或随机函数；直接 patch 模块引用中的标准库属性会影响整个进程，可能把后台线程的等待误计为重试。数据库退避测试会主动启动另一个线程，验证它的等待不会进入重试记录。
 
 完整门禁需要可用的原生扩展、真实 Payload 等前置产物，缺少前置条件时应先完成构建；不将跳过项目计为通过。以下入口按仓库配置执行依赖审计、测试和相关构建检查：
