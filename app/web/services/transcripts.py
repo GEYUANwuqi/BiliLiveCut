@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from app.analysis.transcription.content import refined_transcript_text, transcript_text
 from app.core.runtime_settings import configured_task
+from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 from app.db.entities import (
     ClipVariant,
     Danmaku,
@@ -263,12 +264,14 @@ def _render_source_export(source: Path, output: Path, segment_id: int, export_ro
         raise TranscriptMediaError("FFmpeg 无损导出超时") from exc
     except OSError as exc:
         temp_output.unlink(missing_ok=True)
-        raise TranscriptMediaError(f"无法启动 FFmpeg: {exc}") from exc
+        raise TranscriptMediaError(f"无法启动 FFmpeg: {safe_exception_summary(exc)}") from exc
     if result.returncode != 0:
         temp_output.unlink(missing_ok=True)
         stderr = result.stderr.decode("utf-8", errors="ignore")
         error_type = classify_ffmpeg_error(result.returncode, stderr)
-        raise TranscriptMediaError(f"FFmpeg 无损导出失败 [{error_type.name}]: {stderr}")
+        raise TranscriptMediaError(
+            f"FFmpeg 无损导出失败 [{error_type.name}]: {sanitize_diagnostic(stderr, limit=len(stderr))[-1500:]}"
+        )
     temp_output.replace(output)
     for stale in export_root.glob(f"segment_{segment_id}_*.mp4"):
         if stale != output:
@@ -303,9 +306,11 @@ def _probe_stream_start_times(source: Path) -> tuple[float | None, float | None]
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr or ""
         error_type = classify_ffmpeg_error(exc.returncode, stderr)
-        raise TranscriptMediaError(f"ffprobe 探测原片失败 [{error_type.name}]: {stderr}") from exc
+        raise TranscriptMediaError(
+            f"ffprobe 探测原片失败 [{error_type.name}]: {sanitize_diagnostic(stderr, limit=len(stderr))[-1500:]}"
+        ) from exc
     except OSError as exc:
-        raise TranscriptMediaError(f"无法启动 ffprobe: {exc}") from exc
+        raise TranscriptMediaError(f"无法启动 ffprobe: {safe_exception_summary(exc)}") from exc
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise TranscriptMediaError("ffprobe 返回了无效的媒体信息") from exc
 

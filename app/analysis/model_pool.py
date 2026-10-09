@@ -10,6 +10,7 @@ from threading import Condition
 
 from app.core.config import Settings, settings
 from app.core.runtime_settings import active_settings_views, effective_settings, process_settings
+from app.core.sanitize import safe_exception_summary
 
 
 @dataclass
@@ -186,4 +187,6 @@ def preload_models() -> None:
                 with model_pool.use(role, identity, loader):
                     pass
             except (RuntimeError, OSError, ValueError, ImportError) as exc:
-                logger.warning("ASR 预加载失败 role={} model={} error={}", role, identity, type(exc).__name__)
+                logger.opt(exception=exc).warning(
+                    "ASR 预加载失败 role={} model={} error={}", role, identity, safe_exception_summary(exc)
+                )

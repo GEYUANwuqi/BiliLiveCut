@@ -209,22 +209,21 @@ def download_engine(engine: dict[str, Any]) -> bool:
     start = time.time()
     try:
         # 主模型下载
-        kwargs: dict[str, Any] = {"model_id": model_id, "local_dir": str(engine_dir)}
-        if revision:
-            kwargs["revision"] = str(revision)
-
         if hub == "modelscope":
-            from modelscope.hub.snapshot_download import snapshot_download
+            from blc_portable.model_download import download_ms_model
 
-            snapshot_download(**kwargs)
+            download_ms_model(str(engine["engine_id"]), model_id, engine_dir, str(revision) if revision else None)
         elif hub == "huggingface":
-            from huggingface_hub import snapshot_download as hf_snapshot_download
+            from blc_portable.model_download import HF_MIRRORS, download_hf_snapshot, download_with_retry
 
-            hf_snapshot_download(
-                repo_id=model_id,
-                local_dir=str(engine_dir),
-                local_dir_use_symlinks=False,
+            download_with_retry(
+                engine=str(engine["engine_id"]),
+                model=model_id,
                 revision=str(revision) if revision else None,
+                endpoints=HF_MIRRORS,
+                operation=lambda endpoint: download_hf_snapshot(
+                    model_id, engine_dir, str(revision) if revision else None, endpoint
+                ),
             )
         else:
             raise ValueError(f"不支持的模型仓库类型: {hub}")
@@ -237,14 +236,15 @@ def download_engine(engine: dict[str, Any]) -> bool:
             sub_dir = engine_dir / sub_name
             sub_dir.mkdir(parents=True, exist_ok=True)
             print(f"    子模型: {sub_name} ({sub_id})")
-            sub_kwargs: dict[str, Any] = {"model_id": sub_id, "local_dir": str(sub_dir)}
-            if sub_rev:
-                sub_kwargs["revision"] = str(sub_rev)
-            snapshot_download(**sub_kwargs)
+            from blc_portable.model_download import download_ms_model
+
+            download_ms_model(str(engine["engine_id"]), sub_id, sub_dir, str(sub_rev) if sub_rev else None)
 
     except Exception as e:
+        from blc_portable.diagnostics import redact_diagnostic
+
         elapsed = time.time() - start
-        print(f"\n  [FAIL] 下载失败 ({elapsed:.0f}s): {e}")
+        print(f"\n  [FAIL] 下载失败 ({elapsed:.0f}s): {redact_diagnostic(str(e))}")
         return False
 
     elapsed = time.time() - start

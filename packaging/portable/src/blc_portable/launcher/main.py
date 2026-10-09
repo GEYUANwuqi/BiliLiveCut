@@ -26,13 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.console import configure_console_encoding
+from blc_portable.diagnostics import exception_summary, redact_diagnostic
 from config.launcher_settings import APP_ROOT_ENV, WEB_PORT_ENV, load_launcher_config
 
 # -- Constants ──────────────────────────────────────────────────
 APP_NAME = "BiliLiveCut"
-VERSION = "V0.1.18.6 Alpha"
-RELEASE_VERSION = "0.1.18.6-alpha"
-SOURCE_COMMIT_SHORT = "2ae1df8"
+VERSION = "V0.1.18.7 Alpha"
+RELEASE_VERSION = "0.1.18.7-alpha"
+SOURCE_COMMIT_SHORT = "c415e1c"
 # NOTE: RELEASE_ID 将在获得 Payload SHA-256 后动态生成 (内容寻址)
 SUPPORTED_PYTHON_VERSIONS = frozenset({(3, 11), (3, 12)})
 
@@ -205,6 +206,15 @@ def ensure_env(app_root: Path, source_dir: Path) -> None:
 # -- Environment prep ──────────────────────────────────────────────
 
 
+def _python_environment() -> dict[str, str]:
+    """隔离受管 Python 的导入根，保留用户明确配置的网络和业务环境。"""
+    env = os.environ.copy()
+    for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE"):
+        env.pop(name, None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
 def _inspect_python(command: Sequence[str]) -> tuple[Path, tuple[int, int]] | None:
     """Return the real interpreter path and version for one command."""
     probe = "import json,sys; print(json.dumps({'executable': sys.executable, 'version': list(sys.version_info[:2])}))"
@@ -214,6 +224,7 @@ def _inspect_python(command: Sequence[str]) -> tuple[Path, tuple[int, int]] | No
             capture_output=True,
             text=True,
             timeout=10,
+            env=_python_environment(),
         )
         if result.returncode != 0:
             return None
@@ -370,7 +381,7 @@ def prepare_venv(app_root: Path) -> Path:
     print("  creating venv...")
     command = [str(system_py), "-m", "venv", str(venv_dir)]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=_python_environment())
     except (OSError, subprocess.SubprocessError) as exc:
         if venv_dir.exists():
             _remove_managed_venv(app_root, venv_dir)
@@ -381,7 +392,7 @@ def prepare_venv(app_root: Path) -> Path:
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if result.returncode != 0:
@@ -436,14 +447,16 @@ def _format_process_failure(
     root_exception: str,
 ) -> str:
     """Build one actionable root-cause report for a child Python failure."""
+    from blc_portable.diagnostics import redact_diagnostic
+
     return "\n".join(
         (
             title,
             f"Interpreter: {interpreter}",
             f"Return code: {returncode if returncode is not None else 'not started'}",
-            f"stdout:\n{(stdout or '').strip() or '<empty>'}",
-            f"stderr:\n{(stderr or '').strip() or '<empty>'}",
-            f"Root exception: {root_exception}",
+            f"stdout:\n{redact_diagnostic(stdout or '').strip() or '<empty>'}",
+            f"stderr:\n{redact_diagnostic(stderr or '').strip() or '<empty>'}",
+            f"Root exception: {redact_diagnostic(root_exception)}",
         )
     )
 
@@ -460,6 +473,8 @@ def _find_lock_file(venv_python: Path) -> Path:
         capture_output=True,
         text=True,
         timeout=10,
+        check=True,
+        env=_python_environment(),
     )
     abi = r.stdout.strip()
     lock_name = f"requirements-runtime-{abi}-win-x64.lock"
@@ -521,7 +536,7 @@ def _run_dependency_preflight(venv_python: Path) -> None:
     )
     command = [str(venv_python), "-c", script]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, env=_python_environment())
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(
             _format_process_failure(
@@ -530,7 +545,7 @@ def _run_dependency_preflight(venv_python: Path) -> None:
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if result.returncode != 0:
@@ -558,7 +573,7 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
     :param source_dir: Installed Runtime source directory, required for ``app.cli``.
     :raises RuntimeError: If the import fails or resolves outside ``source_dir``.
     """
-    env: dict[str, str] | None = None
+    env = _python_environment()
     cwd: str | None = None
     script = f"import {module}; print('  ok: {module}')"
 
@@ -568,9 +583,7 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
         resolved_source = source_dir.resolve()
         if not (resolved_source / "app" / "cli.py").is_file():
             raise RuntimeError(f"Installed Runtime is missing app/cli.py: {resolved_source}")
-        env = os.environ.copy()
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = str(resolved_source) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        env["PYTHONPATH"] = str(resolved_source)
         cwd = str(resolved_source)
         script = (
             "from pathlib import Path; import app.cli; "
@@ -591,14 +604,12 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
             cwd=cwd,
             env=env,
         )
-    except subprocess.CalledProcessError as exc:
-        details = "\n".join(part.strip() for part in (exc.stdout or "", exc.stderr or "") if part and part.strip())
-        if not details:
-            details = f"process exited with code {exc.returncode}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        details = exception_summary(exc)
         raise RuntimeError(f"Import smoke check failed for {module}:\n{details}") from exc
 
     output = (result.stdout or "").strip()
-    print(output or f"  ok: {module}")
+    print(redact_diagnostic(output) if output else f"  ok: {module}")
 
 
 def _build_service_command(venv_python: Path, web_port: int) -> list[str]:
@@ -654,6 +665,7 @@ def install_dependencies(
             text=True,
             timeout=30,
             check=True,
+            env=_python_environment(),
         ).stdout
         installed = {}
         for line in raw_freeze.strip().split("\n"):
@@ -681,8 +693,8 @@ def install_dependencies(
             needs_install = False
         else:
             print(f"  dependencies outdated or missing ({len(missing)}), re-installing...")
-    except (subprocess.CalledProcessError, OSError):
-        pass
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f"  dependency inventory failed; reinstalling from verified lock: {exception_summary(exc)}")
 
     if needs_install:
         # Install from lock file with mandatory hash verification
@@ -720,7 +732,10 @@ def install_dependencies(
             ]
             + install_source_flags,
             check=True,
+            capture_output=True,
+            text=True,
             timeout=600,
+            env=_python_environment(),
         )
 
     # Always run one import/ABI preflight, including on subsequent launches
@@ -812,7 +827,7 @@ def prepare_models(
     if repair:
         command.append("--repair")
 
-    env = os.environ.copy()
+    env = _python_environment()
     env["PYTHONPATH"] = str(source_root.resolve())
     env["BLC_MODEL_CONFIG_DIR"] = str(config_root.resolve())
     env["PYTHONIOENCODING"] = "utf-8"
@@ -836,7 +851,7 @@ def prepare_models(
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
 
@@ -848,6 +863,10 @@ def prepare_models(
     root_line = next((line for line in reversed(stderr.splitlines()) if line.startswith(root_prefix)), "")
     visible_stdout = "\n".join(line for line in stdout.splitlines() if not line.startswith(result_prefix)).strip()
     visible_stderr = "\n".join(line for line in stderr.splitlines() if not line.startswith(root_prefix)).strip()
+    from blc_portable.diagnostics import redact_diagnostic
+
+    visible_stdout = redact_diagnostic(visible_stdout)
+    visible_stderr = redact_diagnostic(visible_stderr)
     if visible_stdout:
         print(visible_stdout)
     if result.returncode != 0:
@@ -887,7 +906,7 @@ def prepare_models(
                 returncode=result.returncode,
                 stdout=visible_stdout,
                 stderr=visible_stderr,
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if not isinstance(payload, dict):
@@ -1256,7 +1275,7 @@ def run_launcher(args: argparse.Namespace) -> int:
         print("=" * 60)
         print()
 
-        env = os.environ.copy()
+        env = _python_environment()
         bin_dir = app_root / "bin"
         if (bin_dir / "ffmpeg.exe").exists():
             env["FFMPEG_PATH"] = str(bin_dir / "ffmpeg.exe")
@@ -1285,9 +1304,21 @@ def run_launcher(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nService stopped")
         return 0
-    except Exception:
+    except Exception as exc:
         print("\nService exited with error:")
-        traceback.print_exc()
+        details = exception_summary(exc)
+        for frame in traceback.extract_tb(exc.__traceback__):
+            details += f"\n  {frame.filename}:{frame.lineno} in {frame.name}"
+        details = redact_diagnostic(details)
+        print(details)
+        try:
+            log_dir = app_root / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "launcher-error.log"
+            log_path.write_text(details + "\n", encoding="utf-8")
+            print(f"诊断已保存: {log_path}")
+        except OSError as log_error:
+            print(f"无法保存启动诊断: {exception_summary(log_error)}")
         print()
         _pause_before_exit()
         return 1

@@ -210,6 +210,7 @@ def test_app_cli_smoke_uses_installed_runtime_source(tmp_path: Path, monkeypatch
         return _sp.CompletedProcess(args, 0, stdout="  ok: app.cli\n", stderr="")
 
     monkeypatch.setenv("PYTHONPATH", "ambient-checkout")
+    monkeypatch.setenv("PYTHONHOME", "ambient-home")
     monkeypatch.setattr(main.subprocess, "run", _fake_run)
 
     main._run_import_smoke(Path(sys.executable), "app.cli", source_dir)
@@ -219,8 +220,78 @@ def test_app_cli_smoke_uses_installed_runtime_source(tmp_path: Path, monkeypatch
     assert kwargs["cwd"] == str(source_dir.resolve())
     env = kwargs["env"]
     assert isinstance(env, dict)
-    assert env["PYTHONPATH"].split(os.pathsep) == [str(source_dir.resolve()), "ambient-checkout"]
+    assert env["PYTHONPATH"] == str(source_dir.resolve())
+    assert "PYTHONHOME" not in env
+    assert env["PYTHONNOUSERSITE"] == "1"
     assert kwargs["text"] is True
+
+
+def test_managed_python_ignores_ambient_import_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from blc_portable.launcher import main
+
+    (tmp_path / "json.py").write_text("raise RuntimeError('ambient module loaded')\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("PYTHONHOME", str(tmp_path / "missing-python"))
+    monkeypatch.setenv("PYTHONUSERBASE", str(tmp_path / "user-site"))
+    parent = os.environ.copy()
+
+    inspected = main._inspect_python((sys.executable,))
+    assert inspected is not None
+    assert inspected[1] == sys.version_info[:2]
+    main._run_import_smoke(Path(sys.executable), "json")
+    assert dict(os.environ) == parent
+
+
+def test_dependency_processes_isolate_python_but_preserve_install_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from blc_portable.launcher import main
+
+    lock_file = tmp_path / "requirements.lock"
+    lock_file.write_text("demo==1.0 --hash=sha256:" + "0" * 64 + "\n", encoding="utf-8")
+    wheelhouse = tmp_path / "vendor" / "wheels"
+    wheelhouse.mkdir(parents=True)
+    (wheelhouse / "demo.whl").write_bytes(b"fixture")
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        calls.append(args)
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        assert not {"PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE"}.intersection(env)
+        assert env["PYTHONNOUSERSITE"] == "1"
+        assert env["PIP_NO_INDEX"] == "1"
+        assert env["PIP_INDEX_URL"] == "https://mirror.example/simple"
+        assert env["BLC_OFFLINE"] == "1"
+        return _sp.CompletedProcess(args, 0, stdout="", stderr="")
+
+    for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE"):
+        monkeypatch.setenv(name, "ambient-root")
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_INDEX_URL", "https://mirror.example/simple")
+    monkeypatch.setenv("BLC_OFFLINE", "1")
+    monkeypatch.setattr(main, "_find_lock_file", lambda _python: lock_file)
+    monkeypatch.setattr(main.subprocess, "run", run)
+
+    main.install_dependencies(Path(sys.executable), tmp_path)
+    main._run_dependency_preflight(Path(sys.executable))
+    assert any(args[-3:] == ["pip", "freeze", "--all"] for args in calls)
+    assert any("install" in args for args in calls)
+    assert any("import huggingface_hub" in args[-1] for args in calls)
+
+
+def test_lock_probe_failure_preserves_child_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from blc_portable.launcher import main
+
+    def fail(args: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        assert kwargs["check"] is True
+        raise _sp.CalledProcessError(7, args, stderr="ImportError: broken Python runtime")
+
+    monkeypatch.setattr(main.subprocess, "run", fail)
+    with pytest.raises(_sp.CalledProcessError) as caught:
+        main._find_lock_file(Path(sys.executable))
+    assert caught.value.returncode == 7
+    assert caught.value.stderr == "ImportError: broken Python runtime"
 
 
 def test_import_smoke_reports_original_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,6 +317,21 @@ def test_import_smoke_reports_original_stderr(tmp_path: Path, monkeypatch: pytes
         main._run_import_smoke(Path(sys.executable), "app.cli", source_dir)
 
     assert isinstance(exc_info.value.__cause__, _sp.CalledProcessError)
+
+
+def test_import_smoke_timeout_keeps_safe_stderr_without_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from blc_portable.launcher import main
+
+    def timeout(args: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        raise _sp.TimeoutExpired(
+            ["python", "private-argument"], 30, stderr="ImportError: native ABI mismatch token=private-token"
+        )
+
+    monkeypatch.setattr(main.subprocess, "run", timeout)
+    with pytest.raises(RuntimeError) as caught:
+        main._run_import_smoke(Path(sys.executable), "numpy")
+    assert "ImportError: native ABI mismatch" in str(caught.value)
+    assert "private-" not in str(caught.value)
 
 
 def test_dependency_preflight_checks_model_sdks_once(monkeypatch: pytest.MonkeyPatch) -> None:

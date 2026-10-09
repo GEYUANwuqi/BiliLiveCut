@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from app.core.sanitize import sanitize_diagnostic
+
 if TYPE_CHECKING:
     from app.web.services.background_jobs import JobContext, WebJobManager
 
@@ -90,7 +92,12 @@ def _upload_clip(context: JobContext, payload: dict[str, Any]) -> dict[str, Any]
     context.check_cancelled()
     task = enqueue_and_upload(int(payload["clip_id"]))
     context.check_cancelled()
-    return {"task_id": task.id, "status": task.status, "error": task.last_error}
+    if task.status != "success":
+        raise RuntimeError(
+            f"上传未完成 upload_task_id={task.id} status={task.status}: "
+            f"{sanitize_diagnostic(task.last_error or '请核对平台结果')}"
+        )
+    return {"task_id": task.id, "status": task.status, "error": None}
 
 
 def _retry_upload(context: JobContext, payload: dict[str, Any]) -> dict[str, Any]:
@@ -100,4 +107,9 @@ def _retry_upload(context: JobContext, payload: dict[str, Any]) -> dict[str, Any
     context.check_cancelled()
     task = process_upload_task(int(payload["upload_task_id"]))
     context.check_cancelled()
-    return {"task_id": task.id, "status": task.status, "error": task.last_error}
+    if task.status != "success":
+        raise RuntimeError(
+            f"上传未完成 upload_task_id={task.id} status={task.status}: "
+            f"{sanitize_diagnostic(task.last_error or '请核对平台结果')}"
+        )
+    return {"task_id": task.id, "status": task.status, "error": None}

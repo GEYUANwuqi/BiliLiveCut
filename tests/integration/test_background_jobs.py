@@ -14,6 +14,72 @@ from fastapi.testclient import TestClient
 from app.web.services.background_jobs import JobContext, WebJobManager, _decode_job, get_job
 
 
+async def test_background_failure_persists_safe_exception_chain(temp_db: None) -> None:
+    manager = WebJobManager()
+    await manager.start()
+
+    def handler(context: JobContext, payload: dict[str, Any]) -> None:
+        try:
+            raise TimeoutError("https://api.example/private?token=private-value")
+        except TimeoutError as exc:
+            raise RuntimeError("Authorization: Bearer private-auth") from exc
+
+    manager.register("broken", handler)
+    job = await manager.enqueue("broken", {}, label="broken", owner="test")
+    result = await _wait_for_status(job["id"], {"failed"})
+    await manager.stop()
+    assert "RuntimeError" in result["error"] and "TimeoutError" in result["error"]
+    assert "private-" not in result["error"]
+
+
+@pytest.mark.parametrize("status", ["failed", "skipped", "reconciliation_required", "success"])
+async def test_upload_job_reflects_actual_upload_terminal_status(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    from app.db.entities import UploadTask
+    from app.publishing import uploader
+
+    task = UploadTask(id=55, clip_id=1, uploader="biliup", status=status, last_error="token=private-error")
+    monkeypatch.setattr(uploader, "enqueue_and_upload", lambda clip_id: task)
+    manager = WebJobManager()
+    await manager.start()
+    job = await manager.enqueue(
+        "clip_upload", {"clip_id": 1}, label="upload", owner="test", cancellable_while_running=False
+    )
+    result = await _wait_for_status(job["id"], {"failed", "succeeded"})
+    await manager.stop()
+    assert result["status"] == ("succeeded" if status == "success" else "failed")
+    if status != "success":
+        assert "upload_task_id=55" in result["error"] and status in result["error"]
+        assert "private-error" not in result["error"]
+
+
+async def test_failed_job_status_write_is_observed_and_saved_once(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.web.services import background_jobs
+
+    manager = WebJobManager()
+    await manager.start()
+    manager.register("value", lambda context, payload: {})
+    update = background_jobs._update_job
+    failures = 0
+
+    def fail_running(job_id: str, **changes: Any) -> dict[str, Any]:
+        nonlocal failures
+        if changes.get("status") == "running":
+            failures += 1
+            raise OSError("database state unavailable")
+        return update(job_id, **changes)
+
+    monkeypatch.setattr(background_jobs, "_update_job", fail_running)
+    job = await manager.enqueue("value", {}, label="test", owner="test")
+    result = await _wait_for_status(job["id"], {"failed"})
+    await manager.stop()
+    assert failures == 1 and "OSError" in result["error"]
+    assert not manager._cancel_events
+
+
 def _stored_job(**overrides: Any) -> dict[str, Any]:
     """构造当前且唯一的持久化 Web 作业格式。"""
     now = datetime.now(UTC).isoformat()
@@ -113,7 +179,7 @@ async def test_background_job_can_retry_after_failure(temp_db: None) -> None:
     manager.register("test_retry", handler)
     job = await manager.enqueue("test_retry", {}, label="retry", owner="tester")
     failed = await _wait_for_status(job["id"], {"failed"})
-    assert failed["error"] == "boom"
+    assert failed["error"] == "RuntimeError: boom"
     manager.retry(job["id"], "tester")
     completed = await _wait_for_status(job["id"], {"succeeded"})
     await manager.stop()

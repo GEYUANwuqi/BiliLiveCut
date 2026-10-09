@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 from collections import deque
 from datetime import UTC, datetime, timedelta, timezone
@@ -34,6 +35,141 @@ from app.recording.danmaku import DanmakuCapture, read_evidence
 from app.recording.recorder import Recorder
 from app.sources.registry import SourceRegistry, source_registry
 from app.sources.rooms import register_room, room_source
+
+
+@pytest.mark.parametrize("failures", [1, 2])
+async def test_failed_danmaku_checkpoint_freezes_last_confirmed_coverage(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, failures: int
+) -> None:
+    from app.recording.danmaku import CaptureInterval
+
+    room = await register_room("123", True, "external")
+    capture = DanmakuCapture(runtime, room_source(room), room.id, 999)
+    confirmed = datetime.now(UTC) - timedelta(seconds=20)
+    capture.evidence.status = DanmakuStatus.AVAILABLE
+    capture.evidence.confirmed_until = confirmed
+    capture.evidence.intervals = [CaptureInterval(start=confirmed - timedelta(seconds=30))]
+    original = capture._save_sync
+    calls = 0
+
+    def fail_then_recover(payload: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= failures:
+            raise OSError("coverage database unavailable")
+        original(payload)
+
+    monkeypatch.setattr(capture, "_save_sync", fail_then_recover)
+    failed = asyncio.create_task(capture._save())
+    failed.add_done_callback(capture._observe_task)
+    await asyncio.gather(failed, return_exceptions=True)
+    await asyncio.sleep(0)
+    await capture.stop()
+    assert capture.evidence.status == DanmakuStatus.FAILED
+    assert capture.evidence.intervals[-1].end == confirmed
+    with get_session() as db:
+        stored = read_evidence(db, 999)
+        assert stored.status == DanmakuStatus.FAILED
+        assert stored.intervals[-1].end == confirmed and stored.ended_at == confirmed
+
+
+async def test_danmaku_failure_waits_for_older_checkpoint_before_saving_final_state(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from app.recording.danmaku import CaptureInterval
+
+    room = await register_room("123", True, "external")
+    capture = DanmakuCapture(runtime, room_source(room), room.id, 999)
+    confirmed = datetime.now(UTC) - timedelta(seconds=20)
+    capture.evidence.status = DanmakuStatus.AVAILABLE
+    capture.evidence.confirmed_until = confirmed
+    capture.evidence.intervals = [CaptureInterval(start=confirmed - timedelta(seconds=30))]
+    started, release = threading.Event(), threading.Event()
+    original = capture._save_sync
+    writes: list[str] = []
+
+    def delayed_first_write(payload: str) -> None:
+        if not started.is_set():
+            started.set()
+            assert release.wait(5), "test did not release pending write"
+        original(payload)
+        writes.append(payload)
+
+    async def checkpoint() -> None:
+        async with capture._state_lock:
+            await capture._save()
+
+    async def failed_helper() -> None:
+        raise OSError("capture helper failed")
+
+    monkeypatch.setattr(capture, "_save_sync", delayed_first_write)
+    capture._task = asyncio.create_task(checkpoint())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        assert capture.evidence.confirmed_until == confirmed
+        capture._heartbeat_task = asyncio.create_task(failed_helper())
+        capture._heartbeat_task.add_done_callback(capture._observe_task)
+        await asyncio.gather(capture._heartbeat_task, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert capture.evidence.status == DanmakuStatus.FAILED
+        assert not writes
+    finally:
+        release.set()
+        await capture.stop()
+    with get_session() as db:
+        stored = read_evidence(db, 999)
+        assert stored.status == DanmakuStatus.FAILED
+        assert stored.ended_at == confirmed and stored.confirmed_until == confirmed
+        assert stored.intervals[-1].end == confirmed
+
+
+@pytest.mark.parametrize("method,stage", [("_watch_segments", "segments"), ("_monitor_disk", "disk")])
+async def test_recording_supervises_required_helpers(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, method: str, stage: str
+) -> None:
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id, metadata_prepared=True)
+
+    class Process:
+        stdin = None
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.stderr = asyncio.StreamReader()
+            self.exited = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self.exited.wait()
+            assert self.returncode is not None
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = 1
+            self.stderr.feed_eof()
+            self.exited.set()
+
+    process = Process()
+
+    async def spawn(*args: object, **kwargs: object) -> Process:
+        return process
+
+    async def broken(*args: object) -> None:
+        raise PermissionError("helper cannot write token=private-helper")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(recorder, method, broken)
+    before = asyncio.all_tasks()
+    with pytest.raises(PermissionError):
+        await asyncio.wait_for(recorder.run(), 2)
+    assert process.exited.is_set() and recorder.recording_action_required
+    assert stage in recorder.recording_error and "PermissionError" in recorder.recording_error
+    assert "private-helper" not in recorder.recording_error
+    assert not (asyncio.all_tasks() - before)
+    with get_session() as db:
+        session = db.get(RecordingSession, recorder.session_id)
+        assert session.status == "error" and session.ended_at is not None
 
 
 class RuntimeSource:
@@ -327,6 +463,275 @@ async def test_ffmpeg_stderr_cannot_leak_urls_headers_or_body(runtime: RuntimeSo
         logger.remove(sink)
     assert "secret" not in " ".join(messages + recorder._stderr_tail)
     assert recorder._classify_recording_exit(1, recorder._stderr_tail).name == "UPSTREAM_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "failure,category",
+    [
+        ("No space left on device", "DISK_FULL"),
+        ("Permission denied", "PERMISSION_DENIED"),
+        ("Unrecognized option 'bad'", "INVALID_ARGUMENT"),
+        ("Unknown encoder 'bad'", "UNSUPPORTED_CODEC"),
+        (errno.ENOENT, "MISSING_BINARY"),
+        (errno.EACCES, "PERMISSION_DENIED"),
+    ],
+)
+async def test_ffmpeg_permanent_failure_persists_error_and_blocks_automatic_restart(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, failure: str | int, category: str
+) -> None:
+    from app.analysis.room_config import load_room_config
+    from app.core import logging as app_logging
+    from app.pipeline.live_monitor import LiveMonitor
+    from app.web.services import rooms
+    from app.web.services.logs import list_logs
+
+    room = await register_room("123", True, "external")
+    rooms.update_room(room.id, {"auto_record": True})
+    manager = rooms.RecorderManager()
+    monkeypatch.setattr(rooms, "recorder_manager", manager)
+    spawn_count = 0
+
+    class Process:
+        returncode = 1
+        stdin = None
+
+        def __init__(self) -> None:
+            self.stderr = asyncio.StreamReader()
+            self.stderr.feed_data(f"Connection reset\n{failure}\n".encode())
+            self.stderr.feed_eof()
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def spawn(*args: object, **kwargs: object) -> Process:
+        nonlocal spawn_count
+        spawn_count += 1
+        assert spawn_count == 1
+        if isinstance(failure, int):
+            raise OSError(failure, "process start failed")
+        return Process()
+
+    async def ended(session_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(rooms, "_on_session_end", ended)
+    monitor = LiveMonitor()
+    monitor._stop = asyncio.Event()
+    # 完整测试中 CLI 可能已初始化异步 DB sink；不能再注册第二个。
+    sink = None if app_logging._CONFIGURED else logger.add(app_logging._db_sink, level="WARNING")
+    try:
+        for _ in range(3):
+            await monitor._check_all()
+            await asyncio.gather(*list(manager._tasks.values()))
+        assert spawn_count == 1
+        with get_session() as db:
+            sessions = db.exec(select(RecordingSession)).all()
+            assert len(sessions) == 1 and sessions[0].status == "error"
+            assert category in sessions[0].error_message and sessions[0].ended_at is not None
+            saved = db.get(LiveRoom, room.id)
+            assert load_room_config(saved)["recording_auto_restart_suppressed"]
+        await logger.complete()
+        messages = [entry["message"] for entry in list_logs() if "录制异常" in entry["message"]]
+        assert len(messages) == 1
+        assert all(
+            field in messages[0]
+            for field in ("session=", "exit_code=1", f"category={category}", "retry=False", "attempt=", "reason=")
+        )
+        assert manager.status(room.id)["state"] == "error"
+    finally:
+        if sink is not None:
+            logger.remove(sink)
+        await manager.stop_all()
+        await monitor.stop()
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Connection timed out",
+        "Server returned 403",
+        "unrecognized upstream failure",
+        "Packet corrupt\nConnection timed out",
+    ],
+)
+async def test_short_fragments_do_not_reset_transient_or_unknown_failure_budget(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id, metadata_prepared=True)
+    attempts = 0
+    waits: list[float] = []
+
+    async def media(stream: StreamSpec, directory: Path) -> int:
+        nonlocal attempts
+        attempts += 1
+        assert attempts <= 3
+        recorder._seq += 1
+        recorder._attempt_media_seconds = 0.1
+        recorder._remember_stderr(stderr.encode())
+        return 1
+
+    async def wait(seconds: float) -> None:
+        if seconds >= settings.room_metadata_refresh_interval_s:
+            await recorder._stop.wait()
+            return
+        waits.append(seconds)
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(settings, "recording_reconnect_max_attempts", 3)
+    monkeypatch.setattr(settings, "recording_reconnect_max_elapsed_s", 0)
+    monkeypatch.setattr(recorder, "_record_once", media)
+    monkeypatch.setattr(recorder, "_sleep_or_stop", wait)
+    await recorder.run()
+    assert attempts == runtime.stream_calls == 3 and len(waits) == 2
+    assert 0.8 <= waits[0] <= 1.2 and 1.6 <= waits[1] <= 2.4
+    assert recorder.retry_budget_exhausted and not recorder.recording_action_required
+    with get_session() as db:
+        session = db.get(RecordingSession, recorder.session_id)
+        assert session.status == "error" and session.ended_at is not None
+
+
+@pytest.mark.parametrize("manual_stop", [True, False])
+async def test_manual_stop_and_clean_eof_do_not_report_recording_failure(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, manual_stop: bool
+) -> None:
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id, metadata_prepared=True)
+    messages: list[str] = []
+    attempts = 0
+
+    async def media(stream: StreamSpec, directory: Path) -> int:
+        nonlocal attempts
+        attempts += 1
+        recorder._remember_stderr(b"Immediate exit requested\n")
+        if manual_stop:
+            recorder.stop()
+        return 255 if manual_stop else 0
+
+    async def wait(seconds: float) -> None:
+        if seconds >= settings.room_metadata_refresh_interval_s:
+            await recorder._stop.wait()
+            return
+        recorder.stop()
+
+    monkeypatch.setattr(recorder, "_record_once", media)
+    monkeypatch.setattr(recorder, "_sleep_or_stop", wait)
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        await recorder.run()
+    finally:
+        logger.remove(sink)
+    assert attempts == 1 and not recorder.retry_budget_exhausted
+    assert not any("录制异常" in message or "录制中断" in message for message in messages)
+    with get_session() as db:
+        session = db.get(RecordingSession, recorder.session_id)
+        assert session.status == "stopped" and not session.error_message
+
+
+async def test_stderr_is_drained_with_bounded_redacted_tail_and_final_unterminated_line(
+    runtime: RuntimeSource,
+) -> None:
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id)
+
+    class Process:
+        stderr = asyncio.StreamReader(limit=1024)
+
+    process = Process()
+    process.stderr.feed_data(b"Cookie: " + b"private-long-secret" * 100000 + b"\n")
+    for _ in range(100):
+        process.stderr.feed_data(b"HTTP error 403 https://u:p@cdn.invalid/signed-path?signature=private-sig\n")
+    process.stderr.feed_data(b"Authorization: private-auth\nCookie: private-cookie\n")
+    process.stderr.feed_data(b"Permission denied: https://proxy-user:proxy-pass@proxy.invalid/secret")
+    process.stderr.feed_eof()
+    await asyncio.wait_for(recorder._drain_stderr(process), 2)
+    tail = "\n".join(recorder._stderr_tail)
+    assert len(recorder._stderr_tail) <= 20 and len(tail) <= 20 * 513
+    assert "Permission denied" in tail
+    assert all(secret not in tail for secret in ("private-", "proxy-pass", "proxy-user", "u:p@", "signed-path"))
+    assert recorder._classify_recording_exit(1, recorder._stderr_tail).name == "PERMISSION_DENIED"
+
+
+def test_disabling_both_recording_budgets_still_has_a_finite_safety_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "recording_reconnect_max_attempts", 0)
+    monkeypatch.setattr(settings, "recording_reconnect_max_elapsed_s", 0)
+    assert Recorder._reconnect_limits() == (20, 0)
+
+
+@pytest.mark.parametrize("exit_race", [False, True])
+async def test_stderr_read_failure_terminates_process_and_finishes_session(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch, exit_race: bool
+) -> None:
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id, metadata_prepared=True)
+
+    class Process:
+        stdin = None
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.stderr = asyncio.StreamReader()
+            self.stderr.set_exception(OSError(errno.EIO, "broken stderr pipe"))
+            self.exited = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self.exited.wait()
+            assert self.returncode is not None
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = 1
+            self.exited.set()
+            if exit_race:
+                raise ProcessLookupError("already exited")
+
+    process = Process()
+
+    async def spawn(*args: object, **kwargs: object) -> Process:
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    tasks_before = asyncio.all_tasks()
+    with pytest.raises(OSError, match="broken stderr pipe"):
+        await asyncio.wait_for(recorder.run(), 2)
+    assert process.exited.is_set() and recorder.recording_action_required
+    assert recorder._active_process is None and not recorder._diagnostic_secrets
+    assert not (asyncio.all_tasks() - tasks_before)
+    with get_session() as db:
+        session = db.get(RecordingSession, recorder.session_id)
+        assert session.status == "error" and session.ended_at is not None
+
+
+async def test_source_retry_after_is_clamped_to_remaining_recording_budget(
+    runtime: RuntimeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from app.recording import recorder as recorder_module
+
+    room = await register_room("123", True, "external")
+    recorder = Recorder(room_source(room), room.id, metadata_prepared=True)
+    runtime.stream_failure = SourceTemporaryError("slow upstream", retry_after=3600)
+    now = 100.0
+    waits: list[float] = []
+
+    async def wait(seconds: float) -> None:
+        nonlocal now
+        if seconds == settings.room_metadata_refresh_interval_s:
+            await recorder._stop.wait()
+            return
+        waits.append(seconds)
+        now += seconds
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(recorder_module, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(settings, "recording_reconnect_max_elapsed_s", 10)
+    monkeypatch.setattr(settings, "recording_reconnect_max_attempts", 0)
+    monkeypatch.setattr(recorder, "_sleep_or_stop", wait)
+    await recorder.run()
+    assert waits == [10.0] and recorder.retry_budget_exhausted
+    assert runtime.stream_calls == 1
 
 
 async def test_monitor_keeps_unknown_and_failures_and_polls_healthy_platform_again(

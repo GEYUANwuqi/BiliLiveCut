@@ -21,6 +21,8 @@ from app.accelerators.dispatcher import (
 )
 from app.accelerators.dispatcher import find_silence_ranges
 from app.core.config import settings
+from app.core.process_control import run_cancellable
+from app.core.sanitize import safe_exception_summary
 
 # 解码目标参数:16kHz 足够语音分析,单声道降低数据量。
 _SAMPLE_RATE = 16000
@@ -173,10 +175,11 @@ def extract_pcm(path: str) -> np.ndarray:
         "pipe:1",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
-        raise RuntimeError(f"FFmpeg 解码音频失败: {stderr}") from exc
+        from app.pipeline.lifecycle import shutdown_event
+
+        proc = run_cancellable(cmd, capture_output=True, check=True, timeout=600, cancel_check=shutdown_event.is_set)
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise RuntimeError(f"FFmpeg 解码音频失败: {safe_exception_summary(exc)}") from exc
 
     if not proc.stdout:
         logger.warning("片段无音频数据: {}", path)

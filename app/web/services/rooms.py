@@ -17,6 +17,7 @@ from app.core import settings_store
 from app.core.config import settings
 from app.core.osutil import open_path
 from app.core.paths import clips_dir, ready_to_upload_dir
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     HighlightCandidate,
     HighlightEvent,
@@ -361,12 +362,15 @@ class RecorderManager:
             self._set_state(db_id, "force_stopped", recorder.session_id, "录制任务被强制取消")
             raise
         except Exception as exc:  # noqa: BLE001
-            message = f"录制失败：{type(exc).__name__}"
+            message = getattr(recorder, "recording_error", None) or f"录制失败：{safe_exception_summary(exc)}"
             recorder.fail(message)
             self._set_state(db_id, SessionStatus.ERROR, recorder.session_id, message)
-            logger.error("录制任务异常 db_id={} error={}", db_id, type(exc).__name__)
+            logger.opt(exception=exc).error("录制任务异常 db_id={} error={}", db_id, safe_exception_summary(exc))
         finally:
-            if bool(getattr(recorder, "source_action_required", False)):
+            if bool(getattr(recorder, "recording_action_required", False)):
+                self._set_recording_flags(db_id, suppress_auto_restart=True)
+                self._set_state(db_id, SessionStatus.ERROR, recorder.session_id, recorder.recording_error)
+            elif bool(getattr(recorder, "source_action_required", False)):
                 self._set_recording_flags(db_id, suppress_auto_restart=True)
                 self._set_state(
                     db_id,

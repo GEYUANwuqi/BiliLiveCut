@@ -18,6 +18,41 @@ INLINE_SCRIPT_TEMPLATES = tuple(path for path in TEMPLATE_FILES if "<script>" in
 INTERACTION_CHECK = PROJECT_ROOT / "scripts" / "check_frontend_interactions.mjs"
 
 
+def test_waveform_ui_displays_failure_and_clears_on_recovery() -> None:
+    node = shutil.which("node")
+    assert node is not None
+    template = (PROJECT_ROOT / "app/web/templates/review.html").read_text(encoding="utf-8")
+    function = template[template.index("async function loadWaveform()") : template.index("function drawWaveform(")]
+    script = (
+        """
+import assert from 'node:assert/strict';
+const errorNode = {textContent: ''};
+const $ = () => errorNode;
+let waveformPeaks = [], waveformDuration = 0;
+let payload = {error: '<bad media>', peaks: []};
+let failure = false;
+const api = async () => { if(failure) throw new Error('HTTP 500'); return payload; };
+const drawWaveform = () => {};
+const CAND_ID = 1;
+"""
+        + function
+        + """
+await loadWaveform();
+assert.match(errorNode.textContent, /<bad media>/);
+failure = true; await loadWaveform();
+assert.match(errorNode.textContent, /HTTP 500/);
+failure = false; payload = {peaks: [0.1], duration_s: 2};
+await loadWaveform();
+assert.equal(errorNode.textContent, '');
+assert.deepEqual(waveformPeaks, [0.1]);
+"""
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"], input=script, text=True, encoding="utf-8", capture_output=True, timeout=30
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_recording_import_page_upload_and_recovery() -> None:
     """真实导入模块覆盖原始文件上传、响应丢失、取消及轮询焦点保留。"""
     node = shutil.which("node")

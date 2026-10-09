@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import struct
 import time
@@ -26,9 +27,11 @@ from typing import TYPE_CHECKING, Protocol
 
 import brotli
 from loguru import logger
+from websockets.exceptions import WebSocketException
 
 from app.core.async_cleanup import complete_cleanup
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import Danmaku, DanmakuType
 from app.db.session import get_session
 from app.plugins.live_source import DanmakuStateSink, DanmakuStatus
@@ -293,7 +296,7 @@ class DanmakuClient:
                 logger.warning(
                     "匿名弹幕鉴权异常 room={}: {},{}s 后重连。",
                     self.room_id,
-                    type(exc).__name__,
+                    safe_exception_summary(exc),
                     self._login_retry_interval_s,
                 )
                 await self._sleep_or_stop(self._login_retry_interval_s)
@@ -301,21 +304,37 @@ class DanmakuClient:
             except BilibiliRateLimitError as exc:
                 await self._report_state(DanmakuStatus.FAILED)
                 access = None
+                server_delay = exc.retry_after_seconds
                 if exc.error_type in {HttpErrorType.COOKIE_EXPIRED, HttpErrorType.RISK_CONTROL}:
                     logger.warning(
                         "匿名弹幕接口返回 {} room={}: {}；{}s 后重试，录制与实时转写不受影响。",
                         exc.error_type.value,
                         self.room_id,
-                        type(exc).__name__,
+                        safe_exception_summary(exc),
                         self._login_retry_interval_s,
                     )
-                    await self._sleep_or_stop(self._login_retry_interval_s)
+                    await self._sleep_or_stop(max(self._login_retry_interval_s, server_delay))
                     continue
-                logger.warning("弹幕连接异常 room={}: {},{}s 后重连。", self.room_id, type(exc).__name__, backoff)
-            except Exception as exc:  # noqa: BLE001 — 弹幕断线不应中断录制
+                backoff = max(backoff, server_delay)
+                logger.warning(
+                    "弹幕连接异常 room={}: {},{}s 后重连。", self.room_id, safe_exception_summary(exc), backoff
+                )
+            except (BilibiliError, OSError, TimeoutError, WebSocketException) as exc:
+                if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM, errno.ENOSPC, errno.EROFS}:
+                    logger.opt(exception=exc).error(
+                        "弹幕本地资源故障，停止采集 room={} session={}", self.room_id, self.session_id
+                    )
+                    await self._report_state(DanmakuStatus.FAILED)
+                    return
                 await self._report_state(DanmakuStatus.FAILED)
                 access = None
-                logger.warning("弹幕连接异常 room={}: {},{}s 后重连。", self.room_id, type(exc).__name__, backoff)
+                logger.warning(
+                    "弹幕连接异常 room={}: {},{}s 后重连。", self.room_id, safe_exception_summary(exc), backoff
+                )
+            except Exception as exc:  # noqa: BLE001 — 本地持久化/实现错误不能无限重连
+                logger.opt(exception=exc).error("弹幕采集停止 room={} session={}", self.room_id, self.session_id)
+                await self._report_state(DanmakuStatus.FAILED)
+                return
             if self._stop.is_set():
                 break
             await self._sleep_or_stop(backoff)
@@ -374,7 +393,7 @@ class DanmakuClient:
                 self.room_id,
                 self._login_failures,
                 self._login_retry_max_attempts,
-                type(exc).__name__,
+                safe_exception_summary(exc),
             )
             return
         self._next_login_retry_at = time.monotonic() + self._login_retry_interval_s
@@ -384,7 +403,7 @@ class DanmakuClient:
             self._login_failures,
             self._login_retry_max_attempts,
             self._login_retry_interval_s,
-            type(exc).__name__,
+            safe_exception_summary(exc),
         )
 
     async def _consume_access(self, access: DanmakuAccess) -> DanmakuAccess | None:
@@ -449,7 +468,9 @@ class DanmakuClient:
                 raise
             except DanmakuProtocolError:
                 raise
-            except Exception as exc:  # noqa: BLE001 — 单节点故障应继续尝试服务端候选列表
+            except (OSError, TimeoutError, WebSocketException) as exc:
+                if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM, errno.ENOSPC, errno.EROFS}:
+                    raise
                 last_error = exc
                 logger.info(
                     "弹幕节点不可用 room={} host={} port={} ({}/{}): {}",
@@ -458,7 +479,7 @@ class DanmakuClient:
                     port,
                     index,
                     len(endpoints),
-                    type(exc).__name__,
+                    safe_exception_summary(exc),
                 )
         raise BilibiliError(f"全部 {len(endpoints)} 个弹幕节点均不可用") from last_error
 
@@ -489,15 +510,30 @@ class DanmakuClient:
             heartbeat = asyncio.create_task(self._heartbeat(ws))
             try:
                 while not self._stop.is_set():
-                    frame = await asyncio.wait_for(ws.recv(), timeout=35)
+                    receive = asyncio.create_task(ws.recv())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {receive, heartbeat}, timeout=35, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if heartbeat in done:
+                            await heartbeat
+                            raise ConnectionError("弹幕心跳任务提前结束")
+                        if receive not in done:
+                            raise TimeoutError("等待弹幕消息超时")
+                        frame = await receive
+                    finally:
+                        receive.cancel()
+                        await asyncio.gather(receive, return_exceptions=True)
                     if isinstance(frame, str):
                         frame = frame.encode("utf-8")
                     # 工作线程不能被 task.cancel 停止；重复取消也等待本批次持久化。
                     await complete_cleanup(asyncio.to_thread(self._handle_frame, frame))
             finally:
-                await self._report_state(DanmakuStatus.CONNECTING)
-                heartbeat.cancel()
-                await asyncio.gather(heartbeat, return_exceptions=True)
+                try:
+                    await self._report_state(DanmakuStatus.CONNECTING)
+                finally:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def _authenticate(self, ws: _WebSocketConnection, token: str, *, uid: int = 0) -> None:
         """发送鉴权包并确认服务端 ``op=8/code=0``。

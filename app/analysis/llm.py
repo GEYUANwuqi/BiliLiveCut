@@ -32,6 +32,7 @@ from loguru import logger
 from app.analysis import llm_providers as provs
 from app.core.config import settings
 from app.core.paths import storage_root
+from app.core.sanitize import safe_exception_summary
 
 if TYPE_CHECKING:
     from openai import OpenAI
@@ -393,7 +394,12 @@ def call_text(prompt: str, max_tokens: int = 512) -> str | None:
                 return text
             logger.warning("模型 {} 返回空结果,尝试下一个。", provider.name)
         except Exception as exc:  # noqa: BLE001 — 逐个降级
-            logger.warning("模型 {} 调用失败,降级下一个: {}", provider.name, exc)
+            logger.opt(exception=exc).warning(
+                "模型调用失败 provider={} model={}，尝试下一个: {}",
+                provider.id,
+                provider.model,
+                safe_exception_summary(exc),
+            )
     logger.error("所有大模型均不可用,降级为纯规则模式。")
     return None
 
@@ -422,11 +428,12 @@ def call_web_search(
                 if text:
                     return text
             except Exception as exc:  # noqa: BLE001 — 不支持该参数则退化为普通调用
-                logger.warning(
-                    "模型 {} 联网搜索参数({})不被支持,改普通调用: {}",
-                    provider.name,
+                logger.opt(exception=exc).warning(
+                    "模型 provider={} model={} 带联网参数({})调用失败,尝试普通调用: {}",
+                    provider.id,
+                    provider.model,
                     search_param,
-                    exc,
+                    safe_exception_summary(exc),
                 )
         # 2) 普通调用(无联网)。
         try:
@@ -434,7 +441,12 @@ def call_web_search(
             if text:
                 return text
         except Exception as exc:  # noqa: BLE001 — 降级到下一个 provider
-            logger.warning("模型 {} 调用失败,降级下一个: {}", provider.name, exc)
+            logger.opt(exception=exc).warning(
+                "模型调用失败 provider={} model={}，尝试下一个: {}",
+                provider.id,
+                provider.model,
+                safe_exception_summary(exc),
+            )
     logger.error("所有大模型均不可用,网感采集本次跳过。")
     return None
 
@@ -478,10 +490,10 @@ def call_trend_search(
                     logger.info("趋势采集(专用 API + 联网搜索)成功,model={}", trend_provider.model)
                     return text
             except Exception as exc:
-                logger.warning(
-                    "趋势采集专用 API 联网搜索失败({}),改普通调用: {}",
+                logger.opt(exception=exc).warning(
+                    "趋势采集 provider=trend model={} 联网调用失败，尝试普通调用: {}",
                     trend_provider.model,
-                    exc,
+                    safe_exception_summary(exc),
                 )
         # 2) 普通调用(无联网)。
         try:
@@ -490,7 +502,11 @@ def call_trend_search(
                 logger.info("趋势采集(专用 API 普通调用)成功,model={}", trend_provider.model)
                 return text
         except Exception as exc:
-            logger.warning("趋势采集专用 API 调用失败({}),回退通用 LLM: {}", trend_provider.model, exc)
+            logger.opt(exception=exc).warning(
+                "趋势采集 provider=trend model={} 调用失败，回退通用 LLM: {}",
+                trend_provider.model,
+                safe_exception_summary(exc),
+            )
 
     # 回退:使用通用 LLM 多模型列表(含联网搜索)
     logger.info("趋势采集未配置专用 API,回退到通用 LLM。")

@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.core.sanitize import safe_exception_summary
 from app.web.login_handler import get_cookie_info, get_login_status, start_login
 
 _LOGIN_FAILURES: dict[str, list[float]] = {}
@@ -48,7 +49,7 @@ def login_start(request: Request) -> dict[str, Any]:
         return start_login()
     except Exception as exc:
         _record_login_failure(ip)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=safe_exception_summary(exc)) from exc
 
 
 @router.get("/login/status")

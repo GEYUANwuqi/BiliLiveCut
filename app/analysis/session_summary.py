@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from app.analysis.transcription.content import transcript_text
 from app.core.config import settings
 from app.core.runtime_settings import configured_entry
+from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 from app.db.entities import (
     AppSetting,
     LiveRoom,
@@ -270,7 +271,7 @@ def execute_session_summary_claim(claim: SessionSummaryClaim) -> bool:
         return False
     except Exception as exc:  # noqa: BLE001 — 持久任务需要记录并有限重试
         logger.exception("整场高光总结失败 session={}", claim.session_id)
-        _return_claim_to_queue(claim, error=str(exc), count_attempt=True)
+        _return_claim_to_queue(claim, error=safe_exception_summary(exc), count_attempt=True)
         return False
     committed = _commit_summary_result(claim, result)
     if not committed:
@@ -462,7 +463,7 @@ def _return_claim_to_queue(
                 "attempts": attempts,
                 "started_at": None,
                 "next_retry_at": None if failed else (datetime.now(UTC) + timedelta(seconds=delay_s)).isoformat(),
-                "last_error": error[:2000],
+                "last_error": sanitize_diagnostic(error, limit=2000),
             }
         )
         row.value = _encode(payload)

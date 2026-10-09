@@ -56,6 +56,39 @@ class Source:
         self.closed = True
 
 
+async def test_last_source_attempt_preserves_retry_after_and_cooldown() -> None:
+    class DelayedSource(Source):
+        async def get_room_info(self, room: SourceRoom) -> RoomSnapshot:
+            self.calls += 1
+            raise SourceTemporaryError("busy", retry_after=0 if self.calls == 1 else 300)
+
+    registry = SourceRegistry(retry_delay_s=0)
+    source = DelayedSource()
+    registry.register_many("test", [source])
+    room = await registry.resolve_room("id", "sample")
+    with pytest.raises(SourceTemporaryError) as caught:
+        await registry.get_room_info(room)
+    assert caught.value.retry_after == 300 and source.calls == 2
+    with pytest.raises(SourceRateLimited):
+        await registry.get_room_info(room)
+    assert source.calls == 2
+
+
+@pytest.mark.parametrize("retry_after,expected", [("300", 300), ("inf", 60), ("nan", 60), ("-1", 60), ("invalid", 60)])
+async def test_bilibili_429_preserves_finite_retry_after(retry_after: str, expected: int) -> None:
+    import httpx
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": retry_after}, request=request)
+
+    async with BilibiliLiveClient() as client:
+        await client._client.aclose()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(reply))
+        with pytest.raises(BilibiliRateLimitError) as caught:
+            await client._request_payload("https://api.live.bilibili.com/test")
+    assert caught.value.retry_after_seconds == expected
+
+
 def test_registry_rejects_blocking_optional_collector() -> None:
     class BlockingSource(Source):
         def collect_danmaku(self, *args: object) -> None:

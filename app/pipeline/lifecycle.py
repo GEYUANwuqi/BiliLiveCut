@@ -8,6 +8,8 @@ import time as _time
 import uuid
 from datetime import UTC, datetime
 
+from app.core.sanitize import safe_exception_summary
+
 _WORKER_ID: str = f"worker-{uuid.uuid4().hex[:8]}"
 
 # 关闭标记 — 使用 threading.Event, 确保所有模块读取同一共享状态
@@ -59,18 +61,18 @@ def cleanup_subprocesses() -> None:
         _subprocesses.clear()
     if not procs:
         return
-    _logger.warning("清理 {} 个子进程 (SIGTERM)", len(procs))
+    _logger.warning("清理 %s 个子进程 (SIGTERM)", len(procs))
     for p in procs:
         try:
             if p.poll() is None:
                 p.terminate()
-        except Exception:
-            pass
+        except OSError as exc:
+            _logger.error("子进程清理失败 pid=%s: %s", p.pid, safe_exception_summary(exc))
     _time.sleep(5)
     for p in procs:
         try:
             if p.poll() is None:
                 p.kill()
-                _logger.warning("子进程 {} 已被 SIGKILL", p.pid)
-        except Exception:
-            pass
+                _logger.warning("子进程 %s 已被 SIGKILL", p.pid)
+        except OSError as exc:
+            _logger.error("子进程清理失败 pid=%s: %s", p.pid, safe_exception_summary(exc))

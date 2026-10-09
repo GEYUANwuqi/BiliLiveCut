@@ -98,7 +98,7 @@ def _load_version_config() -> dict[str, Any]:
 def get_version() -> str:
     """获取发布版本号。
 
-    :returns: 如 "0.1.17.4-alpha"
+    :returns: 当前发行版本字符串。
     """
     return _load_version_config()["release_version"]
 
@@ -106,7 +106,7 @@ def get_version() -> str:
 def get_version_label() -> str:
     """获取版本显示标签。
 
-    :returns: 如 "V0.1.17.4 Alpha"
+    :returns: 当前发行版本的显示标签。
     """
     return _load_version_config()["version_label"]
 
@@ -114,7 +114,7 @@ def get_version_label() -> str:
 def get_source_commit_short() -> str:
     """获取业务源码基线短 Hash。
 
-    :returns: 如 "97e39df"
+    :returns: 当前业务源码冻结提交的短 Hash。
     """
     return _load_version_config()["source_commit_short"]
 
@@ -138,7 +138,7 @@ def get_engine_pack_version() -> str:
 def get_lite_exe_name() -> str:
     """获取 Lite EXE 文件名模板。
 
-    :returns: 如 "BiliLiveCut-Portable-Lite-v0.1.17.4-alpha-x64.exe"
+    :returns: 代入当前版本号后的 Lite EXE 文件名。
     """
     template = _load_version_config()["naming"]["lite_exe"]
     return template.format(version=_load_version_config()["release_version"])
@@ -147,7 +147,7 @@ def get_lite_exe_name() -> str:
 def get_full_zip_name() -> str:
     """获取 Full ZIP 文件名模板。
 
-    :returns: 如 "BiliLiveCut-Portable-Full-0.1.17.4-alpha-x64.zip"
+    :returns: 代入当前版本号后的 Full ZIP 文件名。
     """
     template = _load_version_config()["naming"]["full_zip"]
     return template.format(version=_load_version_config()["release_version"])
@@ -156,7 +156,7 @@ def get_full_zip_name() -> str:
 def get_engine_pack_zip_name() -> str:
     """获取 Engine Pack ZIP 文件名模板。
 
-    :returns: 如 "BiliLiveCut-EnginePack-0.1.17.4-alpha.zip"
+    :returns: 代入当前版本号后的 Engine Pack ZIP 文件名。
     """
     template = _load_version_config()["naming"]["engine_pack_zip"]
     return template.format(version=_load_version_config()["release_version"])

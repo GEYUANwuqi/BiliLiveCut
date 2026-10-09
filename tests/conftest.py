@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
+def isolated_pipeline_shutdown() -> Iterator[None]:
+    """每个测试模拟独立进程，避免 Web lifespan 关闭标记污染随后直接调用的流水线。"""
+    from app.pipeline.lifecycle import shutdown_event
+
+    shutdown_event.clear()
+    yield
+    shutdown_event.clear()
+
+
+@pytest.fixture(autouse=True)
 def isolated_model_pool() -> Iterator[None]:
     """每个测试清理边界替身的空闲模型，避免外部加载 mock 跨测试复用。"""
     from app.analysis.model_pool import model_pool

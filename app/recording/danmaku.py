@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from app.core.async_cleanup import complete_cleanup
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import AppSetting, Danmaku, DanmakuType
 from app.db.session import get_session
 from app.plugins.live_source import (
@@ -102,6 +103,7 @@ class DanmakuCapture:
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._failure_task: asyncio.Task[None] | None = None
         self._stopping = False
 
     def _save_sync(self, payload: str) -> None:
@@ -117,10 +119,13 @@ class DanmakuCapture:
         await complete_cleanup(asyncio.to_thread(operation))
 
     async def _save(self) -> None:
-        self.evidence.confirmed_until = datetime.now(UTC)
+        confirmed = self.evidence.confirmed_until if self.evidence.ended_at is not None else datetime.now(UTC)
         self.evidence.archive_error = self.archive.error
-        payload = self.evidence.model_dump_json()
+        payload = self.evidence.model_copy(update={"confirmed_until": confirmed}).model_dump_json()
         await self._write(lambda: self._save_sync(payload))
+        # 只有已提交快照才能推进覆盖；等待写入时发生故障也不能越过冻结点。
+        if self.evidence.ended_at is None:
+            self.evidence.confirmed_until = confirmed
 
     async def _state(self, value: DanmakuStatus) -> None:
         async with self._state_lock:
@@ -170,6 +175,37 @@ class DanmakuCapture:
         if self.evidence.status == DanmakuStatus.CONNECTING:
             self._task = asyncio.create_task(self._run())
             self._heartbeat_task = asyncio.create_task(self._checkpoint_coverage())
+            self._task.add_done_callback(self._observe_task)
+            self._heartbeat_task.add_done_callback(self._observe_task)
+
+    def _observe_task(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            now = self.evidence.confirmed_until or datetime.now(UTC)
+            self.evidence.status = DanmakuStatus.FAILED
+            self.evidence.ended_at = now
+            for interval in self.evidence.intervals:
+                if interval.end is None:
+                    interval.end = max(interval.start, now)
+            logger.opt(exception=error).error("弹幕后台任务失败 session={}", self.session_id)
+            for peer in (self._task, self._heartbeat_task):
+                if peer is not None and peer is not task:
+                    peer.cancel()
+            if self._failure_task is None:
+                self._failure_task = asyncio.create_task(self._save_failure())
+
+    async def _save_failure(self) -> None:
+        """单次保存故障终态；数据库不可写时保留内存证据及文件日志。"""
+        peers = [task for task in (self._task, self._heartbeat_task) if task is not None]
+        if peers:
+            await asyncio.gather(*peers, return_exceptions=True)
+        try:
+            async with self._state_lock:
+                await self._save()
+        except Exception as exc:  # noqa: BLE001 — 失败记录的持久化边界
+            logger.opt(exception=exc).error("弹幕失败状态无法保存 session={}", self.session_id)
 
     async def _checkpoint_coverage(self) -> None:
         while self._task is not None and not self._task.done():
@@ -189,13 +225,20 @@ class DanmakuCapture:
             except asyncio.CancelledError:
                 raise
             except SourceTemporaryError as exc:
+                logger.warning(
+                    "弹幕暂时失败 session={} attempt={}/3 retry_after={}: {}",
+                    self.session_id,
+                    attempt + 1,
+                    exc.retry_after,
+                    safe_exception_summary(exc),
+                )
                 await self._state(DanmakuStatus.FAILED)
                 if attempt < 2:
                     await asyncio.sleep(max(2**attempt, exc.retry_after or 0.0))
             except Exception as exc:
-                # 外部插件边界：记录类型，不回显可能带凭据的异常正文。
+                # 外部插件边界：记录脱敏后的类型和因果链。
                 await self._state(DanmakuStatus.FAILED)
-                logger.warning("弹幕采集失败 session={} error={}", self.session_id, type(exc).__name__)
+                logger.warning("弹幕采集失败 session={} error={}", self.session_id, safe_exception_summary(exc))
                 return
 
     async def stop(self) -> None:
@@ -209,9 +252,15 @@ class DanmakuCapture:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
-        if self.evidence.ended_at is None:
-            now = datetime.now(UTC)
-            self.evidence.ended_at = now
-            if self.evidence.intervals and self.evidence.intervals[-1].end is None:
-                self.evidence.intervals[-1].end = now
+        if self._failure_task is not None:
+            await self._failure_task
+            self._failure_task = None
+        async with self._state_lock:
+            if self.evidence.ended_at is None:
+                now = datetime.now(UTC)
+                self.evidence.ended_at = now
+                self.evidence.confirmed_until = now
+                if self.evidence.intervals and self.evidence.intervals[-1].end is None:
+                    self.evidence.intervals[-1].end = now
+            # 停止时有界保存一次，覆盖旧的延迟写入并允许暂时坏库恢复后的终态落盘。
             await self._save()

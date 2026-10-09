@@ -42,6 +42,7 @@ def get_metrics() -> dict[str, Any]:
                 "upload_ms": snap.upload_avg_ms,
             },
             "disk": {
+                "error": snap.disk_error,
                 "free_gb": snap.disk_free_gb,
                 "raw_gb": snap.disk_raw_gb,
                 "clips_gb": snap.disk_clips_gb,

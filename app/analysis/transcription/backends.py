@@ -35,6 +35,7 @@ from app.analysis.transcription.models import (  # single source of truth — no
     Word,
 )
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 
 # ═══════════════════════════════════════════════════════════
 # 工具函数
@@ -77,7 +78,7 @@ def _probe_audio_duration(audio_path: str) -> float:
             [
                 settings.ffprobe_path,
                 "-v",
-                "quiet",
+                "error",
                 "-show_entries",
                 "format=duration",
                 "-of",
@@ -87,9 +88,11 @@ def _probe_audio_duration(audio_path: str) -> float:
             capture_output=True,
             text=True,
             timeout=15,
+            check=True,
         )
         return float(result.stdout.strip())
-    except Exception:
+    except (OSError, _sp.SubprocessError, ValueError) as exc:
+        logger.warning("音频时长探测失败 file={}: {}", audio_path, safe_exception_summary(exc))
         return 0.0
 
 
@@ -913,7 +916,7 @@ def _extract_audio_segment(
         settings.ffmpeg_path,
         "-y",
         "-v",
-        "quiet",
+        "error",
         "-ss",
         f"{clip_start:.3f}",
         "-t",
@@ -931,7 +934,7 @@ def _extract_audio_segment(
     try:
         _sp.run(cmd, check=True, timeout=30, capture_output=True)
     except Exception as exc:
-        logger.warning("FFmpeg 局部音频截取失败: {}", exc)
+        logger.warning("FFmpeg 局部音频截取失败 file={}: {}", audio_path, safe_exception_summary(exc))
         return None
 
     if not tmp_path.exists() or tmp_path.stat().st_size < 1000:

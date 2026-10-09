@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.clipping.paths import build_final_clip_path, build_generation_clip_path, build_lease_partial_path
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     CandidateStatus,
     ClipStatus,
@@ -112,7 +113,8 @@ def render_compute(lease: TaskLease) -> dict[str, Any]:
         artifact = render_clip_to_file(cid, temp_path)
     except Exception as exc:
         permanent = _is_render_error_permanent(exc)
-        return {"error": f"RenderError: {exc}", "permanent": permanent}
+        logging.getLogger(__name__).exception("渲染计算失败 task=%s", lease.task_id)
+        return {"error": f"RenderError: {safe_exception_summary(exc)}", "permanent": permanent}
 
     if not artifact:
         return {"error": "clip rendering returned no result", "permanent": False}
@@ -269,13 +271,14 @@ def commit_render(lease: TaskLease, compute_result: dict[str, Any], ms: int) -> 
     except LeaseLostError:
         _logger.warning("stale_result_discarded: render task=%s", lease.task_id)
     except (OSError, ValueError) as exc:
+        _logger.exception("渲染提交失败 task=%s", lease.task_id)
         with get_session() as db:
             if db.get_bind().dialect.name == "sqlite":
                 db.connection().exec_driver_sql("BEGIN IMMEDIATE")
             if still_owns_lease(db, lease):
                 task = db.get(SegmentTask, lease.task_id)
                 assert task is not None
-                mark_failed(task, f"渲染提交失败: {exc}", permanent=isinstance(exc, ValueError))
+                mark_failed(task, f"渲染提交失败: {safe_exception_summary(exc)}", permanent=isinstance(exc, ValueError))
                 db.add(task)
             variant = db.get(ClipVariant, variant_id) if variant_id is not None else None
             if (

@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 
+from app.core.sanitize import sanitize_diagnostic
 from app.db.entities import SegmentTask, TaskStatus
 
 _RETRY_BASE_S = 10
@@ -172,7 +173,8 @@ def mark_completed(task: SegmentTask, processing_ms: int | None = None) -> None:
 
 def mark_failed(task: SegmentTask, error: str, permanent: bool = False) -> None:
     """标记任务失败,记录失败阶段和错误信息。"""
-    task.last_error = error[:1000]
+    error = sanitize_diagnostic(error, limit=1000)
+    task.last_error = error
     task.error_is_permanent = permanent
     task.failed_stage = task.stage
     task.heartbeat_at = None

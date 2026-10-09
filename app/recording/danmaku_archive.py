@@ -11,6 +11,7 @@ from typing import BinaryIO, Literal
 from loguru import logger
 
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.plugins.live_source import SourceRoom
 
 
@@ -83,13 +84,13 @@ class DanmakuArchive:
             with path.open("ab") as stream:
                 stream.write(data.encode("utf-8"))
         except (OSError, ValueError, TypeError) as exc:
-            self.error = f"弹幕原始档写入失败（{type(exc).__name__}），本场已停止写档；数据库采集继续。"
+            self.error = f"弹幕原始档写入失败（{safe_exception_summary(exc)}），本场已停止写档；数据库采集继续。"
             # 原始消息可能含用户数据及签名链接，不让 diagnose 展开局部变量。
             logger.error(
                 "danmaku_archive_failed: session={} raw/session_{}/danmaku.jsonl error={}",
                 self.session_id,
                 self.session_id,
-                type(exc).__name__,
+                safe_exception_summary(exc),
             )
 
 

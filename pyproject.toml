@@ -1,6 +1,6 @@
 [project]
 name = "bili-live-cut"
-version = "0.1.18.6-alpha"
+version = "0.1.18.7-alpha"
 description = "AI 直播实时切片系统:监听 Bilibili 直播,自动录制、转写、识别高光、生成切片与文案"
 readme = "README.md"
 license = "MIT"
@@ -53,6 +53,8 @@ web = [
 ]
 # 开发与测试工具。
 dev = [
+    "huggingface-hub==1.26.0", # 与 Portable 锁一致；用真实 SDK + 本地 HTTP 夹具验证端点，不下载模型
+    "modelscope-hub==0.2.0", # 验证锁定 SDK 的文件清单与半下载失败边界
     "Cython==3.2.9",
     "pytest>=8.2",
     "pytest-asyncio>=0.23",

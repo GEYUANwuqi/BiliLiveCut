@@ -20,18 +20,15 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from blc_portable.model_download import (
+    HF_MIRRORS,
+    MODELSCOPE_MIRRORS,
+    download_hf_snapshot,
+    download_ms_snapshot,
+    download_with_retry,
+    redact_diagnostic,
+)
 from blc_portable.payload.manifest import RELEASE_VERSION, SOURCE_COMMIT_FULL
-
-# ── 镜像配置 ──────────────────────────────────────────────
-
-HF_MIRRORS = [
-    "https://hf-mirror.com",
-    "https://huggingface.co",
-]
-
-MODELSCOPE_MIRRORS = [
-    "https://www.modelscope.cn",
-]
 
 # ── 四引擎下载定义 ────────────────────────────────────────
 
@@ -90,7 +87,11 @@ def _load_launcher_engines(config_dir: Path | None = None) -> list[dict[str, Any
 def _missing_required_files(target_dir: Path, engine_def: dict[str, Any]) -> list[str]:
     """Return catalog-required files missing from one staging directory."""
     required = [str(item) for item in engine_def.get("required_files", [])]
-    return [relative for relative in required if not (target_dir / relative).is_file()]
+    return [
+        relative
+        for relative in required
+        if not (target_dir / relative).is_file() or (target_dir / relative).stat().st_size == 0
+    ]
 
 
 def _staging_complete(
@@ -157,23 +158,7 @@ def _download_hf_model(
     :raises ImportError: huggingface_hub 未安装时。
     :raises RuntimeError: 下载失败时。
     """
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise RuntimeError("huggingface_hub is unavailable in the provisioning interpreter") from exc
-
-    if mirror:
-        os.environ["HF_ENDPOINT"] = mirror
-
-    os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
-
-    snapshot_download(
-        repo_id=repo_id,
-        revision=revision,
-        local_dir=str(target_dir),
-        local_dir_use_symlinks=False,
-        resume_download=True,
-    )
+    download_hf_snapshot(repo_id, target_dir, revision, mirror)
 
 
 # ── ModelScope 下载 ───────────────────────────────────────
@@ -194,16 +179,7 @@ def _download_ms_model(
     :raises ImportError: modelscope 未安装时。
     :raises RuntimeError: 下载失败时。
     """
-    try:
-        from modelscope.hub.snapshot_download import snapshot_download
-    except ImportError as exc:
-        raise RuntimeError("modelscope is unavailable in the provisioning interpreter") from exc
-
-    snapshot_download(
-        model_id=model_id,
-        revision=revision,
-        local_dir=str(target_dir),
-    )
+    download_ms_snapshot(model_id, target_dir, revision, MODELSCOPE_MIRRORS[0])
 
 
 # ── 进度显示 ──────────────────────────────────────────────
@@ -216,9 +192,26 @@ def _print_progress(current: int, total: int, name: str) -> None:
     :param total: 总数。
     :param name: 当前名称。
     """
-    pct = (current + 1) * 100 // total if total > 0 else 100
-    bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-    print(f"  [{current + 1}/{total}] [{bar}] {pct}% {name}")
+    print(f"  引擎 {current + 1}/{total}：准备/下载中 {name}（非文件字节进度）", flush=True)
+
+
+def _download_locked_model(engine_id: str, hub: str, model_id: str, target_dir: Path, revision: str | None) -> None:
+    """围绕 SDK 调用进行有限重试，固定内容身份并保留本地续传目录。"""
+    if hub == "huggingface":
+        endpoints = HF_MIRRORS
+
+        def download(endpoint: str) -> None:
+            _download_hf_model(model_id, target_dir, revision, endpoint)
+
+    elif hub == "modelscope":
+        endpoints = MODELSCOPE_MIRRORS
+
+        def download(endpoint: str) -> None:
+            _download_ms_model(model_id, target_dir, revision or "v2.0.4")
+
+    else:
+        raise RuntimeError(f"Unsupported model hub for {engine_id}: {hub}")
+    download_with_retry(engine=engine_id, model=model_id, revision=revision, endpoints=endpoints, operation=download)
 
 
 # ── 在线下载主入口 ────────────────────────────────────────
@@ -298,11 +291,11 @@ def download_all_engines(
                 hub = str(engine_def["hub"])
                 if hub == "huggingface":
                     revision = engine_def.get("revision") if engine_def.get("revision") else None
-                    _download_hf_model(str(engine_def["repo_id"]), target_dir, revision, HF_MIRRORS[0])
+                    _download_locked_model(engine_id, hub, str(engine_def["repo_id"]), target_dir, revision)
                     network_requests += 1
                 elif hub == "modelscope":
                     revision = str(engine_def.get("revision", "v2.0.4"))
-                    _download_ms_model(str(engine_def["model_id"]), target_dir, revision)
+                    _download_locked_model(engine_id, hub, str(engine_def["model_id"]), target_dir, revision)
                     network_requests += 1
                     for sub in engine_def.get("sub_models", []):
                         sub_id = str(sub["model_id"])
@@ -311,7 +304,7 @@ def download_all_engines(
                         sub_dir = target_dir / sub_name
                         sub_dir.mkdir(parents=True, exist_ok=True)
                         print(f"    下载子模型: {sub_id}")
-                        _download_ms_model(sub_id, sub_dir, sub_rev)
+                        _download_locked_model(engine_id, hub, sub_id, sub_dir, sub_rev)
                         network_requests += 1
                 else:
                     raise RuntimeError(f"Unsupported model hub for {engine_id}: {hub}")
@@ -448,8 +441,8 @@ def main(argv: list[str] | None = None) -> int:
             repair=args.repair,
         )
     except Exception as exc:  # noqa: BLE001 - CLI boundary must preserve third-party root failures
-        print(f"BLC_PROVISION_ROOT_EXCEPTION={type(exc).__name__}: {exc}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        print(redact_diagnostic(f"BLC_PROVISION_ROOT_EXCEPTION={type(exc).__name__}: {exc}"), file=sys.stderr)
+        print(redact_diagnostic(traceback.format_exc()), file=sys.stderr)
         return 1
     result["provisioning_interpreter"] = str(Path(sys.executable).resolve())
     print("BLC_PROVISION_RESULT=" + json.dumps(result, ensure_ascii=False, sort_keys=True))

@@ -69,7 +69,7 @@ def cmd_serve(
             raise typer.Exit(code=1) from None
 
     console.print(f"[green]控制台启动中[/green] -> http://{host}:{actual_port}")
-    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload)
+    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None)
 
 
 # 注册列表

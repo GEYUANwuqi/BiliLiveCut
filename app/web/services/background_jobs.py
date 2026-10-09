@@ -15,6 +15,7 @@ from loguru import logger
 from sqlmodel import select
 
 from app.core.process_control import ProcessCancelledError
+from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 from app.db.entities import AppSetting
 from app.db.session import get_session
 
@@ -68,7 +69,7 @@ class JobContext:
 
     def report(self, progress: int, message: str) -> None:
         """持久化当前进度和用户可读状态。"""
-        _update_job(self.job_id, progress=max(0, min(progress, 100)), message=message)
+        _update_job(self.job_id, progress=max(0, min(progress, 100)), message=sanitize_diagnostic(message))
 
     def cancelled(self) -> bool:
         """返回是否已经收到取消请求。"""
@@ -264,6 +265,22 @@ class WebJobManager:
         self._tasks[job_id] = task
 
         def remove_finished(finished: asyncio.Task[None]) -> None:
+            self._cancel_events.pop(job_id, None)
+            if not finished.cancelled():
+                error = finished.exception()
+                if error is not None:
+                    logger.opt(exception=error).error("Web 作业状态处理失败 job_id={}", job_id)
+                    # 仅尝试一次保存终态；数据库持续不可写时依靠文件日志定位。
+                    try:
+                        _update_job(
+                            job_id,
+                            status="failed",
+                            message="状态处理失败，请核对执行结果",
+                            error=safe_exception_summary(error),
+                            finished_at=_now_iso(),
+                        )
+                    except Exception as persistence_error:  # noqa: BLE001
+                        logger.opt(exception=persistence_error).error("Web 作业失败状态无法保存 job_id={}", job_id)
             if self._tasks.get(job_id) is finished:
                 self._tasks.pop(job_id, None)
 
@@ -298,7 +315,7 @@ class WebJobManager:
                 _update_job(
                     job_id,
                     status="cancelled",
-                    message=str(exc),
+                    message=safe_exception_summary(exc),
                     finished_at=_now_iso(),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -306,8 +323,8 @@ class WebJobManager:
                 _update_job(
                     job_id,
                     status="failed",
-                    message="执行失败，可重试",
-                    error=str(exc)[:2000],
+                    message="执行失败，请查看错误详情后处理",
+                    error=safe_exception_summary(exc, limit=2000),
                     finished_at=_now_iso(),
                 )
             else:

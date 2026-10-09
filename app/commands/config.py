@@ -6,6 +6,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.core.sanitize import safe_exception_summary
+
 console = Console()
 
 
@@ -64,12 +66,18 @@ def cmd_llm_test() -> None:
     if not providers:
         console.print("[yellow]无可用大模型(需已启用且配置 key)。[/yellow]")
         raise typer.Exit(code=1)
+    failed = False
     for p in providers:
         try:
             text = llm_mod._complete(p, "ping", max_tokens=1)
-            console.print(f"[green]OK[/green] {p.name}({p.model}) -> {(text or '')[:40]!r}")
+            if not text or not text.strip():
+                raise llm_mod.EmptyLLMResponseError("服务未返回可用正文")
+            console.print(f"[green]OK[/green] {p.name}({p.model}) -> {text[:40]!r}")
         except Exception as exc:  # noqa: BLE001 — 汇总每个 provider 的错误
-            console.print(f"[red]FAIL[/red] {p.name}({p.model}): {str(exc)[:160]}")
+            failed = True
+            console.print(f"[red]FAIL[/red] {p.name}({p.model}): {safe_exception_summary(exc)}")
+    if failed:
+        raise typer.Exit(code=1)
 
 
 # 注册列表

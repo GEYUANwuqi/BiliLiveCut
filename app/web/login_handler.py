@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, TypedDict
 
 from loguru import logger
 
+from app.core.sanitize import safe_exception_summary
+
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Cookie, Playwright
 
@@ -201,10 +203,11 @@ def _login_task(result_store: LoginResult) -> None:
 
             context.close()
     except RuntimeError as exc:
-        result_store["error"] = str(exc)
+        logger.opt(exception=exc).error("浏览器登录流程失败")
+        result_store["error"] = safe_exception_summary(exc)
     except Exception as exc:
         logger.exception("浏览器登录流程异常")
-        result_store["error"] = f"未知错误: {exc}"
+        result_store["error"] = safe_exception_summary(exc)
 
 
 def start_login() -> dict:

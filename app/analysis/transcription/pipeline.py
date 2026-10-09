@@ -54,6 +54,7 @@ from app.analysis.transcription.quality import (
 )
 from app.core.config import settings
 from app.core.runtime_settings import configured_task
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import RawSegment, SegmentStatus, Transcript
 from app.db.session import get_session
 
@@ -143,7 +144,7 @@ class ASRPipeline:
             try:
                 result = self._get_primary().transcribe_funasr(audio_path, initial_prompt)
             except Exception as exc:
-                logger.error("Fun-ASR-Nano 主引擎转写失败: {}", exc)
+                logger.opt(exception=True).error("Fun-ASR-Nano 主引擎转写失败: {}", exc)
                 result = ASRTranscriptResult(
                     text="",
                     language="zh",
@@ -153,7 +154,7 @@ class ASRPipeline:
                     primary_backend="funasr-nano",
                     primary_status="failed",
                     primary_error_type=type(exc).__name__,
-                    primary_error_message=str(exc)[:500],
+                    primary_error_message=safe_exception_summary(exc, limit=500),
                 )
 
             primary_text = result.final_text or result.text
@@ -179,13 +180,13 @@ class ASRPipeline:
             trigger_reason = _fallback_trigger_reason(result, primary_quality)
             logger.warning(
                 "Fun-ASR-Nano 输出不可用（{}，重复占比 {:.1%}），切换 Paraformer 次级引擎",
-                primary_quality.reason,
+                trigger_reason,
                 primary_quality.repetition_ratio,
             )
             try:
                 secondary = self._get_primary().transcribe(audio_path, initial_prompt)
             except Exception as exc:
-                logger.error("Paraformer 次级引擎转写失败: {}", exc)
+                logger.opt(exception=True).error("Paraformer 次级引擎转写失败: {}", exc)
             else:
                 secondary_text = secondary.final_text or secondary.text
                 secondary_quality = assess_transcript_quality(secondary_text)
@@ -227,7 +228,7 @@ class ASRPipeline:
             try:
                 result = self._get_primary().transcribe(audio_path, initial_prompt)
             except Exception as exc:
-                logger.error("Paraformer 主引擎转写失败: {}", exc)
+                logger.opt(exception=True).error("Paraformer 主引擎转写失败: {}", exc)
                 result = ASRTranscriptResult(
                     text="",
                     language="zh",
@@ -236,7 +237,7 @@ class ASRPipeline:
                     model_revision=self._get_primary().primary_revision,
                     primary_status="failed",
                     primary_error_type=type(exc).__name__,
-                    primary_error_message=str(exc)[:500],
+                    primary_error_message=safe_exception_summary(exc, limit=500),
                 )
 
             # V0.1.12.2: review_risk_score 复核决策
@@ -352,7 +353,7 @@ class ASRPipeline:
                 )
                 review_text = review_result.text
             except Exception as exc:
-                logger.warning("Fun-ASR-Nano 片段复核失败: {}", exc)
+                logger.opt(exception=exc).warning("Fun-ASR-Nano 片段复核失败: {}", safe_exception_summary(exc))
                 final_segments.append(seg.text)
                 _cleanup_review_temp(temp_audio)
                 continue

@@ -186,7 +186,7 @@ class TestPipelineIntegration:
 
         assert result.fallback_trigger_reason == "primary_exception"
         assert result.primary_error_type == "RuntimeError"
-        assert result.primary_error_message == "nano crashed"
+        assert result.primary_error_message == "RuntimeError: nano crashed"
 
 
 class TestASRTranscriptResultIntegration:

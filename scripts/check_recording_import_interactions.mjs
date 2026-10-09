@@ -151,7 +151,7 @@ assert.equal(Boolean(incomplete.sealed), false);
 await action(incomplete, "resume");
 assert.equal(document.activeElement.id, "import-video");
 failAction = true; await action(incomplete, "discard"); await refresh();
-assert.equal(element("imports-list-error").textContent, "操作被拒绝");
+assert.equal(element("imports-list-error").textContent, "HTTP 409: 操作被拒绝");
 failAction = false;
 
 // Polling another job must preserve file choices and keyboard focus on result links.

@@ -89,7 +89,12 @@ function renderLLMTestResults(results) {
 
 // ----------------------------- \u6e32\u67d3:\u65e5\u5fd7 ----------------------------- //
 async function loadLogs() {
-  const rows = await api("GET", "/api/logs?limit=100");
+  let rows;
+  try { rows = await api("GET", "/api/logs?limit=100"); }
+  catch (error) {
+    $("#logs-list").innerHTML = `<div class="empty">日志加载失败：${esc(error.message)}。下次刷新将重试。</div>`;
+    return;
+  }
   $("#logs-list").innerHTML = rows.length ? `<div class="card">${rows.map((l) => `
     <div class="log-line"><span class="lvl-${l.level}">[${esc(l.level)}]</span>
       ${esc(l.created_at || "")} ${esc(l.module || "")}:${esc(l.event || "")} \u2014 ${esc(l.message)}</div>`).join("")}</div>`
@@ -122,7 +127,7 @@ async function loadTasks() {
         <td><span class="badge badge-${esc(t.stage.replace(/_/g,'-'))}">${esc(t.stage)}</span></td>
         <td>${t.attempts}/${t.max_retries}</td>
         <td>${t.processing_time_ms != null ? t.processing_time_ms : "-"}</td>
-        <td title="${esc(t.last_error || "")}">${(t.last_error || "").substring(0,40)}</td>
+        <td title="${esc(t.last_error || "")}">${esc((t.last_error || "").substring(0,40))}</td>
         <td>${esc(t.created_at || "").substring(0,19)}</td>
         <td>
           ${t.stage === "failed" || t.stage === "cancelled"

@@ -16,7 +16,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import math
+import random
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -30,6 +33,7 @@ from app.core.async_cleanup import complete_cleanup
 from app.core.config import settings
 from app.core.ffmpeg_errors import FfmpegErrorType, classify_ffmpeg_error
 from app.core.paths import session_raw_dir
+from app.core.sanitize import sanitize_diagnostic
 from app.db.entities import (
     RawSegment,
     RecordingSession,
@@ -57,6 +61,8 @@ SessionEndCallback = Callable[[int], Awaitable[None]]
 StateCallback = Callable[[str, int | None], None]
 
 _SEGMENT_LIST_NAME = "segments.csv"
+_STDERR_LINE_LIMIT = 8192
+_STDERR_TAIL_LINES = 20
 
 
 @dataclass(slots=True)
@@ -77,7 +83,7 @@ class _ReconnectBudget:
         self.failures += 1
 
     def reset(self) -> None:
-        """成功产出新片段后清空连续失败预算。"""
+        """稳定产出目标时长的媒体后清空连续失败预算。"""
         self.failures = 0
         self.started_at = None
 
@@ -134,6 +140,14 @@ class Recorder:
         self._paths: set[str] = set()  # 已登记片段路径缓存(避免每次查全表)
         self._danmaku: DanmakuCapture | None = None
         self._active_process: asyncio.subprocess.Process | None = None
+        self._recording_error: str | None = None
+        self._recording_action_required = False
+        self._stderr_tail: list[str] = []
+        self._stderr_categories: set[FfmpegErrorType] = set()
+        self._diagnostic_secrets: tuple[str, ...] = ()
+        self._attempt_media_seconds = 0.0
+        self._upstream_status: int | None = None
+        self._last_exit_abnormal = False
 
     @property
     def session_id(self) -> int | None:
@@ -217,9 +231,18 @@ class Recorder:
         except asyncio.CancelledError:
             failed = "录制任务被取消"
             raise
+        except OSError as exc:
+            from app.core.sanitize import safe_exception_summary
+
+            failed = self._recording_error or f"录制文件或进程失败：{safe_exception_summary(exc)}"
+            self._recording_error = failed
+            self._recording_action_required = True
+            raise
         except Exception as exc:
             # 插件与子进程边界；不持久化可能包含 URL/请求头的异常正文。
-            failed = f"录制失败：{type(exc).__name__}"
+            from app.core.sanitize import safe_exception_summary
+
+            failed = self._recording_error or f"录制失败：{safe_exception_summary(exc)}"
             raise
         finally:
 
@@ -255,9 +278,8 @@ class Recorder:
 
         关键设计:
         - 每次断流都重新调用 ``_fetch_stream`` 获取新播放地址(地址有时效);
-        - 超管断流/主播主动下播/网络闪断 均被统一处理为 FFmpeg 退出;
-        - 重连成功后首个片段写入即重置退避计数器(backoff→1),
-          避免稳定录制后再次断流时无谓等待 30s。
+        - 人工停止和干净 EOF 不记作异常；永久错误阻止自动重启;
+        - 累计产出至少一个目标分段时长才重置预算，短末片不代表恢复。
         """
         self._emit_state(SessionStatus.STARTING)
         self._seq = 0  # 每次 run() 重新开始片段计数
@@ -275,7 +297,9 @@ class Recorder:
             from app.pipeline.storage_lifecycle import should_stop_recording
 
             if await asyncio.to_thread(should_stop_recording):
-                logger.warning("磁盘 CRITICAL, 安全停止录制")
+                self._recording_action_required = True
+                self._recording_error = "磁盘空间不足，请清理存储后手动恢复录制"
+                logger.error("{} room={} session={}", self._recording_error, self.db_room_id, self._session_id)
                 self.stop()
                 break
 
@@ -291,7 +315,10 @@ class Recorder:
                 if self._retry_exhausted(reconnect_budget):
                     break
                 self._update_session(status=SessionStatus.RECONNECTING)
-                await self._sleep_or_stop(max(settings.live_poll_interval_s, self._source_retry_delay))
+                delay = self._retry_delay(
+                    max(settings.live_poll_interval_s, self._source_retry_delay), reconnect_budget
+                )
+                await self._sleep_or_stop(delay)
                 continue
 
             self._update_session(
@@ -309,21 +336,27 @@ class Recorder:
 
             # 记录录制前的 seq 用于判断是否产生过片段。
             seq_before = self._seq
+            self._attempt_media_seconds = 0.0
+            self._stderr_tail = []
+            self._stderr_categories = set()
+            self._upstream_status = None
             exit_code = await self._record_once(stream, out_dir)
-            self._classify_recording_exit(exit_code, getattr(self, "_stderr_tail", None))
-            produced_segment = self._seq > seq_before
-
             if self._stop.is_set():
                 break
-
-            if produced_segment:
+            self._last_exit_abnormal = exit_code != 0
+            error_type = (
+                self._classify_recording_exit(exit_code, self._stderr_tail)
+                if self._last_exit_abnormal
+                else FfmpegErrorType.UNKNOWN
+            )
+            stable_recording = self._seq > seq_before and self._attempt_media_seconds >= settings.segment_duration_s
+            if stable_recording:
                 reconnect_budget.reset()
 
             # ---- 重连成功后重置退避 ----
-            # 如果本次录制实际上是重连且成功产出了至少 1 个片段,
-            # 说明重连成功、流已稳定,把 backoff 重置为 1。
+            # 短末片不能证明恢复；实际媒体达到目标分段长度才重置退避。
             # 避免"稳定录制 30 分钟后再次被断流,却要白等 30s"。
-            if reconnect_episode and produced_segment:
+            if reconnect_episode and stable_recording:
                 logger.info(
                     "重连成功并产出片段 room={} seq={}→{}, backoff 重置 30→1。",
                     self.db_room_id,
@@ -338,39 +371,56 @@ class Recorder:
                 reconnect_episode = False
                 backoff = 1
 
-            # ---- 断流处理 ----
-            # FFmpeg 退出可能是:
-            #   a) 超管断流(超管中断推流,主播重新推流后地址可能变)
-            #   b) 主播主动下播(无新流,后续 _fetch_stream 返回 None)
-            #   c) 网络闪断(主播仍在推,短暂丢包后恢复)
-            # 这三种情况都走"重新取流→指数退避→重连"流程。
-            reconnect_episode = True
-            self._increment_reconnect()
-            # -1 = 被我们主动 kill(正常停止),不计为重连。
-            if exit_code != -1:
-                self._update_session(status=SessionStatus.RECONNECTING)
+            # HTTP 403 等可能是临时播放地址失效；有限预算内重新取流，
+            # 不把它直接解释为 Cookie 过期。未知错误同样不能无限重试。
+            permanent = error_type in {
+                FfmpegErrorType.DISK_FULL,
+                FfmpegErrorType.PERMISSION_DENIED,
+                FfmpegErrorType.MISSING_BINARY,
+                FfmpegErrorType.INVALID_ARGUMENT,
+                FfmpegErrorType.UNSUPPORTED_CODEC,
+            }
             retry_started_at = time.monotonic()
-            if produced_segment:
-                # 从本次真实断流开始计时；下一次成功产出片段后会再次清零。
+            if stable_recording:
                 reconnect_budget.begin(retry_started_at)
             else:
                 reconnect_budget.record_failure(retry_started_at)
-                if self._retry_exhausted(reconnect_budget):
-                    break
-            logger.warning(
-                "录制中断 room={} exit_code={},{}s 后重连。",
-                self.db_room_id,
-                exit_code,
-                backoff,
-            )
-            await self._sleep_or_stop(backoff)
+            if permanent:
+                self._recording_action_required = True
+                self._recording_error = f"FFmpeg {error_type.name}，请检查磁盘、权限或媒体配置后手动恢复录制"
+            exhausted = False if permanent else self._retry_exhausted(reconnect_budget)
+            retry = not permanent and not exhausted
+            delay = min(backoff * random.uniform(0.8, 1.2), settings.reconnect_max_backoff_s) if retry else 0.0
+            delay = self._retry_delay(delay, reconnect_budget)
+            if exit_code != 0:
+                if exhausted:
+                    self._recording_error = "FFmpeg 连续异常退出，重试预算耗尽，等待下一次开播或手动启动"
+                self._log_recording_exit(exit_code, error_type, reconnect_budget, retry, delay)
+            else:
+                logger.info(
+                    "录制流正常结束 room={} session={} exit_code=0 retry={} next_wait_s={:.2f}",
+                    self.db_room_id,
+                    self._session_id,
+                    retry,
+                    delay,
+                )
+            if not retry:
+                break
+            reconnect_episode = True
+            self._increment_reconnect()
+            self._update_session(status=SessionStatus.RECONNECTING)
+            await self._sleep_or_stop(delay)
             backoff = min(backoff * 2, settings.reconnect_max_backoff_s)
 
     async def _finalize_session(self) -> None:
         """正常停止、取消和异常都执行一次会话收尾。"""
         self._update_session(status=SessionStatus.FINALIZING)
         await self._stop_danmaku()
-        self._update_session(status=SessionStatus.STOPPED, ended=True)
+        self._update_session(
+            status=SessionStatus.ERROR if self._recording_error else SessionStatus.STOPPED,
+            error_message=self._recording_error,
+            ended=True,
+        )
         logger.info("录制已停止 room={} session={}", self.db_room_id, self._session_id)
 
         if self.on_end is not None and self._session_id is not None:
@@ -381,18 +431,71 @@ class Recorder:
 
     def _retry_exhausted(self, budget: _ReconnectBudget) -> bool:
         """检查连续取流预算，并在耗尽时记录自动停止原因。"""
+        max_attempts, max_elapsed = self._reconnect_limits()
         reason = budget.exhaustion_reason(
             time.monotonic(),
-            max_attempts=settings.recording_reconnect_max_attempts,
-            max_elapsed_s=settings.recording_reconnect_max_elapsed_s,
+            max_attempts=max_attempts,
+            max_elapsed_s=max_elapsed,
         )
         if reason is None:
             return False
         self._retry_budget_exhausted = True
         message = f"{reason}，自动结束本场录制"
+        if self._last_exit_abnormal:
+            self._recording_error = message
         self._update_session(error_message=message)
         logger.info("{} room={} session={}", message, self.db_room_id, self._session_id)
         return True
+
+    @staticmethod
+    def _reconnect_limits() -> tuple[int, int]:
+        """保留单项禁用语义；两项均为零时仍以 20 次防止无界重启。"""
+        attempts = settings.recording_reconnect_max_attempts
+        elapsed = settings.recording_reconnect_max_elapsed_s
+        return (attempts or (20 if elapsed == 0 else 0)), elapsed
+
+    def _retry_delay(self, proposed: float, budget: _ReconnectBudget) -> float:
+        """所有等待均受剩余时间预算约束，包括来源要求的 retry_after。"""
+        _, elapsed = self._reconnect_limits()
+        if elapsed > 0 and budget.started_at is not None:
+            return min(proposed, max(0.0, elapsed - (time.monotonic() - budget.started_at)))
+        return proposed
+
+    @property
+    def recording_action_required(self) -> bool:
+        """录制端永久故障需显式恢复，不能被开播监控重新拉起。"""
+        return self._recording_action_required
+
+    @property
+    def recording_error(self) -> str | None:
+        """返回最终录制错误，供任务管理器展示相同的处理原因。"""
+        return self._recording_error
+
+    def _log_recording_exit(
+        self, exit_code: int, error_type: FfmpegErrorType, budget: _ReconnectBudget, retry: bool, delay: float
+    ) -> None:
+        """每次异常只写一条后台可见摘要，详细受限 stderr 留在文件日志。"""
+        attempts, elapsed = self._reconnect_limits()
+        tail = "\n".join(self._stderr_tail)
+        summary = sanitize_diagnostic(tail, limit=600) or "无 stderr，请检查 FFmpeg 安装及上游日志"
+        logger.log(
+            "WARNING" if retry else "ERROR",
+            "录制异常 room={} session={} exit_code={} category={} http_status={} retry={} "
+            "attempt={}/{} elapsed_budget_s={} next_wait_s={:.2f} reason={} stderr={}",
+            self.db_room_id,
+            self._session_id,
+            exit_code,
+            error_type.name,
+            self._upstream_status,
+            retry,
+            budget.failures,
+            attempts,
+            elapsed,
+            delay,
+            self._recording_error or "重新获取播放地址",
+            summary,
+        )
+        logger.debug("FFmpeg stderr tail room={} session={}\n{}", self.db_room_id, self._session_id, tail)
 
     @property
     def retry_budget_exhausted(self) -> bool:
@@ -417,10 +520,24 @@ class Recorder:
         except SourceTemporaryError as exc:
             self._source_retry_delay = exc.retry_after or 0.0
             self._update_session(error_message=f"取流暂时失败：{exc.code}")
-            logger.warning("取流失败 db_room={} code={}", self.db_room_id, exc.code)
+            logger.opt(exception=exc).warning(
+                "取流失败 db_room={} platform={} session={} code={} retry_after={}",
+                self.db_room_id,
+                self.source_room.platform,
+                self.session_id,
+                exc.code,
+                exc.retry_after,
+            )
             return None
         except SourceError as exc:
             self._source_action_required = True
+            logger.opt(exception=exc).error(
+                "来源需要处理 room={} platform={} session={} code={}",
+                self.db_room_id,
+                self.source_room.platform,
+                self.session_id,
+                exc.code,
+            )
             self._update_session(error_message=f"来源需要处理：{exc.code}")
             self.stop()
             return None
@@ -468,12 +585,25 @@ class Recorder:
             "启动 FFmpeg db_room={} session={} transport={}", self.db_room_id, self._session_id, stream.transport
         )
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        self._diagnostic_secrets = tuple(stream.headers.values())
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            category = {
+                errno.ENOENT: FfmpegErrorType.MISSING_BINARY,
+                errno.EACCES: FfmpegErrorType.PERMISSION_DENIED,
+                errno.EPERM: FfmpegErrorType.PERMISSION_DENIED,
+                errno.ENOSPC: FfmpegErrorType.DISK_FULL,
+            }.get(exc.errno, FfmpegErrorType.UNKNOWN)
+            self._stderr_categories.add(category)
+            self._stderr_tail = [sanitize_diagnostic(f"{type(exc).__name__}: {exc}", secrets=self._diagnostic_secrets)]
+            self._diagnostic_secrets = ()
+            return 1
 
         self._active_process = proc
         # 并发:监听片段清单 + 转储 ffmpeg stderr 到日志。
@@ -482,21 +612,56 @@ class Recorder:
         # 监听停止信号,主动终止 ffmpeg。
         stopper = asyncio.create_task(self._terminate_on_stop(proc))
         disk_guard = asyncio.create_task(self._monitor_disk())
+        waiter = asyncio.create_task(proc.wait())
 
         try:
-            return await proc.wait()
+            supervisors = {watcher: "segments", stderr_task: "stderr", stopper: "stop", disk_guard: "disk"}
+            pending = {waiter, *supervisors}
+            while pending:
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done - {waiter}:
+                    try:
+                        await task
+                    except Exception as exc:
+                        from app.core.sanitize import safe_exception_summary
+
+                        self._recording_action_required = True
+                        self._recording_error = (
+                            f"录制辅助任务失败 stage={supervisors[task]}: {safe_exception_summary(exc)}"
+                        )
+                        logger.opt(exception=exc).error(
+                            "录制辅助任务失败 room={} session={} stage={}",
+                            self.db_room_id,
+                            self.session_id,
+                            supervisors[task],
+                        )
+                        raise
+                pending.difference_update(done)
+                if waiter in done:
+                    break
+            return await waiter
         finally:
 
             async def cleanup() -> None:
-                if proc.returncode is None:
-                    proc.kill()
-                    await proc.wait()
-                for task in (watcher, stderr_task, stopper, disk_guard):
-                    task.cancel()
-                await asyncio.gather(watcher, stderr_task, stopper, disk_guard, return_exceptions=True)
-                # 兜底:登记可能尚未从清单读到的最后片段。
-                await self._scan_orphan_segments(segment_list, out_dir, prefix=prefix)
-                self._active_process = None
+                try:
+                    if proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass  # 检查 returncode 后进程自行退出；继续回收。
+                        await proc.wait()
+                    # 进程已退出后排空管道，避免取消读取导致最后一条根异常丢失。
+                    await stderr_task
+                finally:
+                    for task in (watcher, stderr_task, stopper, disk_guard, waiter):
+                        task.cancel()
+                    await asyncio.gather(watcher, stderr_task, stopper, disk_guard, waiter, return_exceptions=True)
+                    try:
+                        # 兜底:登记可能尚未从清单读到的最后片段。
+                        await self._scan_orphan_segments(segment_list, out_dir, prefix=prefix)
+                    finally:
+                        self._active_process = None
+                        self._diagnostic_secrets = ()
 
             await complete_cleanup(cleanup())
 
@@ -506,6 +671,8 @@ class Recorder:
 
         while not self._stop.is_set():
             if await asyncio.to_thread(should_stop_recording):
+                self._recording_action_required = True
+                self._recording_error = "磁盘空间不足，请清理存储后手动恢复录制"
                 logger.error(
                     "录制期间磁盘空间进入紧急状态，停止录制 room={} session={}", self.db_room_id, self.session_id
                 )
@@ -675,6 +842,7 @@ class Recorder:
             db.refresh(segment)
 
         self._seq += 1
+        self._attempt_media_seconds += duration
         self._paths.add(str(file_path))  # 更新内存缓存,避免后续反复查表
         logger.info(
             "片段已登记 seq={} size={}KB dur={:.1f}s -> {}",
@@ -715,19 +883,34 @@ class Recorder:
         """
         if proc.stderr is None:
             return
-        self._stderr_tail: list[str] = []
-        try:
-            async for raw in proc.stderr:
-                msg = raw.decode("utf-8", errors="ignore").strip()
-                if msg:
-                    # FFmpeg 可能回显完整签名 URL、Header 或上游响应。只保留分类。
-                    category = classify_ffmpeg_error(1, msg).name
-                    logger.debug("FFmpeg session={} category={}", self._session_id, category)
-                    self._stderr_tail.append(category)
-                    if len(self._stderr_tail) > 50:
-                        self._stderr_tail.pop(0)
-        except asyncio.CancelledError:
-            pass
+        pending = b""
+        oversized = False
+        while chunk := await proc.stderr.read(4096):
+            pending += chunk
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                if not oversized and len(raw) <= _STDERR_LINE_LIMIT:
+                    self._remember_stderr(raw)
+                else:
+                    self._remember_stderr(b"[oversized stderr line omitted]")
+                oversized = False
+            if len(pending) > _STDERR_LINE_LIMIT:
+                pending = b""
+                oversized = True
+        if pending or oversized:
+            self._remember_stderr(b"[oversized stderr line omitted]" if oversized else pending)
+
+    def _remember_stderr(self, raw: bytes) -> None:
+        """只在有界内存中分类原文，脱敏后才保存末尾诊断。"""
+        msg = raw.decode("utf-8", errors="replace").strip()
+        if not msg:
+            return
+        self._stderr_categories.add(classify_ffmpeg_error(1, msg))
+        status = re.search(r"(?:server returned|http error)\s+([45]\d\d)", msg, re.IGNORECASE)
+        if status:
+            self._upstream_status = int(status[1])
+        self._stderr_tail.append(sanitize_diagnostic(msg, secrets=self._diagnostic_secrets, limit=512))
+        del self._stderr_tail[:-_STDERR_TAIL_LINES]
 
     async def _terminate_on_stop(self, proc: asyncio.subprocess.Process) -> None:
         """等待停止信号,触发后优雅终止 FFmpeg 进程。
@@ -847,24 +1030,18 @@ class Recorder:
         stderr_text = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
         if exit_code == -1:
             return FfmpegErrorType.CANCELLED  # 主动停止
-        categories = [FfmpegErrorType[line] for line in (stderr_lines or []) if line in FfmpegErrorType.__members__]
-        error_type = next(
-            (item for item in categories if item != FfmpegErrorType.UNKNOWN),
-            classify_ffmpeg_error(exit_code, stderr_text),
-        )
-        if error_type in (FfmpegErrorType.DISK_FULL,):
-            logger.critical("录制磁盘满, 触发 CRITICAL 保护")
-            try:
-                from app.notify.webhook import notify_disk_alert
-
-                notify_disk_alert(f"录制磁盘满: 房间 {self.db_room_id}")
-            except Exception:
-                pass
-        if error_type in (
+        categories = self._stderr_categories | {classify_ffmpeg_error(exit_code, stderr_text)}
+        # 先前的网络警告不能遮住随后发生的磁盘/配置故障。
+        priority = (
+            FfmpegErrorType.DISK_FULL,
             FfmpegErrorType.PERMISSION_DENIED,
             FfmpegErrorType.MISSING_BINARY,
-            FfmpegErrorType.INVALID_ARGUMENT,
             FfmpegErrorType.UNSUPPORTED_CODEC,
-        ):
-            logger.error("录制永久错误: {} (exit={})", error_type.name, exit_code)
-        return error_type
+            FfmpegErrorType.INVALID_ARGUMENT,
+            FfmpegErrorType.CORRUPTED_INPUT,
+            FfmpegErrorType.UPSTREAM_UNAVAILABLE,
+            FfmpegErrorType.TRANSIENT_NETWORK,
+            FfmpegErrorType.CANCELLED,
+            FfmpegErrorType.UNKNOWN,
+        )
+        return next(item for item in priority if item in categories)

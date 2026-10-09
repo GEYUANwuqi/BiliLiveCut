@@ -24,6 +24,7 @@ from loguru import logger
 from sqlmodel import select
 
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     RawSegment,
     SegmentTask,
@@ -256,7 +257,7 @@ class TaskWorker:
         try:
             await asyncio.to_thread(preload_models)
         except (RuntimeError, OSError, ValueError, ImportError) as exc:
-            _logger.error("ASR 预加载失败: {}", type(exc).__name__)
+            _logger.opt(exception=exc).error("ASR 预加载失败: {}", safe_exception_summary(exc))
 
     async def stop(self) -> None:
         """优雅关闭 — 停止领取新任务, 等待当前任务完成或取消。"""
@@ -352,7 +353,7 @@ class TaskWorker:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                _logger.warning("tick error: {}", exc)
+                _logger.opt(exception=exc).warning("tick error: {}", safe_exception_summary(exc))
             await asyncio.sleep(2)
 
     async def _dispatch_session_summaries(self) -> None:
@@ -394,7 +395,14 @@ class TaskWorker:
             else:
                 cost_spec = {}
                 acquired = True
-            task = pop_and_claim(queued_stage)
+            try:
+                task = pop_and_claim(queued_stage)
+            except BaseException:
+                if acquired and cost_spec:
+                    from app.core.resource_budget import release_resources
+
+                    release_resources(**cost_spec)
+                raise
             if task is None:
                 if acquired and cost_spec:
                     from app.core.resource_budget import release_resources

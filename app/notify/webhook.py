@@ -25,6 +25,7 @@ from email.mime.text import MIMEText
 from loguru import logger
 
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 
 # 允许的 webhook 域名白名单。
 _ALLOWED_WEBHOOK_DOMAINS = {"oapi.dingtalk.com", "qyapi.weixin.qq.com"}
@@ -106,14 +107,23 @@ def send_dingtalk(title: str, text: str) -> bool:
     }
     try:
         resp = httpx.post(webhook, json=payload, timeout=10)
+        resp.raise_for_status()
         result = resp.json()
+        if not isinstance(result, dict):
+            raise ValueError(f"HTTP {resp.status_code}: webhook 返回非对象 JSON")
         if result.get("errcode") == 0:
             logger.info("钉钉通知已发送: {}", title)
             return True
-        logger.warning("钉钉通知失败: {}", result)
+        logger.warning(
+            "钉钉通知失败 host=oapi.dingtalk.com HTTP={} errcode={}", resp.status_code, result.get("errcode")
+        )
         return False
     except Exception as exc:
-        logger.error("钉钉通知异常: {}", exc)
+        logger.error(
+            "钉钉通知异常 host=oapi.dingtalk.com HTTP={}: {}",
+            resp.status_code if "resp" in locals() else None,
+            safe_exception_summary(exc),
+        )
         return False
 
 
@@ -145,14 +155,23 @@ def send_wecom(title: str, text: str) -> bool:
     }
     try:
         resp = httpx.post(settings.wecom_webhook, json=payload, timeout=10)
+        resp.raise_for_status()
         result = resp.json()
+        if not isinstance(result, dict):
+            raise ValueError(f"HTTP {resp.status_code}: webhook 返回非对象 JSON")
         if result.get("errcode") == 0:
             logger.info("企业微信通知已发送: {}", title)
             return True
-        logger.warning("企业微信通知失败: {}", result)
+        logger.warning(
+            "企业微信通知失败 host=qyapi.weixin.qq.com HTTP={} errcode={}", resp.status_code, result.get("errcode")
+        )
         return False
     except Exception as exc:
-        logger.error("企业微信通知异常: {}", exc)
+        logger.error(
+            "企业微信通知异常 host=qyapi.weixin.qq.com HTTP={}: {}",
+            resp.status_code if "resp" in locals() else None,
+            safe_exception_summary(exc),
+        )
         return False
 
 
@@ -195,7 +214,7 @@ def send_email(subject: str, body: str) -> bool:
         logger.info("邮件通知已发送: {}", subject)
         return True
     except Exception as exc:
-        logger.error("邮件通知失败: {}", exc)
+        logger.error("邮件通知失败 host={}: {}", settings.smtp_host, safe_exception_summary(exc))
         return False
 
 

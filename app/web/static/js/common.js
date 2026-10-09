@@ -15,9 +15,9 @@ async function api(method, path, body) {
   const resp = await fetch(path, opts);
   if (!resp.ok) {
     let detail = resp.statusText;
-    try { detail = (await resp.json()).detail || detail; } catch (e) { /* ignore */ }
+    try { const payload = await resp.json(); detail = payload.detail || payload.error || detail; } catch (e) { /* ignore */ }
     if (Array.isArray(detail)) detail = detail.map(item => `${(item.loc || []).join(".")}: ${item.msg || "输入无效"}`).join("；");
-    const error = new Error(detail);
+    const error = new Error(`HTTP ${resp.status}: ${detail}`);
     error.status = resp.status;
     throw error;
   }

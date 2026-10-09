@@ -69,9 +69,9 @@ class Settings(BaseSettings):
     live_poll_interval_s: int = Field(default=15, ge=5)
     room_metadata_refresh_interval_s: int = Field(default=30, ge=5, le=3600)
     room_metadata_refresh_timeout_s: float = Field(default=3.0, ge=0.1, le=30.0)
-    # 连续无法恢复录制的最大失败次数；0=不按次数停止。
+    # 连续无法恢复录制的最大失败次数；0=单项关闭，两项均0仍以20次保护。
     recording_reconnect_max_attempts: int = Field(default=20, ge=0, le=10000)
-    # 从断流开始计算的最长重试时间（秒）；0=不按时间停止。
+    # 从断流开始计算的最长重试时间（秒）；0=单项关闭。
     recording_reconnect_max_elapsed_s: int = Field(default=180, ge=0, le=86400)
     # 自动监控连续离线确认、延迟收尾和单场录制时长保护。
     live_offline_confirm_count: int = Field(default=3, ge=1, le=100)
