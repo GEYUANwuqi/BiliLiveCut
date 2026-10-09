@@ -206,6 +206,15 @@ def ensure_env(app_root: Path, source_dir: Path) -> None:
 # -- Environment prep ──────────────────────────────────────────────
 
 
+def _python_environment() -> dict[str, str]:
+    """隔离受管 Python 的导入根，保留用户明确配置的网络和业务环境。"""
+    env = os.environ.copy()
+    for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE"):
+        env.pop(name, None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
 def _inspect_python(command: Sequence[str]) -> tuple[Path, tuple[int, int]] | None:
     """Return the real interpreter path and version for one command."""
     probe = "import json,sys; print(json.dumps({'executable': sys.executable, 'version': list(sys.version_info[:2])}))"
@@ -215,6 +224,7 @@ def _inspect_python(command: Sequence[str]) -> tuple[Path, tuple[int, int]] | No
             capture_output=True,
             text=True,
             timeout=10,
+            env=_python_environment(),
         )
         if result.returncode != 0:
             return None
@@ -371,7 +381,7 @@ def prepare_venv(app_root: Path) -> Path:
     print("  creating venv...")
     command = [str(system_py), "-m", "venv", str(venv_dir)]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=_python_environment())
     except (OSError, subprocess.SubprocessError) as exc:
         if venv_dir.exists():
             _remove_managed_venv(app_root, venv_dir)
@@ -463,6 +473,8 @@ def _find_lock_file(venv_python: Path) -> Path:
         capture_output=True,
         text=True,
         timeout=10,
+        check=True,
+        env=_python_environment(),
     )
     abi = r.stdout.strip()
     lock_name = f"requirements-runtime-{abi}-win-x64.lock"
@@ -524,7 +536,7 @@ def _run_dependency_preflight(venv_python: Path) -> None:
     )
     command = [str(venv_python), "-c", script]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, env=_python_environment())
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(
             _format_process_failure(
@@ -561,7 +573,7 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
     :param source_dir: Installed Runtime source directory, required for ``app.cli``.
     :raises RuntimeError: If the import fails or resolves outside ``source_dir``.
     """
-    env: dict[str, str] | None = None
+    env = _python_environment()
     cwd: str | None = None
     script = f"import {module}; print('  ok: {module}')"
 
@@ -571,9 +583,7 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
         resolved_source = source_dir.resolve()
         if not (resolved_source / "app" / "cli.py").is_file():
             raise RuntimeError(f"Installed Runtime is missing app/cli.py: {resolved_source}")
-        env = os.environ.copy()
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = str(resolved_source) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        env["PYTHONPATH"] = str(resolved_source)
         cwd = str(resolved_source)
         script = (
             "from pathlib import Path; import app.cli; "
@@ -655,6 +665,7 @@ def install_dependencies(
             text=True,
             timeout=30,
             check=True,
+            env=_python_environment(),
         ).stdout
         installed = {}
         for line in raw_freeze.strip().split("\n"):
@@ -724,6 +735,7 @@ def install_dependencies(
             capture_output=True,
             text=True,
             timeout=600,
+            env=_python_environment(),
         )
 
     # Always run one import/ABI preflight, including on subsequent launches
@@ -815,7 +827,7 @@ def prepare_models(
     if repair:
         command.append("--repair")
 
-    env = os.environ.copy()
+    env = _python_environment()
     env["PYTHONPATH"] = str(source_root.resolve())
     env["BLC_MODEL_CONFIG_DIR"] = str(config_root.resolve())
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1263,7 +1275,7 @@ def run_launcher(args: argparse.Namespace) -> int:
         print("=" * 60)
         print()
 
-        env = os.environ.copy()
+        env = _python_environment()
         bin_dir = app_root / "bin"
         if (bin_dir / "ffmpeg.exe").exists():
             env["FFMPEG_PATH"] = str(bin_dir / "ffmpeg.exe")
