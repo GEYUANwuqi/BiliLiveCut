@@ -308,14 +308,21 @@ async def test_disk_guard_stops_active_ffmpeg_and_releases_watchers(
     from app.recording import recorder as module
 
     finished = asyncio.Event()
-    checked = asyncio.Event()
-    loop = asyncio.get_running_loop()
+    poll_waiting = asyncio.Event()
+    release_poll = asyncio.Event()
     critical = False
+    checks: list[bool] = []
     terminated: list[bool] = []
 
     def disk_critical() -> bool:
-        loop.call_soon_threadsafe(checked.set)
+        checks.append(critical)
         return critical
+
+    async def wait_for_next_poll(seconds: float) -> None:
+        # 控制本实例的时间边界；保留真实线程检查、停止信号及进程收尾。
+        assert seconds == 1.0
+        poll_waiting.set()
+        await release_poll.wait()
 
     class MediaProcess:
         returncode: int | None = None
@@ -343,6 +350,8 @@ async def test_disk_guard_stops_active_ffmpeg_and_releases_watchers(
         source_room=SourceRoom(platform="bilibili", source_id="1", canonical_url="https://live.bilibili.com/1"),
         db_room_id=1,
     )
+    monkeypatch.setattr(recorder, "_sleep_or_stop", wait_for_next_poll)
+    tasks_before = asyncio.all_tasks()
     operation = asyncio.create_task(
         recorder._record_once(
             StreamSpec(
@@ -352,11 +361,20 @@ async def test_disk_guard_stops_active_ffmpeg_and_releases_watchers(
         )
     )
     try:
-        await asyncio.wait_for(checked.wait(), 2)
+        await asyncio.wait_for(poll_waiting.wait(), 2)
+        assert checks == [False]
+        assert not operation.done() and recorder._active_process is not None
+        assert terminated == []
         critical = True
+        release_poll.set()
         await asyncio.wait_for(operation, 3)
+        assert checks == [False, True]
         assert terminated == [True] and recorder._active_process is None
+        assert recorder._recording_action_required
+        assert "磁盘" in recorder._recording_error
+        assert not (asyncio.all_tasks() - tasks_before)
     finally:
+        release_poll.set()
         finished.set()
         await asyncio.gather(operation, return_exceptions=True)
 

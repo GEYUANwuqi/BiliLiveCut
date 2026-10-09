@@ -131,17 +131,12 @@ jobs:
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        # 共用 Release 下载器；验证产物后直接导出真实二进制路径，避免包管理器假成功和 ShimGen。
         run: |
-          choco install ffmpeg --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed" }
-          # ShimGen 包装进程无法保证终止真实 FFmpeg；录制测试必须直接启动二进制。
-          $executables = @(Get-ChildItem -LiteralPath "$env:ChocolateyInstall/lib/ffmpeg/tools" -Filter ffmpeg.exe -File -Recurse)
-          if ($executables.Count -ne 1) { throw "Expected exactly one FFmpeg binary" }
-          $ffmpegPath = $executables[0].FullName
-          $ffprobePath = Join-Path $executables[0].DirectoryName 'ffprobe.exe'
-          if (-not (Test-Path -LiteralPath $ffprobePath -PathType Leaf)) { throw "FFprobe binary missing" }
-          "FFMPEG_PATH=$ffmpegPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "FFPROBE_PATH=$ffprobePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          python scripts/download_release_ffmpeg.py --output-dir "$env:RUNNER_TEMP/ffmpeg/bin" --github-env "$env:GITHUB_ENV"
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg provisioning or validation failed" }
+          "$env:RUNNER_TEMP/ffmpeg/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        timeout-minutes: 15
 
       - name: Install Python dev deps
         shell: bash
