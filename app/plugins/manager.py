@@ -19,6 +19,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from app.core import config
+from app.core.sanitize import safe_exception_summary, safe_exception_trace
 from app.core.settings_store import get_bool, get_setting, set_bool, set_setting
 from app.plugins.contracts import (
     PLUGIN_API_VERSION,
@@ -241,7 +242,7 @@ class PluginManager:
                 raise TypeError("score_highlight 必须返回 HighlightScoringResult")
             return HighlightDispatch(plugin_id=record.manifest.id, prediction=prediction)
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            error = safe_exception_summary(exc)
             logger.opt(exception=exc).warning(
                 "高光评分插件失败，已回退规则评分: plugin={} segment={}",
                 record.manifest.id,
@@ -267,7 +268,7 @@ class PluginManager:
             instance.record_highlight_feedback(feedback)
             return HighlightFeedbackDispatch(plugin_id=feedback.plugin_id, delivered=True)
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            error = safe_exception_summary(exc)
             logger.opt(exception=exc).warning(
                 "高光评分插件反馈写入失败: plugin={} candidate={}",
                 feedback.plugin_id,
@@ -305,7 +306,7 @@ class PluginManager:
                     )
                 result.records[manifest.id] = _PluginRecord(manifest=manifest, directory=directory.resolve())
             except (OSError, json.JSONDecodeError, ValidationError, PluginValidationError) as exc:
-                result.errors.append({"directory": directory.name, "error": str(exc)})
+                result.errors.append({"directory": directory.name, "error": safe_exception_summary(exc)})
         return result
 
     async def _activate(self, record: _PluginRecord) -> None:
@@ -346,21 +347,35 @@ class PluginManager:
                 seen.add(id(source))
                 try:
                     await asyncio.wait_for(source.aclose(), timeout=10)
-                except Exception:
-                    logger.error("插件 {} 来源启用回滚关闭失败", record.manifest.id)
+                except Exception as cleanup_error:
+                    logger.error(
+                        "插件 {} 来源启用回滚关闭失败: {}",
+                        record.manifest.id,
+                        safe_exception_trace(cleanup_error, trusted_message=False),
+                    )
             if instance is not None:
                 try:
                     cleanup = instance.on_disable()
                     if inspect.isawaitable(cleanup):
                         await asyncio.wait_for(cleanup, timeout=30)
-                except Exception:
-                    logger.error("插件 {} 启用回滚失败", record.manifest.id)
+                except Exception as cleanup_error:
+                    logger.error(
+                        "插件 {} 启用回滚失败: {}",
+                        record.manifest.id,
+                        safe_exception_trace(cleanup_error, trusted_message=False),
+                    )
             record.instance = None
             record.schema = ()
             record.error = (
-                "直播源插件初始化失败"
-                if "live_source" in record.manifest.capabilities and not isinstance(exc, (PluginError, SourceError))
-                else str(exc)
+                safe_exception_summary(exc)
+                if isinstance(exc, (PluginError, SourceError))
+                else f"插件初始化失败: {type(exc).__name__}"
+            )
+            logger.error(
+                "插件初始化失败 plugin={} version={}: {}",
+                record.manifest.id,
+                record.manifest.version,
+                safe_exception_trace(exc, trusted_message=False),
             )
             self._unload_modules(record.directory)
             record.module_name = None
@@ -385,9 +400,11 @@ class PluginManager:
                 outcome = instance.on_disable()
                 if inspect.isawaitable(outcome):
                     await asyncio.wait_for(outcome, timeout=30)
-        except Exception:
-            record.error = "停用钩子失败，请检查插件资源清理实现"
-            logger.error("插件 {} 停用钩子失败", record.manifest.id)
+        except Exception as exc:
+            record.error = f"停用钩子失败: {type(exc).__name__}，请检查插件资源清理实现"
+            logger.error(
+                "插件 {} 停用钩子失败: {}", record.manifest.id, safe_exception_trace(exc, trusted_message=False)
+            )
         finally:
             self._unload_modules(record.directory)
             record.module_name = None

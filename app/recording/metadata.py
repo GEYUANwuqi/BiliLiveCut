@@ -12,6 +12,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import AppSetting, LiveRoom, RecordingSession, SessionStatus
 from app.db.session import get_session
 from app.plugins.live_source import SourceError
@@ -161,11 +162,11 @@ async def refresh_room_metadata(db_id: int) -> None:
             if not info.title or not info.title.strip():
                 raise ValueError("房间详情暂未提供有效标题")
         except (TimeoutError, SourceError, ValueError) as exc:
-            metadata.error = f"标题刷新失败：{type(exc).__name__}"
+            metadata.error = f"标题刷新失败：{safe_exception_summary(exc)}"
             with get_session() as db:
                 if db.get(LiveRoom, db_id) is not None:
                     _save(db, f"room_metadata:{db_id}", metadata)
-            logger.warning("标题刷新失败 room={} error={}", db_id, type(exc).__name__)
+            logger.warning("标题刷新失败 room={} error={}", db_id, safe_exception_summary(exc))
             return
 
         now = datetime.now(UTC)

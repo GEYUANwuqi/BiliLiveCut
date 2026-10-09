@@ -64,11 +64,7 @@ def get_disk_usage(path: str | Path | None = None) -> dict:
     """
     p = Path(path) if path else clips_dir()
     if not p.exists():
-        try:
-            p.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            logger.warning("无法创建目录 {},回退到当前目录统计磁盘使用。", p)
-            p = Path(".")
+        p.mkdir(parents=True, exist_ok=True)
     usage = shutil.disk_usage(p)
     return {
         "total_gb": round(usage.total / (1024**3), 1),

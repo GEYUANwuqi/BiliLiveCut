@@ -28,8 +28,6 @@ SOURCE_COMMIT_FULL = get_source_commit_full()
 MANIFEST_FORMAT_VERSION = 5
 ARCHIVE_FILENAME = get_engine_pack_zip_name()
 
-MODELSCOPE_MIRRORS = ["https://www.modelscope.cn"]
-HF_MIRRORS = ["https://hf-mirror.com", "https://huggingface.co"]
 _LICENSE_FIELDS = {
     "name",
     "spdx",

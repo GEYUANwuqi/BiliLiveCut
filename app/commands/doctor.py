@@ -5,6 +5,8 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+from app.core.sanitize import safe_exception_summary
+
 console = Console()
 
 
@@ -29,7 +31,12 @@ def cmd_doctor(
     import os as _os
     import shutil
     import sys as _sys
+    import tempfile
     from pathlib import Path as _Path
+
+    from sqlalchemy.engine import make_url
+
+    from app.core.config import settings as _cfg
 
     results: list[dict] = []
 
@@ -49,8 +56,8 @@ def cmd_doctor(
         report("FAIL", "Python 版本", f"{ver.major}.{ver.minor}.{ver.micro} (需 ≥ 3.11)")
 
     # ── FFmpeg / FFprobe
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
+    ffmpeg = shutil.which(_cfg.ffmpeg_path)
+    ffprobe = shutil.which(_cfg.ffprobe_path)
     if ffmpeg:
         report("PASS", "FFmpeg", ffmpeg)
     else:
@@ -61,10 +68,9 @@ def cmd_doctor(
         report("WARN", "FFprobe", "未找到, 部分媒体分析功能不可用")
 
     # ── 数据库
-    from app.core.config import settings as _cfg
-
-    db_path = _Path(_cfg.database_url.replace("sqlite:///", "."))
-    if db_path.exists():
+    database = make_url(_cfg.database_url).database
+    db_path = _Path(database) if database and database != ":memory:" else None
+    if db_path is not None and db_path.exists():
         try:
             from app.db.schema import (
                 CURRENT_SCHEMA_VERSION,
@@ -86,12 +92,12 @@ def cmd_doctor(
                 else:
                     report("FAIL", "数据库完整性", str(r[0]) if r else "unknown")
         except Exception as exc:
-            report("FAIL", "数据库检查", str(exc)[:80])
+            report("FAIL", "数据库检查", safe_exception_summary(exc, limit=300))
     else:
         report("WARN", "数据库", "尚未创建 (首次启动时自动创建)")
 
     # ── 磁盘空间
-    data_dir = _Path(_cfg.data_dir)
+    data_dir = _Path(_cfg.storage_root)
     if data_dir.exists():
         try:
             if hasattr(shutil, "disk_usage"):
@@ -103,17 +109,16 @@ def cmd_doctor(
                     report("WARN", "磁盘空间", f"仅 {free_gb:.1f} GB 可用")
                 else:
                     report("FAIL", "磁盘空间", f"严重不足: {free_gb:.1f} GB")
-        except Exception:
-            report("WARN", "磁盘空间", "无法检测")
+        except OSError as exc:
+            report("WARN", "磁盘空间", safe_exception_summary(exc))
 
     # ── 数据目录权限
     try:
-        test_file = data_dir / ".doctor_write_test"
-        test_file.write_text("test")
-        test_file.unlink()
+        with tempfile.TemporaryFile(dir=data_dir, prefix=".doctor-", mode="w") as test_file:
+            test_file.write("test")
         report("PASS", "数据目录权限", str(data_dir))
-    except Exception:
-        report("FAIL", "数据目录权限", f"无法写入 {data_dir}")
+    except OSError as exc:
+        report("FAIL", "数据目录权限", f"无法写入 {data_dir}: {safe_exception_summary(exc)}")
 
     # ── ADMIN_PASSWORD 安全
     if not _cfg.admin_password:
@@ -144,7 +149,7 @@ def cmd_doctor(
         else:
             report("WARN", "Bilibili API", f"HTTP {resp.status_code}")
     except Exception as exc:
-        report("WARN", "Bilibili API", f"无法连通: {type(exc).__name__}")
+        report("WARN", "Bilibili API", f"无法连通: {safe_exception_summary(exc)}")
 
     # ── CPU/Memory
     try:
@@ -158,30 +163,38 @@ def cmd_doctor(
         from app.core.asr_detection import detect_resources
 
         res = detect_resources()
-        if res.get("gpu_available"):
-            vram = res.get("total_vram_mb", 0) / 1024
+        if res.gpu_available:
+            vram = res.vram_total_mb / 1024
             report("PASS", "GPU", f"可用 ({vram:.1f} GB VRAM)")
         else:
             report("WARN", "GPU", "未检测到 NVIDIA GPU (将使用 CPU 模式)")
-    except Exception:
-        report("WARN", "GPU", "无法检测")
+    except Exception as exc:
+        report("WARN", "GPU", safe_exception_summary(exc))
 
     # ── ASR 配置
-    asr_backend = _cfg.asr_backend or "none"
+    asr_backend = _cfg.asr_primary
     report("PASS" if asr_backend != "none" else "WARN", "ASR 后端", asr_backend or "未配置")
 
     # ── 模型目录
-    model_dir = _Path(_cfg.model_dir) if _cfg.model_dir else None
+    configured_models = _os.environ.get("BLC_MODELS_DIR", "")
+    model_dir = _Path(configured_models) if configured_models else None
     if model_dir and model_dir.exists():
         report("PASS", "模型目录", str(model_dir))
     elif model_dir:
         report("WARN", "模型目录", "不存在")
     else:
-        report("WARN", "模型目录", "未配置")
+        report("WARN", "模型目录", "未设置 BLC_MODELS_DIR，将使用模型 SDK 缓存")
 
     # ── Uploader
-    uploader = _cfg.uploader_type or "manual"
-    report("PASS", "上传方式", uploader)
+    if db_path is not None and db_path.exists():
+        from app.core import settings_store
+
+        try:
+            report("PASS", "上传方式", "biliup" if settings_store.biliup_enabled() else "manual")
+        except Exception as exc:  # noqa: BLE001 — 诊断逐项汇总，不因坏库丢失前面的结果。
+            report("FAIL", "上传方式", safe_exception_summary(exc))
+    else:
+        report("WARN", "上传方式", "数据库尚未初始化，运行时开关未知")
 
     # ── 汇总
     console.print("")

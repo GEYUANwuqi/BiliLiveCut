@@ -26,12 +26,13 @@ from pathlib import Path
 from typing import Any
 
 from blc_portable.console import configure_console_encoding
+from blc_portable.diagnostics import exception_summary, redact_diagnostic
 from config.launcher_settings import APP_ROOT_ENV, WEB_PORT_ENV, load_launcher_config
 
 # -- Constants ──────────────────────────────────────────────────
 APP_NAME = "BiliLiveCut"
-VERSION = "V0.1.18.6 Alpha"
-RELEASE_VERSION = "0.1.18.6-alpha"
+VERSION = "V0.1.18.7 Alpha"
+RELEASE_VERSION = "0.1.18.7-alpha"
 SOURCE_COMMIT_SHORT = "2ae1df8"
 # NOTE: RELEASE_ID 将在获得 Payload SHA-256 后动态生成 (内容寻址)
 SUPPORTED_PYTHON_VERSIONS = frozenset({(3, 11), (3, 12)})
@@ -381,7 +382,7 @@ def prepare_venv(app_root: Path) -> Path:
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if result.returncode != 0:
@@ -436,14 +437,16 @@ def _format_process_failure(
     root_exception: str,
 ) -> str:
     """Build one actionable root-cause report for a child Python failure."""
+    from blc_portable.diagnostics import redact_diagnostic
+
     return "\n".join(
         (
             title,
             f"Interpreter: {interpreter}",
             f"Return code: {returncode if returncode is not None else 'not started'}",
-            f"stdout:\n{(stdout or '').strip() or '<empty>'}",
-            f"stderr:\n{(stderr or '').strip() or '<empty>'}",
-            f"Root exception: {root_exception}",
+            f"stdout:\n{redact_diagnostic(stdout or '').strip() or '<empty>'}",
+            f"stderr:\n{redact_diagnostic(stderr or '').strip() or '<empty>'}",
+            f"Root exception: {redact_diagnostic(root_exception)}",
         )
     )
 
@@ -530,7 +533,7 @@ def _run_dependency_preflight(venv_python: Path) -> None:
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if result.returncode != 0:
@@ -591,14 +594,12 @@ def _run_import_smoke(venv_python: Path, module: str, source_dir: Path | None = 
             cwd=cwd,
             env=env,
         )
-    except subprocess.CalledProcessError as exc:
-        details = "\n".join(part.strip() for part in (exc.stdout or "", exc.stderr or "") if part and part.strip())
-        if not details:
-            details = f"process exited with code {exc.returncode}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        details = exception_summary(exc)
         raise RuntimeError(f"Import smoke check failed for {module}:\n{details}") from exc
 
     output = (result.stdout or "").strip()
-    print(output or f"  ok: {module}")
+    print(redact_diagnostic(output) if output else f"  ok: {module}")
 
 
 def _build_service_command(venv_python: Path, web_port: int) -> list[str]:
@@ -681,8 +682,8 @@ def install_dependencies(
             needs_install = False
         else:
             print(f"  dependencies outdated or missing ({len(missing)}), re-installing...")
-    except (subprocess.CalledProcessError, OSError):
-        pass
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f"  dependency inventory failed; reinstalling from verified lock: {exception_summary(exc)}")
 
     if needs_install:
         # Install from lock file with mandatory hash verification
@@ -720,6 +721,8 @@ def install_dependencies(
             ]
             + install_source_flags,
             check=True,
+            capture_output=True,
+            text=True,
             timeout=600,
         )
 
@@ -836,7 +839,7 @@ def prepare_models(
                 returncode=None,
                 stdout="",
                 stderr="",
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
 
@@ -848,6 +851,10 @@ def prepare_models(
     root_line = next((line for line in reversed(stderr.splitlines()) if line.startswith(root_prefix)), "")
     visible_stdout = "\n".join(line for line in stdout.splitlines() if not line.startswith(result_prefix)).strip()
     visible_stderr = "\n".join(line for line in stderr.splitlines() if not line.startswith(root_prefix)).strip()
+    from blc_portable.diagnostics import redact_diagnostic
+
+    visible_stdout = redact_diagnostic(visible_stdout)
+    visible_stderr = redact_diagnostic(visible_stderr)
     if visible_stdout:
         print(visible_stdout)
     if result.returncode != 0:
@@ -887,7 +894,7 @@ def prepare_models(
                 returncode=result.returncode,
                 stdout=visible_stdout,
                 stderr=visible_stderr,
-                root_exception=f"{type(exc).__name__}: {exc}",
+                root_exception=exception_summary(exc),
             )
         ) from exc
     if not isinstance(payload, dict):
@@ -1285,9 +1292,21 @@ def run_launcher(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nService stopped")
         return 0
-    except Exception:
+    except Exception as exc:
         print("\nService exited with error:")
-        traceback.print_exc()
+        details = exception_summary(exc)
+        for frame in traceback.extract_tb(exc.__traceback__):
+            details += f"\n  {frame.filename}:{frame.lineno} in {frame.name}"
+        details = redact_diagnostic(details)
+        print(details)
+        try:
+            log_dir = app_root / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "launcher-error.log"
+            log_path.write_text(details + "\n", encoding="utf-8")
+            print(f"诊断已保存: {log_path}")
+        except OSError as log_error:
+            print(f"无法保存启动诊断: {exception_summary(log_error)}")
         print()
         _pause_before_exit()
         return 1

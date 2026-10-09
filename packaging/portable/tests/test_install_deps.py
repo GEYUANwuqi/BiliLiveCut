@@ -248,6 +248,21 @@ def test_import_smoke_reports_original_stderr(tmp_path: Path, monkeypatch: pytes
     assert isinstance(exc_info.value.__cause__, _sp.CalledProcessError)
 
 
+def test_import_smoke_timeout_keeps_safe_stderr_without_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from blc_portable.launcher import main
+
+    def timeout(args: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        raise _sp.TimeoutExpired(
+            ["python", "private-argument"], 30, stderr="ImportError: native ABI mismatch token=private-token"
+        )
+
+    monkeypatch.setattr(main.subprocess, "run", timeout)
+    with pytest.raises(RuntimeError) as caught:
+        main._run_import_smoke(Path(sys.executable), "numpy")
+    assert "ImportError: native ABI mismatch" in str(caught.value)
+    assert "private-" not in str(caught.value)
+
+
 def test_dependency_preflight_checks_model_sdks_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Python ABI and both model SDKs are checked by one managed-interpreter process."""
     from blc_portable.launcher import main  # noqa: E402

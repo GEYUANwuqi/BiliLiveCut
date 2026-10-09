@@ -17,10 +17,10 @@ import hashlib
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from loguru import logger
@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select as _sql_select
 
 from app.analysis.transcript_windows import extract_transcript_window
+from app.core.sanitize import safe_exception_summary
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -1147,7 +1148,7 @@ def get_review_preview(candidate_id: int) -> FileResponse:
 
 
 @review_router.get("/api/{candidate_id}/waveform")
-def get_waveform(candidate_id: int, resolution: int = 400) -> dict:
+def get_waveform(candidate_id: int, resolution: Annotated[int, Query(ge=16, le=4000)] = 400) -> dict:
     """生成音频波形采样数据(FFmpeg→PCM→RMS峰值数组)。
 
     :param candidate_id: 候选 id。
@@ -1186,19 +1187,23 @@ def get_waveform(candidate_id: int, resolution: int = 400) -> dict:
             "error": "候选预览渲染失败",
         }
 
+    from app.core.config import settings
+
     if duration_s <= 0:
         # 用 ffprobe 获取时长。
         try:
             result = _sp.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", file_path],
+                [settings.ffprobe_path, "-v", "error", "-print_format", "json", "-show_format", file_path],
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=True,
             )
             info = _json.loads(result.stdout)
             duration_s = float(info.get("format", {}).get("duration", 0))
-        except Exception:
-            duration_s = 30  # fallback
+        except (OSError, _sp.SubprocessError, ValueError) as exc:
+            logger.opt(exception=exc).error("波形时长探测失败 candidate_id={}", candidate_id)
+            return {"peaks": [], "duration_s": None, "sample_rate": 0, "error": safe_exception_summary(exc)}
 
     if duration_s <= 0:
         return {"peaks": [0.0] * resolution, "duration_s": 0, "sample_rate": 0}
@@ -1212,10 +1217,10 @@ def get_waveform(candidate_id: int, resolution: int = 400) -> dict:
     try:
         _sp.run(
             [
-                "ffmpeg",
+                settings.ffmpeg_path,
                 "-y",
                 "-v",
-                "quiet",
+                "error",
                 "-i",
                 file_path,
                 "-ac",
@@ -1228,15 +1233,17 @@ def get_waveform(candidate_id: int, resolution: int = 400) -> dict:
             ],
             check=True,
             timeout=30,
+            capture_output=True,
         )
         with open(tmp_path, "rb") as f:
             raw = f.read()
-    except Exception as exc:
+    except (OSError, _sp.SubprocessError) as exc:
+        logger.opt(exception=exc).error("波形生成失败 candidate_id={}", candidate_id)
         return {
             "peaks": [],
             "duration_s": duration_s,
             "sample_rate": sample_rate,
-            "error": f"FFmpeg 波形生成失败: {exc}",
+            "error": f"FFmpeg 波形生成失败: {safe_exception_summary(exc)}",
         }  # noqa: E501
     finally:
         try:

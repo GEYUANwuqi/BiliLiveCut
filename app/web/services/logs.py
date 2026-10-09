@@ -20,10 +20,10 @@ def list_logs(limit: int = 100, level: str | None = None) -> list[dict[str, Any]
     :returns: 日志字典列表(按时间降序)。
     """
     with get_session() as db:
-        stmt = select(SystemLog).order_by(SystemLog.created_at.desc())  # type: ignore[attr-defined]
+        stmt = select(SystemLog).order_by(SystemLog.created_at.desc(), SystemLog.id.desc())  # type: ignore[attr-defined]
         if level:
             stmt = stmt.where(SystemLog.level == level)
-        rows = db.exec(stmt).all()[:limit]
+        rows = db.exec(stmt.limit(max(1, min(limit, 500)))).all()
     return [
         {
             "id": x.id,

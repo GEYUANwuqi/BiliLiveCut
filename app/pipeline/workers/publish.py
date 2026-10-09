@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
+from app.core.sanitize import sanitize_diagnostic
 from app.db.entities import (
     ClipStatus,
     FinalClip,
@@ -324,7 +325,8 @@ def commit_publish_result(attempt_token: str, publish_generation: int, compute_r
         attempt.remote_id = attempt.remote_id or compute_result.get("remote_id")
         attempt.remote_url = attempt.remote_url or compute_result.get("remote_url")
         attempt.error_type = compute_result.get("error_type")
-        attempt.error_message = compute_result.get("error_message")
+        error = compute_result.get("error_message")
+        attempt.error_message = sanitize_diagnostic(str(error)) if error is not None else None
         db.add(attempt)
         upload_task = db.get(UploadTask, attempt.upload_task_id)
         if upload_task is not None and upload_task.publish_generation == publish_generation:

@@ -588,13 +588,11 @@ async def test_recorder_resets_retry_limit_after_productive_reconnect(
 
     async def record_once(_stream: object, _out_dir: Path) -> int:
         recorder._seq += 1  # noqa: SLF001
+        recorder._attempt_media_seconds = recorder_module.settings.segment_duration_s
         return 1
 
     async def no_wait(_seconds: float) -> None:
         await asyncio.sleep(0)
-
-    def classify_exit(_exit_code: int, _stderr_tail: str | None) -> None:
-        return None
 
     def increment_reconnect() -> None:
         return None
@@ -608,7 +606,6 @@ async def test_recorder_resets_retry_limit_after_productive_reconnect(
     monkeypatch.setattr(recorder, "_update_session", update_session)
     monkeypatch.setattr("app.sources.bilibili.source.BilibiliSource.get_streams", fetch_stream)
     monkeypatch.setattr(recorder, "_record_once", record_once)
-    monkeypatch.setattr(recorder, "_classify_recording_exit", classify_exit)
     monkeypatch.setattr(recorder, "_increment_reconnect", increment_reconnect)
     monkeypatch.setattr(recorder, "_sleep_or_stop", no_wait)
 

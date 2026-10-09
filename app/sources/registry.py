@@ -165,12 +165,12 @@ class SourceRegistry:
                         entry.cooldown_until = max(entry.cooldown_until, time.monotonic() + delay)
                         raise
                     except (SourceTemporaryError, TimeoutError) as exc:
-                        if attempt + 1 == self.attempts:
-                            raise SourceTemporaryError("来源请求超时或暂时失败，请稍后重试") from exc
                         delay = max(self.retry_delay_s, getattr(exc, "retry_after", None) or 0.0)
                         if delay > 5:
                             entry.cooldown_until = max(entry.cooldown_until, time.monotonic() + delay)
                             raise SourceTemporaryError("来源请求需要延后重试", retry_after=delay) from exc
+                        if attempt + 1 == self.attempts:
+                            raise SourceTemporaryError("来源请求超时或暂时失败，请稍后重试", retry_after=delay) from exc
                         await asyncio.sleep(delay)
                     except SourceError:
                         raise

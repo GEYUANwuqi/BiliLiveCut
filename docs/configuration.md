@@ -181,3 +181,7 @@ biliup_config 通过上传命令模板中的 {config} 占位符使用；不猜�
 ## API
 
 GET /api/settings/configuration 返回脱敏字段清单；PATCH 同地址接受 values、reset、clear、revision。GET /api/settings 保留读取启动状态；PATCH /api/settings/port 仅保存 web_port，旧 PATCH /api/settings 已移除。HTTP 422 只返回字段位置、错误类别和静态提示，避免回显含密钥的输入对象。
+
+## 录制重试保护
+
+`recording_reconnect_max_attempts` 与 `recording_reconnect_max_elapsed_s` 分别限制连续失败次数和重试时长；默认 20 次 / 180 秒。单项为 0 时关闭该项，两项同时为 0 仍保留 20 次安全上限。只有实际媒体达到目标分段时长才视为恢复，短末片不会重置预算。永久录制错误暂停自动重新启动，需处理后手动恢复。诊断与最小日志采集见 [Portable 排错](../packaging/portable/USER_GUIDE_ZH.md#反复显示录制异常)。

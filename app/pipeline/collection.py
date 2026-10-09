@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -28,6 +29,7 @@ from sqlmodel import select
 from app.core.config import settings
 from app.core.paths import clips_dir
 from app.core.process_control import ProcessCancelledError, run_cancellable
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     ClipStatus,
     ClipVariant,
@@ -242,7 +244,7 @@ def render_collection(
                         settings.ffmpeg_path,
                         "-y",
                         "-v",
-                        "quiet",
+                        "error",
                         "-i",
                         cf["path"],
                         "-af",
@@ -256,14 +258,15 @@ def render_collection(
                         str(norm_path),
                     ],
                     check=True,
+                    capture_output=True,
                     timeout=120,
                     cancel_check=cancel_check,
                 )
                 normalized_paths.append(str(norm_path))
             except ProcessCancelledError:
                 raise
-            except subprocess.CalledProcessError:
-                logger.warning("响度标准化失败 clip={},使用原始文件。", cf["path"])
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("响度标准化失败 clip={},使用原始文件: {}", cf["path"], safe_exception_summary(exc))
                 normalized_paths.append(cf["path"])
 
         # 2) 构建 concat 列表(插入章节卡)。
@@ -310,14 +313,15 @@ def render_collection(
                     str(out_file),
                 ],
                 check=True,
+                capture_output=True,
                 timeout=300,
                 cancel_check=cancel_check,
             )
         except ProcessCancelledError:
             out_file.unlink(missing_ok=True)
             raise
-        except subprocess.CalledProcessError as exc:
-            logger.error("合集渲染失败: {}", exc)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("合集渲染失败: {}", safe_exception_summary(exc))
             return None
 
     if not out_file.exists():
@@ -337,15 +341,20 @@ def render_collection(
     duration_s = 0.0
     try:
         result = subprocess.run(
-            [settings.ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_format", str(out_file)],
+            [settings.ffprobe_path, "-v", "error", "-print_format", "json", "-show_format", str(out_file)],
             capture_output=True,
             text=True,
+            check=True,
             timeout=10,
         )
         info = json.loads(result.stdout)
         duration_s = float(info.get("format", {}).get("duration", 0))
-    except Exception:
-        pass
+        if not math.isfinite(duration_s) or duration_s <= 0:
+            raise ValueError("合集时长必须为正有限值")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        logger.error("合集时长探测失败 file={}: {}", out_file, safe_exception_summary(exc))
+        out_file.unlink(missing_ok=True)
+        return None
 
     # 写入 ClipVariant。
     with get_session() as db:
@@ -435,7 +444,7 @@ def _generate_chapter_card(title: str, out_dir: Path) -> str | None:
                 settings.ffmpeg_path,
                 "-y",
                 "-v",
-                "quiet",
+                "error",
                 "-f",
                 "lavfi",
                 "-i",
@@ -460,10 +469,11 @@ def _generate_chapter_card(title: str, out_dir: Path) -> str | None:
                 str(card_path),
             ],
             check=True,
+            capture_output=True,
             timeout=30,
         )
-    except Exception:
-        logger.debug("章节标题卡生成失败,跳过。")
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("章节标题卡生成失败，跳过: {}", safe_exception_summary(exc))
         return None
     finally:
         try:

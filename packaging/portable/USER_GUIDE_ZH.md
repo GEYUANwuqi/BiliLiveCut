@@ -1,6 +1,6 @@
 # BiliLiveCut Portable 小白使用说明
 
-适用版本：`v0.1.18.6-Alpha` · 适用系统：Windows 10/11 x64
+适用版本：`v0.1.18.7-Alpha` · 适用系统：Windows 10/11 x64
 
 本版新增：在「弹幕」页面选择录制场次，下载该场的原始弹幕 JSONL；文件也保存在 `storage\raw\session_<编号>\danmaku.jsonl`。数据库中的分析记录仍可能采样，原始档保存实际收到的消息，不能补录掉线时的数据。没有词级时间戳的转写也能生成估时字幕；任务过期回收会在日志中显示 `recover_stale`。升级仍须使用全新目录和新数据库，详细说明见[使用指南](../../docs/usage.md#弹幕数据库与原始档)。
 
@@ -20,7 +20,7 @@
 - “账号管理”会优先调用电脑已安装的 Google Chrome；没有 Chrome 时会自动下载一次 Playwright Chromium。
 - 第一次测试先完成一小段授权直播录制，并在 `storage/raw/` 找到文件。Cookie、大模型 API 和自动上传都不是首次使用的必需项。
 
-## V0.1.18.6 Alpha 先知道的新流程
+## V0.1.18.7 Alpha 先知道的新流程
 
 - 已有视频可从工作台导航进入“录播分析”，按需附带 XML、JSON、SRT、ASS 弹幕。预处理后由本地模型转写，再按已配置的本地或远程 LLM 分析；具体格式、进度和恢复方式见[录播导入说明](../../docs/recording-import.md)。
 - “场次时间线”先展示热点事件，再独立判断是否成片。每场录制按 GMT+8 展示标题、摘要、1～2 条代表弹幕、热度、成片分、语义置信度和证据覆盖；未达到成片阈值的事件仍留在时间线上，但不会出现“精审/预览”入口。达到阈值的候选仍可调整边界、批准或拒绝。
@@ -62,9 +62,9 @@ Full 版不要求系统安装 Python、FFmpeg、Visual Studio、Git 或其他编
 
 ## 2. 下载正确的文件
 
-打开项目的 [GitHub Releases 页面](https://github.com/StarGazerQQD/BiliLiveCut/releases)，进入 `v0.1.18.6-Alpha`，下载：
+打开项目的 [GitHub Releases 页面](https://github.com/StarGazerQQD/BiliLiveCut/releases)，进入 `v0.1.18.7-Alpha`，下载：
 
-1. `BiliLiveCut-Portable-Full-0.1.18.6-alpha-x64.zip`
+1. `BiliLiveCut-Portable-Full-0.1.18.7-alpha-x64.zip`
 2. `SHA256SUMS.txt`
 
 不要把下面这些文件当成 Windows 小白版：
@@ -82,7 +82,7 @@ Full 版不要求系统安装 Python、FFmpeg、Visual Studio、Git 或其他编
 3. 复制并执行：
 
 ```powershell
-Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.18.6-alpha-x64.zip" -Algorithm SHA256
+Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.18.7-alpha-x64.zip" -Algorithm SHA256
 ```
 
 4. 将输出的 `Hash` 与 `SHA256SUMS.txt` 中同名文件前面的值比较。英文字母大小写不同不影响结果。
@@ -92,7 +92,7 @@ Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.18.6-alpha-x64.zip" -Algorithm SHA
 
 1. 新建目录，例如 `D:\BiliLiveCut`。
 2. 右键 ZIP，选择“全部解压”。
-3. 打开解压出来的 `BiliLiveCut-Portable-Full-0.1.18.6-alpha-x64` 文件夹。
+3. 打开解压出来的 `BiliLiveCut-Portable-Full-0.1.18.7-alpha-x64` 文件夹。
 4. 确认同一层能看到：
 
 ```text
@@ -120,7 +120,7 @@ Full 版包含运行环境，但不包含四个语音识别模型。
 当前版本新生成的 Engine Pack 文件名是：
 
 ```text
-BiliLiveCut-EnginePack-0.1.18.6-alpha.zip
+BiliLiveCut-EnginePack-0.1.18.7-alpha.zip
 ```
 
 将 ZIP 原样放到 `BiliLiveCut-Portable.exe` 同级目录，不要手动解压。Launcher 会先校验逐引擎内容身份，再把需要的模型原子安装到 `models/`。Engine Pack 必须与当前发行版本及源码身份一致；旧包、旧模型安装清单和旧下载完成记录不会自动迁移。
@@ -388,7 +388,7 @@ storage\
 
 备份前必须先停止录制并关闭 Launcher。把 `.env` 和整个 `storage` 文件夹复制到安全位置即可。
 
-V0.1.18.6 Alpha 只接受由当前版本创建并精确通过校验的数据库。V0.1.17.x 及其他历史数据库不会被备份、迁移或补写；切换版本时必须使用独立目录和新数据库。原始录像、成片与人工导出的资料可作为普通文件另行归档。历史版本的功能和修复记录只用于查阅，见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)，不能当作当前数据迁移说明。
+V0.1.18.7 Alpha 只接受由当前版本创建并精确通过校验的数据库。V0.1.17.x 及其他历史数据库不会被备份、迁移或补写；切换版本时必须使用独立目录和新数据库。原始录像、成片与人工导出的资料可作为普通文件另行归档。历史版本的功能和修复记录只用于查阅，见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)，不能当作当前数据迁移说明。
 
 测试其他版本或需要保留独立环境时：
 
@@ -427,7 +427,7 @@ V0.1.18.6 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 大模型测试提示“未安装 openai”
 
-`v0.1.18.6-Alpha` 已把 OpenAI 兼容 SDK 纳入 Portable 运行时。该提示说明当前 Full 的 `vendor\wheels\` 不完整或目录不是本版本的干净发行包；请重新下载并解压到全新目录。不要在 Portable 目录手工执行 `pip install -e`。
+`v0.1.18.7-Alpha` 已把 OpenAI 兼容 SDK 纳入 Portable 运行时。该提示说明当前 Full 的 `vendor\wheels\` 不完整或目录不是本版本的干净发行包；请重新下载并解压到全新目录。不要在 Portable 目录手工执行 `pip install -e`。
 
 ### 控制台提示 pip 有新版本
 
@@ -435,13 +435,25 @@ V0.1.18.6 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 出现 `THESE PACKAGES DO NOT MATCH THE HASHES`
 
-新版 Full 应强制使用本地 wheelhouse，不应访问 PyPI 镜像。确认使用的是 `v0.1.18.6-Alpha` 最新 Full ZIP，并且没有只复制 EXE。不要修改锁文件或添加报错中的 sdist 哈希，直接重新下载并校验 Full ZIP。
+新版 Full 应强制使用本地 wheelhouse，不应访问 PyPI 镜像。确认使用的是 `v0.1.18.7-Alpha` 最新 Full ZIP，并且没有只复制 EXE。不要修改锁文件或添加报错中的 sdist 哈希，直接重新下载并校验 Full ZIP。
 
 ### 模型下载很慢或中断
 
 - 保持磁盘空间和网络稳定。
 - 关闭 Launcher 后重新双击，已有有效文件会尽量复用。
 - 如果分发者提供与当前发行版本及源码身份一致的 Engine Pack，可放到 EXE 同级目录后重试。
+- 启动器显示“引擎 1/4：准备/下载中”，这是引擎序号，不代表文件已下载 25%；供应子进程的输出在本次模型准备结束后统一显示。
+- Hugging Face 明确使用 `hf-mirror.com`，可恢复故障后尝试 `huggingface.co`；每个源最多调用下载 SDK 两次（SDK 内部仍可能执行自己的有限请求重试）。ModelScope 使用既有官方端点，每次调用的模型和 revision 不变。
+- 失败摘要中的 `engine`、`model`、`revision`、`endpoint`、`failed_host`、`phase`、`kind` 和 `root` 用于定位。磁盘不足、权限拒绝、认证或资源不存在不会靠不断换源解决；按 `action` 提示处理，或提供有效本地 Engine Pack。`--offline` 始终阻止联网；完整当前模型仍优先复用。
+- ModelScope 每个主模型和子模型下载后均核对官方文件清单、大小及可用 SHA-256；`phase=verify` 表示缺失、损坏或无法验证的文件，不能将 SDK 返回目录视为下载完成。已成功安装的其他引擎和续传文件保留。
+
+### 反复显示录制异常
+
+先查看 Web“错误日志”中的同一 `session`：摘要包含房间、`exit_code`、`category`、HTTP 状态、是否重试、次数/时间预算、下一次等待和停止原因。`storage/logs/blc.log` 中保留脱敏的 stderr 尾部（最多 20 行，每行 512 字符）；超长行省略，签名 URL、认证头和令牌不保留。
+
+磁盘、权限、FFmpeg 缺失或媒体参数错误会停止当前会话并暂停自动重新启动。解决提示的问题后手动开始，或重新开启自动录制。HTTP 403 可能与临时流地址及访问权限有关，不能只凭状态码判定 Cookie 过期。网络、上游和未知错误会有限重试；反复留下短末片也不会无限续期。
+
+报告问题时请提供同一次运行的版本、安装根目录、时间和 `session`，以及该次异常摘要和对应 stderr 尾部；模型故障请提供完整脱敏摘要。只有 HTTPX 堆栈尾部不能确定失败主机，模型准备失败也不等同于录制首次中断的根因。不要上传 Cookie、Token、完整签名 URL 或真实配置文件。
 
 ### 添加房间失败
 
@@ -456,15 +468,15 @@ V0.1.18.6 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 主播下播后任务一直显示重连
 
-V0.1.18.6 Alpha 会先按 `LIVE_OFFLINE_CONFIRM_COUNT` 连续确认下播，再等待 `LIVE_SESSION_END_DELAY_S` 秒；期间恢复开播会取消停止。断流恢复受 20 次或 180 秒预算限制，单场还受 `RECORDING_MAX_DURATION_S` 限制。预算耗尽后当前会话会停止，并等待房间至少一次真实离线后才允许下一次开播自动录制；最后一个录制任务结束时网感定时采集会恢复。
+V0.1.18.7 Alpha 会先按 `LIVE_OFFLINE_CONFIRM_COUNT` 连续确认下播，再等待 `LIVE_SESSION_END_DELAY_S` 秒；期间恢复开播会取消停止。断流恢复受 20 次或 180 秒预算限制，单场还受 `RECORDING_MAX_DURATION_S` 限制。预算耗尽后当前会话会停止，并等待房间至少一次真实离线后才允许下一次开播自动录制；最后一个录制任务结束时网感定时采集会恢复。
 
 ### 候选理由、预览和视频内容不一致
 
-先确认使用 V0.1.18.6 Alpha。新分析先把多源证据聚合成完整热点事件，再用同一事件生成语义、成片分和动态边界；预览与最终成片使用同一候选边界。需要重新计算当前场次时，在“场次时间线”执行重分析；改过词典或 ASR 时选择重新转写。受保护数据不会被静默改写。
+先确认使用 V0.1.18.7 Alpha。新分析先把多源证据聚合成完整热点事件，再用同一事件生成语义、成片分和动态边界；预览与最终成片使用同一候选边界。需要重新计算当前场次时，在“场次时间线”执行重分析；改过词典或 ASR 时选择重新转写。受保护数据不会被静默改写。
 
 ### 拒绝候选后仍在成品列表显示 `reviewing`
 
-V0.1.18.6 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任务和未发布成片，并默认从时间线过滤。已经发布的成片按设计保留，避免篡改真实外部发布结果。任何非当前精确 Schema 的数据库都会明确拒绝，不会迁移或静默改写。
+V0.1.18.7 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任务和未发布成片，并默认从时间线过滤。已经发布的成片按设计保留，避免篡改真实外部发布结果。任何非当前精确 Schema 的数据库都会明确拒绝，不会迁移或静默改写。
 
 ### 修改 `.env` 后没有生效
 
@@ -482,11 +494,13 @@ V0.1.18.6 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任�
 
 ## 15. 给测试者的问题报告模板
 
+启动器退出报错时，安全诊断另存为安装目录下的 `logs/launcher-error.log`（保留最近一次启动失败）。其中包含失败阶段、子进程退出/超时信息和异常调用位置；模型准备还包含引擎、固定 revision 与实际请求主机。若无法写入该文件，窗口会显示写入失败原因。Web 启动后的详细日志位于 `storage/logs/blc.log`，后台错误日志与文件日志使用相同的脱敏内容。不要只截最后一行“启动失败”。
+
 报告问题时提供：
 
 - Windows 版本，例如 Windows 11 23H2；
 - 使用 Full 还是 Lite；
-- 程序版本 `v0.1.18.6-Alpha`；
+- 程序版本 `v0.1.18.7-Alpha`；
 - 解压目录；
 - 问题发生在 `[1/6]`～`[6/6]` 的哪一步；
 - 黑色窗口最后 30 行文字或截图；
@@ -498,7 +512,7 @@ V0.1.18.6 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任�
 
 ## 16. 当前 Alpha 的测试边界
 
-`v0.1.18.6-Alpha` 适合小规模、受控测试，不等同于稳定正式版。当前应重点验证：
+`v0.1.18.7-Alpha` 适合小规模、受控测试，不等同于稳定正式版。当前应重点验证：
 
 - Full ZIP 下载、校验和解压；
 - 首次离线依赖安装；

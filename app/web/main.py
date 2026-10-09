@@ -135,7 +135,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if recovered:
             logger.info("已恢复 {} 个中断的录制会话。", len(recovered))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("自动恢复跳过(无活动会话或出错): {}", exc)
+        logger.opt(exception=exc).warning("中断录制自动恢复失败")
 
     # V0.1.2:启动录制预约调度后台任务。
     schedule_task = asyncio.create_task(_schedule_loop())
@@ -174,7 +174,7 @@ async def _schedule_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.error("预约调度异常: {}", exc)
+            logger.opt(exception=exc).error("预约调度异常")
 
 
 async def _run_due_schedules() -> None:
@@ -225,6 +225,18 @@ async def safe_request_validation_error(request: Request, exc: RequestValidation
             ]
         },
     )
+
+
+@app.exception_handler(Exception)
+async def report_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """为未处理的请求故障生成定位编号，详细安全异常链写入统一日志。"""
+    from uuid import uuid4
+
+    reference = uuid4().hex[:12]
+    logger.opt(exception=exc).error(
+        "Web 请求失败 reference={} method={} path={}", reference, request.method, request.url.path
+    )
+    return JSONResponse(status_code=500, content={"detail": f"服务处理失败，请查看日志，编号 {reference}"})
 
 
 # ── 认证中间件(V0.1.8.2) ──────────────────────────────────────────────────

@@ -41,7 +41,7 @@ def test_cli_module_entrypoint_dispatches_commands() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "BiliLiveCut 0.1.18.6-alpha" in result.stdout
+    assert "BiliLiveCut 0.1.18.7-alpha" in result.stdout
 
 
 def test_cli_help_preserves_dependency_hints_and_current_doctor_text() -> None:
@@ -74,7 +74,13 @@ def test_serve_exports_actual_cli_port_to_application(monkeypatch) -> None:  # n
 
     cmd_serve(host="127.0.0.1", port=8080, reload=False)
 
-    assert captured == {"app": "app.web.main:app", "host": "127.0.0.1", "port": 8080, "reload": False}
+    assert captured == {
+        "app": "app.web.main:app",
+        "host": "127.0.0.1",
+        "port": 8080,
+        "reload": False,
+        "log_config": None,
+    }
     assert os.environ["BLC_WEB_PORT"] == "8080"
     assert os.environ["BLC_APP_ROOT"] == os.getcwd()
 

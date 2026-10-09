@@ -24,6 +24,7 @@ from app.analysis.keywords import match_keywords
 from app.analysis.source_policy import session_danmaku_lag_s
 from app.analysis.transcription.content import refined_transcript_text
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 from app.db.entities import (
     CandidateStatus,
     HighlightCandidate,
@@ -93,7 +94,7 @@ def _dispatch_payload(dispatch: HighlightDispatch | None) -> dict[str, object] |
     if dispatch.prediction is not None:
         payload["prediction"] = dispatch.prediction.to_dict()
     if dispatch.error is not None:
-        payload["error"] = dispatch.error
+        payload["error"] = sanitize_diagnostic(dispatch.error)
     return payload
 
 
@@ -130,6 +131,8 @@ def _record_plugin_dispatch(db: Session, compute_result: dict[str, Any]) -> None
     if isinstance(prediction, dict) and prediction.get("requested_mode") == "off" and error is None:
         return
     context = dict(raw)
+    if isinstance(error, str):
+        context["error"] = sanitize_diagnostic(error)
     context.update(
         {
             "segment_id": compute_result.get("segment_id"),
@@ -222,7 +225,7 @@ def analyze_compute(task_id: int) -> dict[str, Any]:
         draft = _score_segment_drafts(segment_id, audio_features=audio_features)
     except ValueError as exc:
         return {
-            "error": str(exc),
+            "error": safe_exception_summary(exc),
             "decision": HighlightDecision.SKIPPED,
             "segment_id": segment_id,
             "session_id": session_id,
@@ -1371,7 +1374,7 @@ def _score_segment_draft(
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             plugin_dispatch = HighlightDispatch(
                 plugin_id="host",
-                error=f"{type(exc).__name__}: {exc}",
+                error=safe_exception_summary(exc),
             )
             _logger.warning("highlight_plugin_context_fallback segment=%s error=%s", segment_id, exc)
     plugin_payload = _dispatch_payload(plugin_dispatch)

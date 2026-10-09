@@ -796,3 +796,9 @@ def test_review_preview_errors_do_not_expose_internal_details(
     assert waveform.json()["error"] == "候选预览渲染失败"
     assert secret_detail not in preview.text
     assert secret_detail not in waveform.text
+
+
+@pytest.mark.parametrize("resolution", [0, -1, 1000000000])
+def test_waveform_resolution_is_bounded(review_client: TestClient, resolution: int) -> None:
+    response = review_client.get(f"/review/api/1/waveform?resolution={resolution}", auth=("admin", "admin-pass"))
+    assert response.status_code == 422

@@ -31,6 +31,39 @@ if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
 
 
+async def test_danmaku_rate_limit_respects_server_delay(monkeypatch: MonkeyPatch) -> None:
+    client = DanmakuClient(room_id=123, session_id=4)
+    delays: list[float] = []
+
+    async def limited() -> DanmakuAccess:
+        raise BilibiliRateLimitError(HttpErrorType.RATE_LIMITED, "HTTP 429", 300)
+
+    async def wait(delay: float) -> None:
+        delays.append(delay)
+        client.stop()
+
+    monkeypatch.setattr(client, "_select_access", limited)
+    monkeypatch.setattr(client, "_sleep_or_stop", wait)
+    await client.run()
+    assert delays == [300]
+
+
+async def test_danmaku_local_permission_error_does_not_reconnect(monkeypatch: MonkeyPatch) -> None:
+    import errno
+
+    client = DanmakuClient(room_id=123, session_id=4)
+    calls = 0
+
+    async def broken() -> DanmakuAccess:
+        nonlocal calls
+        calls += 1
+        raise PermissionError(errno.EACCES, "local access denied")
+
+    monkeypatch.setattr(client, "_select_access", broken)
+    await asyncio.wait_for(client.run(), 1)
+    assert calls == 1
+
+
 @pytest.mark.asyncio
 async def test_logged_error_immediately_falls_back_to_anonymous(monkeypatch: MonkeyPatch) -> None:
     """登录 token 请求返回业务错误后，应立即用无 Cookie 请求匿名 token。"""

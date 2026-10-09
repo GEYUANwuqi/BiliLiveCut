@@ -10,6 +10,7 @@ from loguru import logger
 from app.core import settings_store
 from app.core.config import get_settings, settings
 from app.core.paths import clips_dir, ready_to_upload_dir
+from app.core.sanitize import safe_exception_summary
 from config.launcher_settings import (
     current_web_port,
     load_launcher_config,
@@ -98,7 +99,10 @@ async def test_llm_providers(items: list[dict[str, Any]] | None = None) -> dict[
                 raise llm_mod.EmptyLLMResponseError("服务已响应，但未返回可用正文")
             return {"id": p.id, "name": p.name, "ok": True, "detail": text[:40]}
         except Exception as exc:  # noqa: BLE001 — 汇总每个 provider 的错误
-            return {"id": p.id, "name": p.name, "ok": False, "detail": str(exc)[:200]}
+            from loguru import logger
+
+            logger.opt(exception=exc).warning("LLM 连通测试失败 provider={} model={}", p.id, p.model)
+            return {"id": p.id, "name": p.name, "ok": False, "detail": safe_exception_summary(exc)}
 
     candidates = provs.active_providers() if items is None else provs.merge_providers(items)
     providers = [p for p in candidates if p.enabled and p.api_key and p.base_url]

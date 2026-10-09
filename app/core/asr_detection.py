@@ -14,8 +14,14 @@
 
 from __future__ import annotations
 
+import csv
+import math
 import subprocess
 from dataclasses import dataclass
+
+from loguru import logger
+
+from app.core.sanitize import safe_exception_summary
 
 
 @dataclass
@@ -31,10 +37,10 @@ class ResourceInfo:
     """
 
     gpu_available: bool = False
-    vram_free_mb: float = 0.0
-    vram_total_mb: float = 0.0
-    ram_free_mb: float = 0.0
-    ram_total_mb: float = 0.0
+    vram_free_mb: float | None = None
+    vram_total_mb: float | None = None
+    ram_free_mb: float | None = None
+    ram_total_mb: float | None = None
     gpu_name: str = ""
     preset: str = "unknown"
 
@@ -81,9 +87,7 @@ def detect_resources() -> ResourceInfo:
         info.ram_total_mb = round(mem.total / (1024**2), 1)
         info.ram_free_mb = round(mem.available / (1024**2), 1)
     except ImportError:
-        # 无 psutil 时保守估计
-        info.ram_total_mb = 4096.0
-        info.ram_free_mb = 2048.0
+        logger.warning("内存检测不可用: 未安装 psutil，资源量未知")
 
     # GPU 显存检测
     try:
@@ -96,15 +100,22 @@ def detect_resources() -> ResourceInfo:
             capture_output=True,
             text=True,
             timeout=10,
+            check=True,
         )
         if result.returncode == 0 and result.stdout.strip():
-            parts = result.stdout.strip().split(",")
+            # 运行时默认使用 cuda:0；不得把多张卡显存相加或误选其它设备。
+            parts = next(csv.reader(result.stdout.splitlines()))
+            if len(parts) != 3:
+                raise ValueError("nvidia-smi 返回字段数量无效")
+            total, free = float(parts[1]), float(parts[2])
+            if not all(math.isfinite(value) and value >= 0 for value in (total, free)) or free > total:
+                raise ValueError("nvidia-smi 返回显存数值无效")
+            info.gpu_name, info.vram_total_mb, info.vram_free_mb = parts[0].strip(), total, free
             info.gpu_available = True
-            info.gpu_name = parts[0].strip()
-            info.vram_total_mb = float(parts[1].strip())
-            info.vram_free_mb = float(parts[2].strip())
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        pass
+    except FileNotFoundError:
+        pass  # 无 NVIDIA 工具是正常的 CPU 环境。
+    except (OSError, subprocess.SubprocessError, ValueError, StopIteration) as exc:
+        logger.warning("GPU 资源检测失败: {}", safe_exception_summary(exc))
 
     return info
 
@@ -119,16 +130,17 @@ def recommend_preset(device: str = "cpu") -> tuple[str, AsrPreset]:
 
     if device == "cpu" or not info.gpu_available:
         # CPU 模式: 根据可用 RAM 选择
-        if info.ram_free_mb >= _PRESETS["high"].min_ram_mb:
+        if info.ram_free_mb is not None and info.ram_free_mb >= _PRESETS["high"].min_ram_mb:
             preset_name = "high"
-        elif info.ram_free_mb >= _PRESETS["medium"].min_ram_mb:
+        elif info.ram_free_mb is not None and info.ram_free_mb >= _PRESETS["medium"].min_ram_mb:
             preset_name = "medium"
-        elif info.ram_free_mb >= _PRESETS["low"].min_ram_mb:
+        elif info.ram_free_mb is not None and info.ram_free_mb >= _PRESETS["low"].min_ram_mb:
             preset_name = "low"
         else:
             preset_name = "minimal"
     else:
         # GPU 模式: 根据可用 VRAM 选择
+        assert info.vram_free_mb is not None
         if info.vram_free_mb >= _PRESETS["high"].min_vram_mb:
             preset_name = "high"
         elif info.vram_free_mb >= _PRESETS["medium"].min_vram_mb:
@@ -162,17 +174,21 @@ def check_resources_sufficient(model: str = "small", device: str = "cpu") -> tup
 
     vram_need, ram_need = model_requirements.get(model.lower(), model_requirements["small"])
 
-    if device == "cuda" and info.gpu_available:
+    if device == "cuda":
+        if not info.gpu_available or info.vram_free_mb is None:
+            return False, "CUDA 设备不可用或显存检测失败，请检查 NVIDIA 驱动和诊断日志"
         if info.vram_free_mb < vram_need * 0.8:  # 留 20% 余量
             return False, (
                 f"显存不足: 需要 {vram_need}MB, 当前可用 {info.vram_free_mb:.0f}MB "
                 f"(总 {info.vram_total_mb:.0f}MB). 建议切换为 cpu 模式或更小模型。"
             )
     else:
+        if info.ram_free_mb is None:
+            return False, "系统可用内存未知，请安装 psutil 后重新检测"
         if info.ram_free_mb < ram_need * 0.8:
             return False, (
                 f"内存不足: 需要 {ram_need}MB, 当前可用 {info.ram_free_mb:.0f}MB "
                 f"(总 {info.ram_total_mb:.0f}MB). 建议使用更小模型。"
             )
 
-    return True, f"资源充足 ({info.ram_free_mb:.0f}MB RAM / {info.vram_free_mb:.0f}MB VRAM)"
+    return True, f"资源检查通过 (RAM={info.ram_free_mb}MB / VRAM={info.vram_free_mb}MB)"

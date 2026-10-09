@@ -11,7 +11,7 @@
 
 输出:
     dist/engine-pack/
-    ├── BiliLiveCut-EnginePack-0.1.18.6-alpha.zip
+    ├── BiliLiveCut-EnginePack-0.1.18.7-alpha.zip
     ├── engine-pack-manifest.json
     ├── CRC32SUMS.txt
     ├── SHA256SUMS.txt
@@ -26,13 +26,13 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
 import uuid
 import zipfile
 import zlib
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -58,8 +58,6 @@ LICENSES_DIR = PORTABLE_DIR / "licenses"
 
 CHUNK_SIZE = 8 * 1024 * 1024
 MIN_PRODUCTION_ARCHIVE_BYTES = 500 * 1024 * 1024
-
-HF_MIRROR = "https://hf-mirror.com"
 
 
 # ── 四引擎定义 — 来自统一模型目录 ──────────────────────────
@@ -314,46 +312,32 @@ def download_real_models(staging: Path) -> None:
         if hub == "huggingface":
             repo_id = str(engine["repo_id"])
             try:
-                from huggingface_hub import snapshot_download
+                from blc_portable.model_download import HF_MIRRORS, download_hf_snapshot, download_with_retry
 
-                os.environ["HF_ENDPOINT"] = HF_MIRROR
-                os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
-                kwargs: dict[str, Any] = {
-                    "repo_id": repo_id,
-                    "local_dir": str(target),
-                    "local_dir_use_symlinks": False,
-                    "resume_download": True,
-                }
-                if revision:
-                    kwargs["revision"] = str(revision)
-                snapshot_download(**kwargs)
+                download_with_retry(
+                    engine=engine_id,
+                    model=repo_id,
+                    revision=str(revision) if revision else None,
+                    endpoints=HF_MIRRORS,
+                    operation=partial(download_hf_snapshot, repo_id, target, str(revision) if revision else None),
+                )
             except ImportError:
                 raise ImportError("需要安装 huggingface_hub: pip install huggingface_hub") from None
 
         elif hub == "modelscope":
-            try:
-                from modelscope.hub.snapshot_download import snapshot_download
+            from blc_portable.model_download import download_ms_model
 
-                model_id = str(engine["model_id"])
-                kwargs_ms: dict[str, Any] = {"model_id": model_id, "local_dir": str(target)}
-                if revision:
-                    kwargs_ms["revision"] = str(revision)
-                snapshot_download(**kwargs_ms)
-
-                # 子模型 (Paraformer) — 使用显式 target_subdir
-                for sub in engine.get("sub_models", []):
-                    sub_id = str(sub["model_id"])
-                    sub_rev = sub.get("revision")
-                    sub_dir_name = sub.get("target_subdir", sub_id.rsplit("/", 1)[-1])
-                    sub_dir = target / sub_dir_name
-                    sub_dir.mkdir(parents=True, exist_ok=True)
-                    print(f"    子模型: {sub_id}")
-                    sub_kwargs: dict[str, Any] = {"model_id": sub_id, "local_dir": str(sub_dir)}
-                    if sub_rev:
-                        sub_kwargs["revision"] = str(sub_rev)
-                    snapshot_download(**sub_kwargs)
-            except ImportError:
-                raise ImportError("需要安装 modelscope: pip install modelscope") from None
+            model_id = str(engine["model_id"])
+            download_ms_model(engine_id, model_id, target, str(revision) if revision else None)
+            # 子模型 (Paraformer) — 使用显式 target_subdir，同样核对完整文件清单。
+            for sub in engine.get("sub_models", []):
+                sub_id = str(sub["model_id"])
+                sub_rev = sub.get("revision")
+                sub_dir_name = sub.get("target_subdir", sub_id.rsplit("/", 1)[-1])
+                sub_dir = target / sub_dir_name
+                sub_dir.mkdir(parents=True, exist_ok=True)
+                print(f"    子模型: {sub_id}")
+                download_ms_model(engine_id, sub_id, sub_dir, str(sub_rev) if sub_rev else None)
 
         fc = sum(1 for _ in target.rglob("*") if _.is_file())
         ts = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
@@ -827,7 +811,9 @@ def main() -> int:
     except SystemExit as e:
         return int(str(e)) if str(e) else 0
     except Exception as exc:
-        print(f"[错误] {exc}")
+        from blc_portable.diagnostics import redact_diagnostic
+
+        print(f"[错误] {redact_diagnostic(str(exc))}")
         return 1
 
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from app.core.sanitize import safe_exception_summary
+
 
 @dataclass
 class MetricsSnapshot:
@@ -52,9 +54,10 @@ class MetricsSnapshot:
     asr_avg_ms: float = 0.0
     render_avg_ms: float = 0.0
     upload_avg_ms: float = 0.0
-    disk_raw_gb: float = 0.0
-    disk_clips_gb: float = 0.0
-    disk_free_gb: float = 0.0
+    disk_raw_gb: float | None = None
+    disk_clips_gb: float | None = None
+    disk_free_gb: float | None = None
+    disk_error: str | None = None
     db_lock_wait_avg_ms: float = 0.0
 
 
@@ -70,6 +73,7 @@ _lock_waits: deque[float] = deque(maxlen=100)
 _active_workers: int = 0
 _active_recordings: int = 0
 _recording_hours: float = 0.0
+_disk_error: str | None = None
 
 
 def set_task_counts(
@@ -166,6 +170,7 @@ def snapshot() -> MetricsSnapshot:
 
     :returns: :class:`MetricsSnapshot`。
     """
+    global _disk_error
     snap = MetricsSnapshot(timestamp=time.time())
     snap.tasks_queued = _latest_snapshot.tasks_queued
     snap.tasks_processing = _latest_snapshot.tasks_processing
@@ -184,13 +189,18 @@ def snapshot() -> MetricsSnapshot:
         from app.pipeline.storage_lifecycle import get_directory_size, get_disk_usage
 
         disk = get_disk_usage()
-        snap.disk_free_gb = disk.get("free_gb", 0.0)
+        snap.disk_free_gb = disk.get("free_gb")
         from app.core.paths import clips_dir, raw_dir
 
         snap.disk_clips_gb = get_directory_size(clips_dir())
         snap.disk_raw_gb = get_directory_size(raw_dir())
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — 指标采样失败不应阻断业务
+        snap.disk_error = safe_exception_summary(exc)
+        if snap.disk_error != _disk_error:
+            logger.warning("磁盘指标采集失败: {}", snap.disk_error)
+    if _disk_error is not None and snap.disk_error is None:
+        logger.info("磁盘指标采集已恢复")
+    _disk_error = snap.disk_error
 
     # 入历史
     _history.append(snap)
@@ -211,8 +221,8 @@ def start_metrics_collector(interval_s: float = 60.0) -> None:
         while True:
             try:
                 snapshot()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — 采集线程隔离边界
+                logger.opt(exception=exc).error("运行指标采集失败")
             time.sleep(interval_s)
 
     t = threading.Thread(target=_collect_loop, daemon=True, name="metrics-collector")
@@ -245,6 +255,7 @@ def get_history(limit: int = 60) -> list[dict]:
                 "upload_ms": s.upload_avg_ms,
             },
             "disk": {
+                "error": s.disk_error,
                 "free_gb": s.disk_free_gb,
                 "raw_gb": s.disk_raw_gb,
                 "clips_gb": s.disk_clips_gb,

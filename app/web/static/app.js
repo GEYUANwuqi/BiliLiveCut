@@ -109,10 +109,18 @@ const loaders = {
 };
 
 async function refresh() {
+  const failures = [];
   try {
     await loadRooms();
+  } catch (e) { failures.push(`房间数据刷新失败：${e.message}`); }
+  try {
     if (activeTab !== "rooms" && loaders[activeTab]) await loaders[activeTab]();
-  } catch (e) { /* 静默,避免打断轮询 */ }
+  } catch (e) { failures.push(`当前页面刷新失败：${e.message}`); }
+  const status = $("#refresh-status");
+  if (status) {
+    status.textContent = failures.length ? `${failures.join("；")}。已显示的数据可能过期。` : "";
+    status.hidden = !failures.length;
+  }
   pollNotifications();
 }
 

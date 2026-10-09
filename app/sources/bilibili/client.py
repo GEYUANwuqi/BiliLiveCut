@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -257,14 +258,16 @@ class BilibiliLiveClient:
             retry_after_val = resp.headers.get("Retry-After", "")
             try:
                 retry_after = float(retry_after_val) if retry_after_val else 60.0
+                if not math.isfinite(retry_after) or retry_after < 0:
+                    retry_after = 60.0
             except ValueError:
                 retry_after = 60.0
 
             # HTTP 状态码级别的风控处理。
-            if resp.status_code == 403:
+            if resp.status_code in {403, 429}:
                 raise BilibiliRateLimitError(
                     HttpErrorType.RATE_LIMITED,
-                    f"HTTP 403 请求被拒绝 {url}",
+                    f"HTTP {resp.status_code} 请求被拒绝 {url}",
                     retry_after,
                 )
             if resp.status_code == 412:

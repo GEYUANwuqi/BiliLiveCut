@@ -10,6 +10,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.runtime_settings import configured_entry
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     HighlightCandidate,
     RawSegment,
@@ -400,11 +401,11 @@ def execute_task(task_id: int, active_stage_val: str, lease_token: str | None = 
         _logger.warning("lease_lost_during_execution: task=%s", task_id)
     except Exception as exc:
         _ms = int((_time_mod.time() - t0) * 1000)
-        _logger.error("任务 %s 阶段 %s 失败: %s", task_id, active_stage_val, exc)
+        _logger.exception("任务 %s 阶段 %s 失败: %s", task_id, active_stage_val, safe_exception_summary(exc))
         with get_session() as db:
             t = db.get(SegmentTask, task_id)
             if t is not None and lease is not None and still_owns_lease(db, lease):
-                mark_failed(t, f"{type(exc).__name__}: {exc}", permanent=False)
+                mark_failed(t, safe_exception_summary(exc), permanent=False)
                 db.add(t)
             elif t is not None:
                 _logger.warning("stale_result_discarded: task=%s 已失去租约, 丢弃失败结果", task_id)

@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from app.analysis.source_policy import is_local_session
 from app.analysis.timeline import TIMELINE_ANALYSIS_VERSION
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     AppSetting,
     ClipVariant,
@@ -226,7 +227,9 @@ def process_pending_session_reanalyses(*, limit: int = 4) -> list[ReanalysisResu
                     db.add(request)
                 error_key = f"session_reanalysis_error:{session_id}"
                 failure = db.get(AppSetting, error_key) or AppSetting(key=error_key, value="")
-                failure.value = json.dumps({"error": str(exc)[:500], "observed_at": datetime.now(UTC).isoformat()})
+                failure.value = json.dumps(
+                    {"error": safe_exception_summary(exc, limit=500), "observed_at": datetime.now(UTC).isoformat()}
+                )
                 db.add(failure)
             logger.exception("场次重分析失败，保留请求并继续其它场次 session={}", session_id)
             continue

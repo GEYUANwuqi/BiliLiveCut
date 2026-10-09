@@ -18,6 +18,7 @@ from sqlmodel import select
 
 from app.analysis.room_config import load_room_config
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 from app.db.entities import LiveRoom
 from app.db.session import get_session
 from app.plugins.live_source import LiveStatus, SourceError, SourceRoom
@@ -143,9 +144,9 @@ class LiveMonitor:
             task = asyncio.create_task(check_platform(items))
             self._platform_checks[platform] = task
 
-            def finished(done: asyncio.Task[None]) -> None:
+            def finished(done: asyncio.Task[None], source_platform: str = platform) -> None:
                 if not done.cancelled() and done.exception() is not None:
-                    logger.error("来源轮询异常 error={}", type(done.exception()).__name__)
+                    logger.opt(exception=done.exception()).error("来源轮询异常 platform={}", source_platform)
 
             task.add_done_callback(finished)
         if wait:
@@ -287,8 +288,8 @@ class LiveMonitor:
                 if session:
                     self._reconnect_totals[db_id] = session.reconnect_count
         except Exception as exc:
-            self._errors[db_id] = f"自动启动失败：{type(exc).__name__}"
-            logger.error("自动启动录制失败 db_id={}: {}", db_id, type(exc).__name__)
+            self._errors[db_id] = f"自动启动失败：{safe_exception_summary(exc)}"
+            logger.opt(exception=exc).error("自动启动录制失败 db_id={}: {}", db_id, safe_exception_summary(exc))
         finally:
             self._starting.discard(db_id)
 

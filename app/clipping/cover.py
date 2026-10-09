@@ -16,6 +16,7 @@ from pathlib import Path
 from loguru import logger
 
 from app.core.config import settings
+from app.core.sanitize import safe_exception_summary
 
 
 def extract_cover_candidates(
@@ -64,7 +65,7 @@ def extract_cover_candidates(
                         settings.ffmpeg_path,
                         "-y",
                         "-v",
-                        "quiet",
+                        "error",
                         "-ss",
                         f"{ts:.3f}",
                         "-i",
@@ -76,6 +77,7 @@ def extract_cover_candidates(
                         str(cover_path),
                     ],
                     check=True,
+                    capture_output=True,
                     timeout=10,
                 )
                 if cover_path.exists() and cover_path.stat().st_size > 1000:
@@ -94,8 +96,9 @@ def extract_cover_candidates(
                             "timestamp_s": round(ts, 1),
                         }
                     )
-            except subprocess.CalledProcessError:
-                continue
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("封面抽帧失败 file={} offset={}: {}", vp, ts, safe_exception_summary(exc))
+                break  # 同一媒体/工具故障不对剩余候选重复刷屏。
 
         # 按综合分降序,取 Top N。
         candidates.sort(key=lambda c: -c["score"])
@@ -129,14 +132,16 @@ def _probe_duration(video_path: Path) -> float:
 
     try:
         result = subprocess.run(
-            [settings.ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_format", str(video_path)],
+            [settings.ffprobe_path, "-v", "error", "-print_format", "json", "-show_format", str(video_path)],
             capture_output=True,
             text=True,
+            check=True,
             timeout=10,
         )
         info = json.loads(result.stdout)
         return float(info.get("format", {}).get("duration", 0))
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+        logger.warning("封面时长探测失败 file={}: {}", video_path, safe_exception_summary(exc))
         return 0
 
 

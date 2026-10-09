@@ -105,14 +105,17 @@ const transcriptsTab = element("transcripts-tab", ["tab"]);
 transcriptsTab.dataset.tab = "transcripts";
 const danmakuTab = element("danmaku-tab", ["tab"]);
 danmakuTab.dataset.tab = "danmaku";
-const tabs = [roomsTab, candidatesTab, modelsTab, featuresTab, transcriptsTab, danmakuTab];
+const logsTab = element("logs-tab", ["tab"]);
+logsTab.dataset.tab = "logs";
+const tabs = [roomsTab, candidatesTab, modelsTab, featuresTab, transcriptsTab, danmakuTab, logsTab];
 const roomsPanel = element("tab-rooms", ["panel", "active"]);
 const candidatesPanel = element("tab-candidates", ["panel"]);
 const modelsPanel = element("tab-models", ["panel"]);
 const featuresPanel = element("tab-features", ["panel"]);
 const transcriptsPanel = element("tab-transcripts", ["panel"]);
 const danmakuPanel = element("tab-danmaku", ["panel"]);
-const panels = [roomsPanel, candidatesPanel, modelsPanel, featuresPanel, transcriptsPanel, danmakuPanel];
+const logsPanel = element("tab-logs", ["panel"]);
+const panels = [roomsPanel, candidatesPanel, modelsPanel, featuresPanel, transcriptsPanel, danmakuPanel, logsPanel];
 
 const llmDraftFields = new Map([
   [".llm-name", { value: "草稿模型" }],
@@ -792,6 +795,36 @@ try {
   assert.ok(!element("timeline-list").innerHTML.includes("开录：未知"));
   await roomsTab.emit("click"); await settle();
   assert.equal(globalThis.location.searchParams.has("session_id"), false);
+
+  const settingsUI = await import(pathToFileURL(join(copiedStatic, "js", "settings.js")).href);
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ stats: {}, tasks: [
+    { id: 1, stage: "failed", last_error: '<img src=x onerror="alert(1)">', attempts: 1, max_retries: 3 },
+  ] }) });
+  await settingsUI.loadTasks();
+  assert.ok(!element("task-tbody").innerHTML.includes("<img"), "task errors must be escaped");
+  assert.ok(element("task-tbody").innerHTML.includes("&lt;img"));
+  globalThis.fetch = async () => ({ ok: false, status: 500, statusText: "Internal Server Error", json: async () => ({ detail: "trace reference-123" }) });
+  await settingsUI.loadLogs();
+  assert.match(element("logs-list").innerHTML, /HTTP 500.*reference-123/);
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => [] });
+  await settingsUI.loadLogs();
+  assert.ok(!element("logs-list").innerHTML.includes("reference-123"), "log recovery must clear stale error");
+  globalThis.fetch = savedFetch;
+
+  let logsRequested = false;
+  globalThis.fetch = async (path, options) => {
+    if (String(path).startsWith("/api/dashboard")) throw new Error("room database unavailable");
+    if (String(path).startsWith("/api/logs")) {
+      logsRequested = true;
+      return { ok: true, status: 200, json: async () => [] };
+    }
+    return savedFetch(path, options);
+  };
+  await logsTab.emit("click"); await settle();
+  assert.equal(logsRequested, true, "room failure must not block diagnostic page refresh");
+  assert.match(element("refresh-status").textContent, /room database unavailable/);
+  globalThis.fetch = savedFetch;
 
   console.log(
     "PASS: frontend module graph, timeline scroll retention, session timeline expansion/reanalysis, transcript/room/model draft retention, locked switches and draft connectivity test",

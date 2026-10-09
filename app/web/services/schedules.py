@@ -9,6 +9,7 @@ from sqlalchemy import update
 from sqlmodel import select
 
 from app.core.config import settings
+from app.core.sanitize import sanitize_diagnostic
 from app.db.entities import (
     LiveRoom,
     RecordingSchedule,
@@ -169,7 +170,7 @@ def complete_schedule_occurrence(schedule_id: int, *, error: str | None = None) 
                 room_id=sched.room_id,
                 event=f"schedule:{schedule_id}",
                 level="ERROR" if error else "INFO",
-                message=error or "本次预约已处理",
+                message=sanitize_diagnostic(error) if error else "本次预约已处理",
             )
         )
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.core.sanitize import safe_exception_summary
+
 monitor_router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
 # V0.1.8.2: 模块级冷却状态变量,替代模块对象动态属性挂载。
@@ -195,7 +197,10 @@ def get_asr_metrics() -> JSONResponse:
 
         return JSONResponse(get_snapshot())
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        from loguru import logger
+
+        logger.opt(exception=exc).error("ASR 监控查询失败")
+        return JSONResponse({"detail": safe_exception_summary(exc)}, status_code=500)
 
 
 # V0.1.12.2: ASR 模型状态
@@ -208,4 +213,7 @@ def get_asr_models() -> JSONResponse:
         infos = model_pool.infos()
         return JSONResponse({"models": infos})
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        from loguru import logger
+
+        logger.opt(exception=exc).error("ASR 监控查询失败")
+        return JSONResponse({"detail": safe_exception_summary(exc)}, status_code=500)

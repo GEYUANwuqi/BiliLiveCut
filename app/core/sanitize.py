@@ -7,6 +7,12 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import traceback
+from collections.abc import Iterable
+from urllib.parse import urlsplit
+
+from sqlalchemy.exc import StatementError
 
 # ── 脱敏模式 ──────────────────────────────────────────────────────
 
@@ -24,7 +30,7 @@ _API_KEY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # key=... 或 KEY=... 或 api_key=... 等
     (re.compile(r"(\b(?:api[_-]?key|apikey|key)\s*=\s*)(\S+)", re.IGNORECASE), r"\1***"),
     # sk-... (OpenAI 风格的 API key)
-    (re.compile(r"(sk-[a-zA-Z0-9]{4,})[\w-]*"), r"\1***"),
+    (re.compile(r"\b(?:sk-|hf_)[a-zA-Z0-9_-]{4,}"), "<redacted-key>"),
     # Bearer token / Authorization header
     (re.compile(r"(Authorization:\s*Bearer\s+)(\S+)", re.IGNORECASE), r"\1***"),
     (re.compile(r"(Authorization:\s*Basic\s+)(\S+)", re.IGNORECASE), r"\1***"),
@@ -96,3 +102,85 @@ def sanitize_cookie(cookie_string: str) -> str:
         else:
             sanitized_parts.append(part)
     return "; ".join(sanitized_parts)
+
+
+def sanitize_diagnostic(text: str, *, secrets: Iterable[str] = (), limit: int = 2048) -> str:
+    """对诊断先脱敏后限长；URL 仅保留主机，不保存路径、请求头或播放凭据。"""
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        if secret:
+            text = text.replace(secret, "<redacted>")
+
+    def host_only(match: re.Match[str]) -> str:
+        try:
+            host = urlsplit(match[0]).hostname
+        except ValueError:
+            host = None
+        return f"<host:{host or 'unknown'}>"
+
+    text = re.sub(r"(?i)\b(?:https?|wss?|rtmps?|socks5h?)://[^\s<>\"']+", host_only, text)
+    text = re.sub(
+        r"""(?i)(["']?\b(?:cookie|set-cookie|authorization|proxy-authorization|token|access_token|api[_-]?key|password|passwd|secret|signature|SESSDATA|bili_jct)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""",
+        r"\1<redacted>",
+        text,
+    )
+    text = re.sub(
+        r"(?im)\b(cookie|set-cookie|authorization|proxy-authorization)\s*[:=][^\r\n]*",
+        r"\1: <redacted>",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(token|access_token|api[_-]?key|password|passwd|secret|signature)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        text,
+    )
+    return sanitize_text(text)[:limit]
+
+
+def safe_exception_summary(error: BaseException, *, limit: int = 2048) -> str:
+    """保留异常类型和因果链；外部命令只显示退出信息及脱敏输出，不显示参数。"""
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(parts) < 8:
+        seen.add(id(current))
+        if isinstance(current, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+            if isinstance(current, subprocess.TimeoutExpired):
+                detail = f"timeout={current.timeout}s"
+            else:
+                detail = f"exit_code={current.returncode}"
+            output = current.stderr or current.stdout
+            if output:
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", errors="replace")
+                # 先脱敏再取尾部，FFmpeg/pip 的最终原因通常在输出末尾。
+                detail += ": " + sanitize_diagnostic(output, limit=len(output))[-600:]
+        elif isinstance(current, StatementError):
+            # SQLAlchemy 的 str() 含 SQL 绑定参数，可能是用户配置/凭据。
+            detail = safe_exception_summary(current.orig) if current.orig is not None else "数据库语句执行失败"
+        else:
+            detail = str(current)
+        notes = "\n".join(getattr(current, "__notes__", ()))
+        if notes:
+            detail += "\n" + notes
+        parts.append(f"{type(current).__name__}: {sanitize_diagnostic(detail, limit=800)}")
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    # 为每层分配空间，长包装信息不能挤掉最深根因。
+    budget = max(40, (limit - max(0, len(parts) - 1) * 12) // max(1, len(parts)))
+    parts = [part if len(part) <= budget else part[: budget - 1] + "…" for part in parts]
+    return "\ncaused by: ".join(parts)[:limit]
+
+
+def safe_exception_trace(error: BaseException, *, trusted_message: bool = True) -> str:
+    """构造不含变量值/源码行的异常定位；不可信插件初始化错误只保留类型和栈。"""
+    lines = [safe_exception_summary(error)] if trusted_message else []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        lines.append(type(current).__name__)
+        lines.extend(
+            f"  {frame.filename}:{frame.lineno} in {frame.name}"
+            for frame in traceback.extract_tb(current.__traceback__)
+        )
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    return sanitize_diagnostic("\n".join(lines), limit=16384)

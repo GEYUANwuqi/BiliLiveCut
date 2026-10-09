@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/StarGazerQQD/BiliLiveCut?include_prereleases&sort=semver)](https://github.com/StarGazerQQD/BiliLiveCut/releases)
 [![License](https://img.shields.io/github/license/StarGazerQQD/BiliLiveCut)](LICENSE)
 
-**当前版本：V0.1.18.6 Alpha** (`0.1.18.6-alpha`) · [更新记录](CHANGELOG.md)
+**当前版本：V0.1.18.7 Alpha** (`0.1.18.7-alpha`) · [更新记录](CHANGELOG.md)
 
 面向 Bilibili 直播的自动切片工具：**录制 → 转写 → 识别高光 → 人工审核 → 生成切片与文案 → 可选上传**。通过 Web 控制台管理直播间、录制场次、转写、候选和成品。
 
@@ -64,6 +64,15 @@ python -m app.cli serve
 | 插件接口与示例 | [插件开发](plugin/README.md) |
 | 直播源契约、平台身份及房间登记 | [直播源插件](docs/live-source-plugins.md) |
 | 全部指南与版本历史 | [文档索引](docs/README.md) · [CHANGELOG](CHANGELOG.md) |
+
+## 鸣谢
+
+感谢每一位提供反馈、报告问题及支持本项目的朋友。以下名单按 GitHub ID 去重，包含已打开和已关闭 issue 的提出者：
+
+- GitHub：[shuangyiliu211126com](https://github.com/shuangyiliu211126com)（[#61](https://github.com/StarGazerQQD/BiliLiveCut/issues/61)、[#62](https://github.com/StarGazerQQD/BiliLiveCut/issues/62)）
+- GitHub：[xiu1zi3](https://github.com/xiu1zi3)（[#60](https://github.com/StarGazerQQD/BiliLiveCut/issues/60)）
+
+其他平台的支持者也可加入：由维护者按“平台、原始 ID、可选主页链接”手动补充，保留提供者确认的身份信息。
 
 ## 许可证
 

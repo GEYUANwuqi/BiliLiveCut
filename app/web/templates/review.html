@@ -109,6 +109,7 @@
     </div>
     <div class="waveform-chart" id="waveform-chart">
       <canvas id="wf-canvas"></canvas>
+      <div id="waveform-error" role="status" style="color:var(--muted)"></div>
       <div class="legend">
         <span>🔊 音频波形</span>
         <span style="color:var(--accent)">▌ 播放头</span>
@@ -612,8 +613,13 @@ async function loadWaveform() {
     const wf = await api("GET", `/review/api/${CAND_ID}/waveform`);
     waveformPeaks = wf.peaks || [];
     waveformDuration = wf.duration_s || 0;
+    $("#waveform-error").textContent = wf.error ? `波形不可用：${wf.error}` : "";
     drawWaveform();
-  } catch (e) { /* 波形生成失败不影响其他功能 */ }
+  } catch (e) {
+    waveformPeaks = [];
+    $("#waveform-error").textContent = `波形加载失败：${e.message}`;
+    drawWaveform();
+  }
 }
 
 function drawWaveform(playheadTime) {

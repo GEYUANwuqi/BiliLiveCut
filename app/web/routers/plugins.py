@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 
+from app.core.sanitize import safe_exception_summary
 from app.plugins.manager import (
     PluginError,
     PluginNotFoundError,
@@ -38,12 +39,12 @@ class PluginSettingsBody(BaseModel):
 
 def _http_error(exc: PluginError) -> HTTPException:
     if isinstance(exc, PluginNotFoundError):
-        return HTTPException(status_code=404, detail=str(exc))
+        return HTTPException(status_code=404, detail=safe_exception_summary(exc))
     if isinstance(exc, PluginValidationError):
-        return HTTPException(status_code=422, detail=str(exc))
+        return HTTPException(status_code=422, detail=safe_exception_summary(exc))
     if isinstance(exc, PluginStateError):
-        return HTTPException(status_code=409, detail=str(exc))
-    return HTTPException(status_code=500, detail=str(exc))
+        return HTTPException(status_code=409, detail=safe_exception_summary(exc))
+    return HTTPException(status_code=500, detail=safe_exception_summary(exc))
 
 
 @api_router.get("")

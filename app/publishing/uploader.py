@@ -27,6 +27,7 @@ from sqlmodel import select
 from app.core import settings_store
 from app.core.config import settings
 from app.core.runtime_settings import configured_task
+from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 from app.db.entities import (
     FinalClip,
     UploadStatus,
@@ -274,7 +275,7 @@ class BiliupUploader(Uploader):
             classified = classify_upload_error(exc)
             return UploadResult(
                 success=False,
-                message=f"biliup 命令执行异常: {exc}",
+                message=f"biliup 命令执行异常: {safe_exception_summary(exc)}",
                 outcome=classified.outcome,
                 request_may_have_been_sent=classified.request_may_have_been_sent,
             )
@@ -284,7 +285,7 @@ class BiliupUploader(Uploader):
         if proc.returncode != 0:
             return UploadResult(
                 success=False,
-                message=f"biliup 失败(code={proc.returncode}): {err[:300]}",
+                message=f"biliup 失败(code={proc.returncode}): {sanitize_diagnostic(err, limit=len(err))[-800:]}",
                 outcome="remote_result_unknown",
                 request_may_have_been_sent=True,
             )
@@ -510,7 +511,7 @@ def _finish_task(
         task.status = status
         task.claimed_by = None
         task.remote_id = remote_id
-        task.last_error = error
+        task.last_error = sanitize_diagnostic(error) if error is not None else None
         task.updated_at = utcnow()
         db.add(task)
         # V0.1.12.7: 只有非 manual 的真正成功上传才标记已发布

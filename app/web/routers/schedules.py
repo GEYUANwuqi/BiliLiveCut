@@ -34,7 +34,7 @@ def create_schedule(req: ScheduleRequest) -> dict[str, Any]:
     """创建一个录制预约。"""
     try:
         return schedules_service.create_schedule(req.room_id, req.scheduled_at, req.recurrent)
-    except (ValueError, Exception) as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
