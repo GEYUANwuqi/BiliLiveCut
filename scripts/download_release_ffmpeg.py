@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""为 GitHub Release 下载并校验 Windows FFmpeg 静态构建。"""
+"""为 CI 和 GitHub Release 下载并校验 Windows FFmpeg 静态构建。"""
 
 from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -24,6 +25,39 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 
 DownloadFunction = Callable[[str, Path, float], None]
 SleepFunction = Callable[[float], None]
+
+
+def export_ci_environment(output_dir: Path, environment_file: Path) -> None:
+    """验证真实二进制及必需滤镜，全部通过后才为后续 CI 步骤导出路径。"""
+    binaries = {name: (output_dir / name).resolve() for name in REQUIRED_BINARIES}
+    probes = [([str(path), "-hide_banner", "-version"], name) for name, path in binaries.items()]
+    probes.append(([str(binaries["ffmpeg.exe"]), "-hide_banner", "-filters"], "FFmpeg filters"))
+    filters: set[str] = set()
+    for command, label in probes:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, errors="replace", timeout=30, check=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            detail = getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or str(exc)
+            status = f"exit={exc.returncode}" if isinstance(exc, subprocess.CalledProcessError) else ""
+            if isinstance(exc, subprocess.TimeoutExpired):
+                status = f"timeout={exc.timeout}s"
+            raise RuntimeError(f"{label} 验证失败: {type(exc).__name__} {status}: {str(detail)[-2000:]}") from exc
+        if label == "FFmpeg filters":
+            filters = {parts[1] for line in result.stdout.splitlines() if len(parts := line.split()) >= 2}
+        else:
+            version_lines = result.stdout.strip().splitlines()
+            if not version_lines:
+                raise RuntimeError(f"{label} 版本探测没有输出")
+            print(version_lines[0], flush=True)
+    missing = {"subtitles", "drawtext"} - filters
+    if missing:
+        raise RuntimeError(f"FFmpeg 缺少 CI 必需滤镜: {', '.join(sorted(missing))}")
+    lines = [f"FFMPEG_PATH={binaries['ffmpeg.exe']}", f"FFPROBE_PATH={binaries['ffprobe.exe']}"]
+    if any("\n" in line or "\r" in line for line in lines):
+        raise ValueError("FFmpeg 路径不能包含换行")
+    with environment_file.open("a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
+    print(f"FFmpeg/FFprobe 可运行，字幕与文字滤镜齐全，CI 路径已导出: {output_dir.resolve()}", flush=True)
 
 
 def _configure_console_encoding() -> None:
@@ -167,6 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     """创建 Release FFmpeg 下载器参数解析器。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True, help="ffmpeg.exe/ffprobe.exe 输出目录")
+    parser.add_argument("--github-env", type=Path, help="验证二进制与滤镜后写入 GitHub Actions 环境文件")
     parser.add_argument("--attempts", type=_positive_int, default=DEFAULT_ATTEMPTS, help="每个来源的最大尝试次数")
     parser.add_argument(
         "--backoff-seconds",
@@ -193,7 +228,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             backoff_s=args.backoff_seconds,
             timeout_s=args.timeout_seconds,
         )
-    except (RuntimeError, ValueError) as exc:
+        if args.github_env is not None:
+            export_ci_environment(args.output_dir, args.github_env)
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     finally:
