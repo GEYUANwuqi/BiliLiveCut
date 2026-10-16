@@ -1,6 +1,12 @@
 # BiliLiveCut Docker 部署
 
-本目录提供 BiliLiveCut `v0.1.19.2-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；容器以 UID/GID 1000 的 `appuser` 运行单实例 Web 服务，内含 FFmpeg、中文字体、C/Cython/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
+本目录提供 BiliLiveCut `v0.1.19.2-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；后端容器以 UID/GID 1000 的 `appuser` 运行单实例 API 服务，内含 FFmpeg、中文字体、C/Cython/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
+
+## 前后端服务
+
+Compose 同时构建后端 `app` 和前端 `frontend`。浏览器访问宿主机 `8000`，由 Nginx 提供 React 静态页面，并同源代理 API 和媒体到仅在容器网络暴露的 `app:8000`。前端镜像在构建阶段使用 Node.js 24，运行阶段只有 Nginx；后端保持 FastAPI，不返回业务页面。
+
+不要额外发布后端 8000 端口。`FORWARDED_ALLOW_IPS=*` 仅用于这个封闭的后端网络，让认证与限流取得前端传递的真实来源；后端单独对外发布时必须收紧可信代理配置。自配 HTTPS 入口时，应让后端接收到正确的 Host、Origin 与协议，保持认证 Cookie 和 CSRF 校验一致。
 
 ## 首次启动
 
@@ -34,7 +40,7 @@ docker compose -f packaging/docker/compose.yaml logs --tail=100 app
 
 ### 登录、退出与恢复
 
-网页顶部提供“密码管理”“退出登录”“退出所有设备”。默认空闲 30 分钟、最长 12 小时；
+网页右上角账号菜单提供退出和退出所有设备，设置中心提供修改后台密码。默认空闲 30 分钟、最长 12 小时；
 受保护的后台刷新也算请求活动，但状态探测不续期，最长有效期始终生效。
 可通过 `DOCKER_AUTH_IDLE_SECONDS`（60–86400）与 `DOCKER_AUTH_SESSION_SECONDS`（300–604800）配置。
 Cookie 使用 HttpOnly、SameSite=Strict；HTTPS 下加 Secure，不将凭据放入 URL 或浏览器本地存储。

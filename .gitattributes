@@ -37,3 +37,8 @@ tools/native/repeat/vendor/libsais/** text eol=lf
 
 # Preserve reviewed libass patch bytes for checksum validation.
 packaging/docker/patches/*.patch text eol=lf
+
+# TypeScript sources are text; media .ts files elsewhere remain binary.
+frontend/** text=auto eol=lf
+frontend/**/*.ts text eol=lf diff merge
+frontend/**/*.tsx text eol=lf diff merge

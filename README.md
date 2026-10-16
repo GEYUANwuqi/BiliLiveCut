@@ -34,7 +34,7 @@ Engine Pack 的本地构建与导入方式见 [Portable 构建说明](https://st
 
 ### 源码运行
 
-准备 FFmpeg，在已下载的项目根目录选择一种安装方式。C/Cython 扩展需要编译器与 Python 开发头文件，准备方法见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html#原生扩展构建与安装排错)。
+准备 FFmpeg 和 Node.js 24，在已下载的项目根目录选择一种 Python 安装方式。C/Cython 扩展需要编译器与 Python 开发头文件，准备方法见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html#原生扩展构建与安装排错)。
 
 使用 [uv](https://docs.astral.sh/uv/getting-started/installation/)（默认 Python 3.12），以下 PowerShell 命令安装运行依赖和全部 ASR、LLM 后端：
 
@@ -42,7 +42,9 @@ Engine Pack 的本地构建与导入方式见 [Portable 构建说明](https://st
 uv sync --locked --no-dev --extra web --extra asr-all --extra llm
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 uv run --locked --no-dev --extra web --extra asr-all --extra llm blc init
-uv run --locked --no-dev --extra web --extra asr-all --extra llm blc serve
+npm --prefix frontend ci
+npm --prefix frontend run build
+uv run --no-sync blc start
 ```
 
 仅录制和使用 Web 后台时可以省略 `--extra asr-all --extra llm`，后续 `uv run` 也使用同样的 extras。开发环境直接执行 `uv sync --locked`，详见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html)。
@@ -55,10 +57,12 @@ python -m venv .venv
 pip install -e ".[web,asr-all,llm]"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m app.cli init
-python -m app.cli serve
+npm --prefix frontend ci
+npm --prefix frontend run build
+python -m app.cli start
 ```
 
-默认访问 `http://127.0.0.1:8000`。直播间、录制与大部分业务配置都可在 Web 页面管理；安装镜像、CLI 录制和排错见[使用指南](https://stargazerqqd.github.io/BiliLiveCut/features/)。Docker 部署见 [Docker 说明](https://stargazerqqd.github.io/BiliLiveCut/guide/docker.html)。
+默认访问 `http://127.0.0.1:8000`。Click 命令入口为 `blc`；`start` 启动独立静态前端与 FastAPI API 两个进程，只运行后端 API 使用 `blc backend`，只运行已构建的前端使用 `blc frontend --backend http://127.0.0.1:8000`（默认前端端口 8080）。前端开发和热更新见 [Web 页面开发](https://stargazerqqd.github.io/BiliLiveCut/development/frontend.html)。直播间、录制与大部分业务配置都可在 Web 页面管理；安装镜像、CLI 录制和排错见[使用指南](https://stargazerqqd.github.io/BiliLiveCut/features/)。Docker 部署见 [Docker 说明](https://stargazerqqd.github.io/BiliLiveCut/guide/docker.html)。
 
 ## 使用与升级注意事项
 

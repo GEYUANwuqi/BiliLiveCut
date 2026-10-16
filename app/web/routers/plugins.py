@@ -1,12 +1,8 @@
-"""插件中心 API 与插件设置页面。"""
+"""插件发现、启停与设置 API。"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.core.sanitize import safe_exception_summary
@@ -19,8 +15,6 @@ from app.plugins.manager import (
 )
 
 api_router = APIRouter(prefix="/plugins", tags=["plugins"])
-page_router = APIRouter(prefix="/plugins")
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
 
 class PluginToggleBody(BaseModel):
@@ -87,18 +81,3 @@ async def save_plugin_settings(plugin_id: str, body: PluginSettingsBody) -> dict
         return plugin_manager.update_settings(plugin_id, body.values)
     except PluginError as exc:
         raise _http_error(exc) from exc
-
-
-@page_router.get("/{plugin_id}/settings", response_class=HTMLResponse)
-async def plugin_settings_page(request: Request, plugin_id: str) -> HTMLResponse:
-    """渲染插件独立设置页面。"""
-    await plugin_manager.refresh()
-    try:
-        plugin = plugin_manager.descriptor(plugin_id)
-    except PluginError as exc:
-        raise _http_error(exc) from exc
-    return _TEMPLATES.TemplateResponse(
-        request,
-        "plugin_settings.html",
-        {"plugin": plugin},
-    )

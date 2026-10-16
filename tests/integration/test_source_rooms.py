@@ -7,10 +7,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlmodel import Session, select
-from typer.testing import CliRunner
 
 from app.db.entities import AppSetting, LiveRoom, RecordingSession
 from app.db.session import get_session

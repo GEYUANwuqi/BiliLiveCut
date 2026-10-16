@@ -494,3 +494,9 @@ BILIUP_UPLOAD_CMD=                          # 自定义上传命令模板
 - **主仓库**: [README](../../README.md)
 - **完整变更日志**: [CHANGELOG](../../CHANGELOG.md)
 - **Portable 构建文档**: 本文件及 `packaging/portable/` 下的 Python 模块
+
+## React 前端构建
+
+Portable 构建机需要 Node.js 24 与 npm。Payload 从已冻结的源码提交提取 `frontend/`，执行 `npm ci` 和 `npm run build`，仅把 `frontend/dist/` 加入 Payload；不打包 node_modules 或前端开发源码。运行 Portable 无需 Node.js，Launcher 调用 `start` 启动独立前端和本机 API 进程。
+
+引入前端或后端源码修改后，需要先提交源码，再按已有发布流程同步 Payload 的源码基线并重新构建；旧基线不包含 React 入口，构建会明确拒绝混用。

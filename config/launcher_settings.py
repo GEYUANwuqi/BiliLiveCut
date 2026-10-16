@@ -13,6 +13,7 @@ from typing import Any
 LAUNCHER_CONFIG_SCHEMA = 1
 DEFAULT_WEB_PORT = 8000
 WEB_PORT_ENV = "BLC_WEB_PORT"
+FRONTEND_PORT_ENV = "BLC_FRONTEND_PORT"
 APP_ROOT_ENV = "BLC_APP_ROOT"
 
 
@@ -133,7 +134,7 @@ def resolve_web_port(app_root: Path, *, explicit_port: object | None = None) -> 
 
 
 def current_web_port(environ: Mapping[str, str] | None = None) -> int:
-    """读取本次进程由 Launcher 注入的真实监听端口。"""
+    """读取当前对用户提供服务的端口，console 优先使用独立前端端口。"""
     env = os.environ if environ is None else environ
-    raw = env.get(WEB_PORT_ENV, "").strip()
+    raw = env.get(FRONTEND_PORT_ENV, "").strip() or env.get(WEB_PORT_ENV, "").strip()
     return validate_web_port(raw) if raw else DEFAULT_WEB_PORT

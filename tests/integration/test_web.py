@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -370,22 +369,16 @@ def test_task_listing_returns_worker_stats(temp_db: None) -> None:
     assert payload["stats"]["worker"]["transcribing"] == 0
 
 
-def test_dashboard_page_renders(temp_db: None) -> None:
-    """根路径返回带分组导航和响应式工作台外壳的仪表盘 HTML。"""
+def test_backend_does_not_serve_frontend_pages(temp_db: None) -> None:
+    """页面由独立前端服务返回，FastAPI 只保留 API 和媒体。"""
     from app.web.main import app
 
     with TestClient(app) as client:
-        r = client.get("/")
-        assert r.status_code == 200
-        assert "BiliLiveCut" in r.text
-        assert '<body class="dashboard-shell">' in r.text
-        assert '<nav class="tabs" aria-label="工作台导航">' in r.text
-        assert r.text.count('class="tabs-group"') == 4
-        assert '<main class="dashboard-main">' in r.text
-        assert "高光模型" not in r.text
-        assert 'data-tab="features"' in r.text
-        assert "五项流水线自动化开关" in r.text
-        assert 'id="feature-switches-list"' in r.text
+        for path in ("/", "/imports", "/settings", "/review/queue", "/collection/1"):
+            response = client.get(path)
+            assert response.status_code == 404
+            assert response.headers["content-type"].startswith("application/json")
+        assert client.get("/api/dashboard").status_code == 200
 
 
 def test_llm_connectivity_uses_unsaved_form_payload(temp_db: None, monkeypatch: MonkeyPatch) -> None:
@@ -460,26 +453,13 @@ def test_llm_connectivity_rejects_empty_response(temp_db: None, monkeypatch: Mon
     assert "未返回可用正文" in response.json()["results"][0]["detail"]
 
 
-def test_dashboard_serves_complete_javascript_module_graph(temp_db: None) -> None:
-    """主页引用的入口脚本及其所有直接 ES Module 依赖必须可访问。"""
+def test_backend_does_not_mount_legacy_static_assets(temp_db: None) -> None:
+    """独立部署时旧静态路径不能意外返回旧工作台。"""
     from app.web.main import app
 
     with TestClient(app) as client:
-        dashboard = client.get("/")
-        assert dashboard.status_code == 200
-        assert '<script type="module" src="/static/app.js"></script>' in dashboard.text
-        assert 'id="web-port"' in dashboard.text
-
-        entrypoint = client.get("/static/app.js")
-        assert entrypoint.status_code == 200
-        assert "javascript" in entrypoint.headers["content-type"]
-
-        imports = re.findall(r'from\s+"(\./js/[^"]+\.js)"', entrypoint.text)
-        assert imports
-        for module_path in imports:
-            response = client.get(f"/static/{module_path.removeprefix('./')}")
-            assert response.status_code == 200, module_path
-            assert response.content, module_path
+        for path in ("/static/app.js", "/static/style.css", "/static/js/review.js"):
+            assert client.get(path).status_code == 404
 
 
 def test_settings_toggle_and_uploads(temp_db: None, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -854,3 +834,16 @@ def test_retranscribe_api_preserves_manually_reviewed_assets(temp_db: None) -> N
         assert db.get(Transcript, transcript_id) is not None
         assert db.get(HighlightCandidate, candidate_id) is not None
         assert db.get(HighlightEvent, event_id) is not None
+
+
+def test_browser_uses_react_login_without_native_basic_challenge(temp_db: None, monkeypatch: MonkeyPatch) -> None:
+    """同源浏览器请求使用 React 登录框，显式客户端仍收到 Basic challenge。"""
+    from app.web import main
+
+    monkeypatch.setattr(main, "_ADMIN_PASSWORD", "fixture-password")
+    with TestClient(main.app) as client:
+        browser = client.get("/api/dashboard", headers={"Sec-Fetch-Site": "same-origin"})
+        assert browser.status_code == 401
+        assert "www-authenticate" not in browser.headers
+        api = client.get("/api/dashboard")
+        assert api.status_code == 401 and api.headers["www-authenticate"] == "Basic"

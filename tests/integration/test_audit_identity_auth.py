@@ -27,7 +27,7 @@ def authorization(username: str, password: str) -> dict[str, str]:
     "username,password,path",
     [
         ("admin", "中文密码🔒", "/api/settings"),
-        ("审核员", "审核口令🌟", "/review/queue"),
+        ("审核员", "审核口令🌟", "/review/api/queue"),
     ],
 )
 async def test_unicode_basic_auth_enters_authorized_page(
@@ -208,11 +208,13 @@ def test_collection_copy_uses_event_candidate_and_transcript(
     assert all(item["asr_text"] == "游戏最后一局精彩翻盘赢下比赛" for item in summaries)
 
 
-async def test_collection_page_uses_current_template_api(topic_media: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_collection_page_is_owned_by_independent_frontend(
+    topic_media: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from app.web import main
 
     monkeypatch.setattr(main, "_ADMIN_PASSWORD", "")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://127.0.0.1") as client:
         response = await client.get("/collection/1")
-        assert response.status_code == 200
-        assert "const TOPIC_ID = 1" in response.text
+        assert response.status_code == 404
+        assert (await client.get("/collection/api/1")).status_code == 200

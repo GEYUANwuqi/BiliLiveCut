@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import typer
+import click
 from rich.console import Console
 from rich.table import Table
 
@@ -11,8 +11,9 @@ from app.core.config import settings
 console = Console()
 
 
+@click.argument("clip_id", type=int)
 def cmd_upload(
-    clip_id: int = typer.Argument(..., help="final_clips 主键"),
+    clip_id: int,
 ) -> None:
     """对一个成品切片执行上传(阶段5)。
 
@@ -29,8 +30,11 @@ def cmd_upload(
     )
 
 
+@click.option(
+    "--topic", default="", type=str, help="采集主题提示(留空用默认:近期适合切片的全网热点)", show_default=True
+)
 def cmd_trends_collect(
-    topic: str = typer.Option("", help="采集主题提示(留空用默认:近期适合切片的全网热点)"),
+    topic: str = "",
 ) -> None:
     """联网采集近期热门内容并写入网感资料库。
 
@@ -42,14 +46,16 @@ def cmd_trends_collect(
 
     if not settings.trend_enabled:
         console.print("[yellow]网感资料库未启用(TREND_ENABLED=false)。[/yellow]")
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
     saved = collect_and_save(topic)
     console.print(f"[green]采集完成[/green] 新增/更新 {saved} 条。")
 
 
+@click.option("--limit", default=20, type=int, help="最多显示数量", show_default=True)
+@click.option("--days", default=7, type=int, help="仅看最近 N 天", show_default=True)
 def cmd_trends_list(
-    limit: int = typer.Option(20, help="最多显示数量"),
-    days: int = typer.Option(7, help="仅看最近 N 天"),
+    limit: int = 20,
+    days: int = 7,
 ) -> None:
     """列出网感资料库中的近期热门条目。
 
@@ -77,9 +83,11 @@ def cmd_trends_list(
     console.print(table)
 
 
+@click.option("--top", default=20, type=int, help="显示前 N 个热词", show_default=True)
+@click.option("--days", default=7, type=int, help="近期窗口(天)", show_default=True)
 def cmd_trends_keywords(
-    top: int = typer.Option(20, help="显示前 N 个热词"),
-    days: int = typer.Option(7, help="近期窗口(天)"),
+    top: int = 20,
+    days: int = 7,
 ) -> None:
     """展示近期热门标签/关键词的热度排行。
 

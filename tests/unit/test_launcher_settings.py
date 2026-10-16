@@ -70,3 +70,9 @@ def test_current_web_port_comes_from_process_environment() -> None:
     """当前端口只反映实际启动参数，不猜测磁盘配置。"""
     assert current_web_port({}) == DEFAULT_WEB_PORT
     assert current_web_port({"BLC_WEB_PORT": "8080"}) == 8080
+
+
+def test_console_frontend_port_takes_precedence_over_private_api_port() -> None:
+    """设置页面显示用户实际访问的前端端口，不把内部临时 API 端口当成待重启。"""
+    assert current_web_port({"BLC_FRONTEND_PORT": "8080", "BLC_WEB_PORT": "49123"}) == 8080
+    assert current_web_port({"BLC_WEB_PORT": "8000"}) == 8000

@@ -1,0 +1,80 @@
+name: Frontend
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'app/**'
+      - 'config/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'scripts/export_openapi.py'
+      - '.github/workflows/frontend.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'app/**'
+      - 'config/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'scripts/export_openapi.py'
+      - '.github/workflows/frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v9
+        with:
+          version: '0.12.18'
+          enable-cache: true
+      - name: Install backend API dependencies
+        env:
+          BLC_SKIP_C_EXTENSIONS: '1'
+        run: uv sync --locked --no-dev --extra web
+      - name: Check OpenAPI snapshot
+        run: uv run --no-sync python scripts/export_openapi.py --check
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Check generated API types
+        run: |
+          npm --prefix frontend run api:generate
+          git diff --exit-code -- frontend/src/api/schema.d.ts
+      - name: Types, lint, unit tests and production build
+        run: npm --prefix frontend run check
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser interaction tests
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Upload browser failure reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-report
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 7

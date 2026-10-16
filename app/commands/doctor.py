@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess as _subprocess
 
-import typer
+import click
 from rich.console import Console
 
 from app.core.sanitize import safe_exception_summary
@@ -13,8 +13,9 @@ from app.core.sanitize import safe_exception_summary
 console = Console()
 
 
+@click.option("--yes", default=False, is_flag=True, help="跳过交互确认", show_default=True)
 def cmd_doctor(
-    yes: bool = typer.Option(False, "--yes", help="跳过交互确认"),
+    yes: bool = False,
 ) -> None:
     """自检命令 — 检查系统环境与依赖是否满足运行要求。
 
@@ -254,7 +255,7 @@ def cmd_doctor(
         console.print(f"[green]{pass_count} PASS, {warn_count} WARN[/green] — 环境就绪")
     else:
         console.print(f"[red]{fail_count} FAIL, {warn_count} WARN, {pass_count} PASS[/red] — 存在关键问题需修复")
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
 
 
 # 注册列表

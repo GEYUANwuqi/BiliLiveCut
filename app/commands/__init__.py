@@ -3,6 +3,8 @@
 所有命令实现在各子模块中, 通过 COMMANDS 列表导出供 cli.py 统一注册。
 """
 
+from collections.abc import Callable
+
 from app.commands.config import CONFIG_COMMANDS
 from app.commands.database import DATABASE_COMMANDS
 from app.commands.doctor import DOCTOR_COMMANDS
@@ -12,7 +14,7 @@ from app.commands.record import RECORD_COMMANDS
 from app.commands.room import ROOM_COMMANDS
 from app.commands.serve import SERVE_COMMANDS
 
-ALL_COMMANDS: list[tuple[str, callable, str | None]] = (
+ALL_COMMANDS: list[tuple[str, Callable[..., object], str | None]] = (
     RECORD_COMMANDS
     + PROCESS_COMMANDS
     + SERVE_COMMANDS

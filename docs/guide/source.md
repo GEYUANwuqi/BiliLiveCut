@@ -1,6 +1,6 @@
 # 源码部署
 
-在 Windows、macOS 或 Linux 上，可以直接安装并运行 BiliLiveCut 的 Python 源码。下面提供 uv 和传统 venv + pip 两种方式，选择其中一种即可。Web 控制台的 HTML、CSS 与 JavaScript 随源码提供，运行应用无需 Node.js 或额外构建页面。
+在 Windows、macOS 或 Linux 上，可以直接安装并运行 BiliLiveCut 的 Python 源码。下面提供 uv 和传统 venv + pip 两种方式，选择其中一种即可。业务控制台使用独立 React 前端，构建时需要 Node.js 24，运行构建产物不需要 Node.js。
 
 ## 准备运行环境
 
@@ -78,6 +78,17 @@ python -m pip install -e ".[web,asr-all,llm]"
 
 依赖安装与模型准备是两步。实际转写还需所选引擎的模型及匹配的推理依赖；仅安装以上 extras 不代表模型、PyTorch 或 CUDA 运行时已经全部准备好。按[语音转写与模型](../features/asr.md)配置，使用 CPU 时选择对应 CPU 设备；需要 GPU 时再按该指南核对运行时与实际设备。LLM 还需配置服务商与 API Key。
 
+## 构建控制台
+
+安装 Node.js 24，在仓库根目录执行：
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
+```
+
+静态产物位于 `frontend/dist/`。它与 Python 后端独立服务；使用下文的 `start` 命令即可同时启动两个进程。只需后端 API 时使用 `backend`，该命令不再返回网页。
+
 ## 配置与启动
 
 将项目中的 `.env.example` 复制为 `.env`，已有文件时保留原配置。根据需要编辑：
@@ -92,14 +103,14 @@ uv 安装方式启动：
 
 ```bash
 uv run --no-sync blc init
-uv run --no-sync blc serve --host 127.0.0.1 --port 8000
+uv run --no-sync blc start --host 127.0.0.1 --port 8000
 ```
 
 venv + pip 安装方式启动：
 
 ```bash
 python -m app.cli init
-python -m app.cli serve --host 127.0.0.1 --port 8000
+python -m app.cli start --host 127.0.0.1 --port 8000
 ```
 
 浏览器打开 `http://127.0.0.1:8000`。保持终端运行，停止服务时按 `Ctrl+C`。端口已被占用时，可将 `--port` 改为其他可用端口，并使用对应地址访问。
@@ -110,4 +121,4 @@ python -m app.cli serve --host 127.0.0.1 --port 8000
 
 按[第一次完成工作流](quick-start.md)进行短时间录制，或[导入已有录播](../features/recording-import.md)，再验证转写、分析、审核与剪辑。Web 页面能打开不代表模型推理与完整链路已经验收。
 
-再次启动时使用同一源码版本、配置和运行目录，通常只需运行 `serve`。升级前保留旧环境，当前 Alpha 版本不直接迁移历史数据库；使用新目录初始化当前版本，具体见[升级说明](getting-started.md#升级前保留旧环境)。
+再次启动时使用同一源码版本、配置和运行目录，通常只需运行 `start`。升级前保留旧环境，当前 Alpha 版本不直接迁移历史数据库；使用新目录初始化当前版本，具体见[升级说明](getting-started.md#升级前保留旧环境)。

@@ -53,10 +53,7 @@ def test_plugin_center_api_and_settings_page(
     monkeypatch.setattr(settings, "plugin_dir", str(tmp_path))
 
     with TestClient(app) as client:
-        dashboard = client.get("/")
-        assert dashboard.status_code == 200
-        assert 'data-tab="plugins">插件</button>' in dashboard.text
-        assert 'id="tab-plugins"' in dashboard.text
+        assert client.get("/").status_code == 404
 
         listing = client.get("/api/plugins")
         assert listing.status_code == 200
@@ -73,10 +70,7 @@ def test_plugin_center_api_and_settings_page(
         assert enabled.status_code == 200
         assert enabled.json()["loaded"] is True
 
-        settings_page = client.get("/plugins/web-demo/settings")
-        assert settings_page.status_code == 200
-        assert "Web 示例" in settings_page.text
-        assert "/static/js/plugin_settings.js" in settings_page.text
+        assert client.get("/plugins/web-demo/settings").status_code == 404
 
         saved = client.patch(
             "/api/plugins/web-demo/settings",
@@ -97,5 +91,4 @@ def test_plugin_frontend_modules_are_served(temp_db: None) -> None:
     with TestClient(app) as client:
         for path in ("/static/js/plugins.js", "/static/js/plugin_settings.js"):
             response = client.get(path)
-            assert response.status_code == 200
-            assert "javascript" in response.headers["content-type"]
+            assert response.status_code == 404
