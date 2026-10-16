@@ -1,4 +1,4 @@
-"""CLI commands behavioral tests — validates ALL_COMMANDS structure and Typer app wiring."""
+"""CLI commands behavioral tests — validates ALL_COMMANDS structure and Click app wiring."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import click
 import pytest
-import typer
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from tests.source_fixtures import bind_bilibili_room
 
@@ -32,7 +32,7 @@ def test_cli_app_version_present() -> None:
 
 
 def test_cli_module_entrypoint_dispatches_commands() -> None:
-    """``python -m app.cli`` 必须执行 Typer，而不是静默退出。"""
+    """``python -m app.cli`` 必须执行 Click，而不是静默退出。"""
     result = subprocess.run(
         [sys.executable, "-m", "app.cli", "version"],
         check=False,
@@ -45,7 +45,7 @@ def test_cli_module_entrypoint_dispatches_commands() -> None:
 
 
 def test_cli_help_preserves_dependency_hints_and_current_doctor_text() -> None:
-    """Typer/Rich 不得吞掉可选依赖名称或显示过期 Doctor 版本。"""
+    """Click/Rich 不得吞掉可选依赖名称或显示过期 Doctor 版本。"""
     from app.cli import app
 
     result = CliRunner().invoke(app, ["--help"])
@@ -54,6 +54,158 @@ def test_cli_help_preserves_dependency_hints_and_current_doctor_text() -> None:
     assert "asr 可选依赖" in result.output
     assert "web 可选依赖" in result.output
     assert "V0.1.13" not in result.output
+
+
+def test_click_entrypoint_preserves_all_historical_commands() -> None:
+    from app.cli import app
+
+    assert isinstance(app, click.Group)
+    historical = {
+        "init",
+        "add-room",
+        "list-rooms",
+        "check",
+        "record",
+        "transcribe",
+        "score",
+        "process",
+        "list-candidates",
+        "clip",
+        "copywrite",
+        "produce",
+        "list-clips",
+        "serve",
+        "console",
+        "doctor",
+        "db-reset",
+        "trends-purge",
+        "set-upload",
+        "llm-list",
+        "llm-test",
+        "schedule",
+        "upload",
+        "trends-collect",
+        "trends-list",
+        "trends-keywords",
+        "version",
+    }
+    assert historical | {"backend", "frontend", "start"} == set(app.commands)
+
+
+def test_every_command_help_works_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import cli
+    from app.db import session
+
+    def forbidden() -> None:
+        raise AssertionError("help must not initialize the database")
+
+    monkeypatch.setattr(session, "init_db", forbidden)
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    for name in cli.app.commands:
+        result = CliRunner().invoke(cli.app, [name, "--help"])
+        assert result.exit_code == 0, (name, result.output)
+        assert ":param" not in result.output
+
+
+@pytest.mark.parametrize(
+    "command,arguments,expected",
+    [
+        ("record", ["7"], {"db_id": 7, "pipeline": None, "produce": False}),
+        ("record", ["7", "--pipeline", "--produce"], {"db_id": 7, "pipeline": True, "produce": True}),
+        ("record", ["7", "--no-pipeline"], {"db_id": 7, "pipeline": False, "produce": False}),
+        ("set-upload", [], {"biliup": None, "auto": None}),
+        ("set-upload", ["--no-biliup", "--auto"], {"biliup": False, "auto": True}),
+        ("set-upload", ["--biliup", "--no-auto"], {"biliup": True, "auto": False}),
+        ("schedule", ["7", "--at", "20:30", "--daily"], {"room_id": 7, "at_time": "20:30", "daily": True}),
+        ("trends-purge", [], {"days": None}),
+        ("trends-purge", ["--days", "14"], {"days": 14}),
+        ("db-reset", ["-y"], {"yes": True}),
+        ("list-clips", ["--limit", "10"], {"limit": 10}),
+        (
+            "add-room",
+            ["123", "--authorize", "--platform", "bilibili"],
+            {"url": "123", "authorize": True, "platform": "bilibili"},
+        ),
+        ("serve", ["--port", "8002", "--reload"], {"host": "127.0.0.1", "port": 8002, "reload": True}),
+        (
+            "console",
+            ["--port", "8003", "--frontend-dir", "dist"],
+            {"host": "127.0.0.1", "port": 8003, "frontend_dir": "dist"},
+        ),
+    ],
+)
+def test_command_argument_compatibility(
+    monkeypatch: pytest.MonkeyPatch, command: str, arguments: list[str], expected: dict[str, object]
+) -> None:
+    from app import cli
+    from app.db import session
+
+    captured = {}
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(session, "init_db", lambda: None)
+    monkeypatch.setattr(cli.app.commands[command], "callback", lambda **kwargs: captured.update(kwargs))
+    result = CliRunner().invoke(cli.app, [command, *arguments])
+    assert result.exit_code == 0, result.output
+    assert captured == expected
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["record"], ["record", "abc"], ["schedule", "7"], ["backend", "--port", "0"], ["frontend", "--port", "65536"]],
+)
+def test_invalid_arguments_fail_before_database_initialization(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    from app import cli
+    from app.db import session
+
+    def forbidden() -> None:
+        raise AssertionError("invalid arguments must not initialize the database")
+
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(session, "init_db", forbidden)
+    result = CliRunner().invoke(cli.app, arguments)
+    assert result.exit_code == 2, result.output
+
+
+@pytest.mark.parametrize("command", ["frontend", "start", "console"])
+def test_built_frontend_required_before_starting_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    from app import cli
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("missing frontend must not start a process")
+
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    result = CliRunner().invoke(cli.app, [command, "--frontend-dir", str(tmp_path)])
+    assert result.exit_code == 2, result.output
+    assert "未找到前端构建" in result.output and "npm --prefix frontend run build" in result.output
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        "https://localhost:8000",
+        "http://localhost/api",
+        "http://user:secret@localhost",
+        "http://localhost:abc",
+        "http://localhost:0",
+    ],
+)
+def test_frontend_rejects_invalid_upstream_before_listening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    from app import cli
+    from app.web import frontend_server
+
+    (tmp_path / "index.html").write_text("<main>built app</main>")
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(frontend_server, "serve_frontend", lambda *args: pytest.fail("must not start frontend"))
+    result = CliRunner().invoke(cli.app, ["frontend", "--frontend-dir", str(tmp_path), "--backend", backend])
+    assert result.exit_code == 2, result.output
+    assert "secret" not in result.output
 
 
 @pytest.mark.parametrize("entrypoint", ["module", "installed"])
@@ -173,7 +325,7 @@ def test_record_rejects_produce_without_pipeline(
     monkeypatch.setattr("app.plugins.runtime.plugin_manager", PluginManager(tmp_path / "plugin"))
     try:
         cmd_record(1, pipeline=False, produce=True)
-    except typer.Exit as exc:
+    except click.exceptions.Exit as exc:
         assert exc.exit_code == 1
     else:  # pragma: no cover - 明确表达必须抛错
         raise AssertionError("--produce without --pipeline must fail")

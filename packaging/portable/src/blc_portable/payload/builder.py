@@ -15,6 +15,7 @@ import importlib.util
 import json
 import logging
 import shutil
+import subprocess
 import sys
 import sysconfig
 import zipfile
@@ -63,6 +64,9 @@ def _should_include(rel_path: str) -> bool:
     :param rel_path: 相对于 staging 根的路径 (POSIX)。
     :returns: True 表示包含。
     """
+    if rel_path.startswith("frontend/"):
+        return rel_path.startswith("frontend/dist/")
+
     for pattern in PAYLOAD_EXCLUDE:
         if pattern.endswith("/"):
             if rel_path == pattern.rstrip("/") or rel_path.startswith(pattern):
@@ -293,6 +297,20 @@ def _compile_and_copy_native_modules(staging_dir: Path) -> dict[str, bool]:
 # ── 主构建流程 ────────────────────────────────────────
 
 
+def _build_frontend(staging_dir: Path) -> None:
+    """只从已冻结的源码快照构建前端，运行时无需 Node.js。"""
+    frontend = staging_dir / "frontend"
+    if not (frontend / "package-lock.json").is_file():
+        raise RuntimeError("Portable 源码基线不包含 React 前端，请在提交源码后同步发布基线")
+    npm = shutil.which("npm")
+    if npm is None:
+        raise RuntimeError("构建前端需要 Node.js 24 与 npm（运行 Portable 不需要）")
+    subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=frontend, check=True, timeout=300)
+    subprocess.run([npm, "run", "build"], cwd=frontend, check=True, timeout=180)
+    if not (frontend / "dist" / "index.html").is_file():
+        raise RuntimeError("前端构建未生成 index.html")
+
+
 def build_payload(
     builder_commit: str | None = None,
     skip_reproducible: bool = False,
@@ -336,6 +354,8 @@ def build_payload(
     # Step 3: 验证业务文件未被非受控修改
     _logger.info("Step 3: Verifying source origin")
     verify_source_origin(staging_dir, SOURCE_COMMIT_FULL)
+
+    _build_frontend(staging_dir)
 
     # Step 4: 收集统一文件集合
     _logger.info("Step 4: Collecting included files")
@@ -402,6 +422,7 @@ def build_payload(
         extract_source(SOURCE_COMMIT_FULL, verify_staging)
         validate_release_identity(verify_staging)
         _compile_and_copy_native_modules(verify_staging)
+        _build_frontend(verify_staging)
 
         # 使用同一套 included_files 逻辑收集文件
         v_included = _collect_included_files(verify_staging)

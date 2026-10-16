@@ -1,7 +1,7 @@
 """FastAPI 应用入口。
 
 * 启动时初始化日志与数据库;关闭时停止所有录制任务;
-* 挂载 REST API 路由、静态资源与 Jinja2 模板;
+* 挂载 REST API 与媒体路由，页面由独立前端服务提供;
 * 提供单页仪表盘。
 
 启动方式::
@@ -17,12 +17,9 @@ import socket
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from ipaddress import ip_address
-from pathlib import Path
 
 import psutil
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from loguru import logger
 
 from app import __version__, __version_label__
@@ -32,16 +29,11 @@ from app.web.routers.api import router as api_router
 from app.web.routers.collection_router import collection_router
 from app.web.routers.intro_template_router import router as intro_template_router
 from app.web.routers.monitor_router import monitor_router
-from app.web.routers.plugins import page_router as plugin_page_router
 from app.web.routers.review_router import review_router
 from app.web.routers.subtitle_template_router import router as subtitle_template_router
 from app.web.services import notifications as notifications_service
 from app.web.services import rooms as rooms_service
 from app.web.services import schedules as schedules_service
-from app.web.staticfiles import WebStaticFiles
-
-_BASE_DIR = Path(__file__).resolve().parent
-_TEMPLATES = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
 
 
 def _setup_proxy_env() -> None:
@@ -574,7 +566,9 @@ class _AuthMiddleware(_BaseMiddleware):
                     request.headers.get("Referer", "-"),
                 )
                 return _JSONResponse({"detail": "跨站请求被拒绝"}, status_code=403)
-            return _JSONResponse({"detail": "需要认证"}, status_code=401, headers={"WWW-Authenticate": "Basic"})
+            # 浏览器由 React 登录框接管，显式 API 客户端保留 Basic challenge。
+            headers = {} if request.headers.get("sec-fetch-site") else {"WWW-Authenticate": "Basic"}
+            return _JSONResponse({"detail": "需要认证"}, status_code=401, headers=headers)
         try:
             decoded = _base64.b64decode(auth[6:], validate=True).decode("utf-8")
             username, separator, password = decoded.partition(":")
@@ -684,17 +678,3 @@ app.include_router(collection_router)
 app.include_router(monitor_router)
 app.include_router(subtitle_template_router)
 app.include_router(intro_template_router)
-app.include_router(plugin_page_router)
-app.mount("/static", WebStaticFiles(directory=str(_BASE_DIR / "static")), name="static")
-
-
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request) -> HTMLResponse:
-    """渲染单页仪表盘。"""
-    return _TEMPLATES.TemplateResponse(request, "dashboard.html")
-
-
-@app.get("/imports", response_class=HTMLResponse)
-def recording_import_page(request: Request) -> HTMLResponse:
-    """渲染独立的本地录播分析页面；数据接口沿用管理员认证。"""
-    return _TEMPLATES.TemplateResponse(request, "recording_imports.html")

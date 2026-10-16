@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import typer
+import click
 from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
@@ -13,8 +13,9 @@ from app.db.session import get_session
 console = Console()
 
 
+@click.argument("segment_id", type=int)
 def cmd_transcribe(
-    segment_id: int = typer.Argument(..., help="raw_segments 主键"),
+    segment_id: int,
 ) -> None:
     """转写指定片段(阶段2，需安装 asr 可选依赖)。
 
@@ -27,8 +28,9 @@ def cmd_transcribe(
     console.print(t.text[:500] or "(空)")
 
 
+@click.argument("segment_id", type=int)
 def cmd_score(
-    segment_id: int = typer.Argument(..., help="raw_segments 主键(需已转写)"),
+    segment_id: int,
 ) -> None:
     """对已转写片段做高光评分(阶段2)。
 
@@ -46,8 +48,9 @@ def cmd_score(
         )
 
 
+@click.argument("segment_id", type=int)
 def cmd_process(
-    segment_id: int = typer.Argument(..., help="raw_segments 主键"),
+    segment_id: int,
 ) -> None:
     """对单个片段执行完整分析流程:转写 + 高光评分(阶段2)。
 
@@ -62,8 +65,9 @@ def cmd_process(
         console.print(f"[green]★ 处理完成并生成候选[/green] id={candidate.id} 分数={candidate.highlight_score:.3f}")
 
 
+@click.option("--limit", default=20, type=int, help="最多显示数量", show_default=True)
 def cmd_list_candidates(
-    limit: int = typer.Option(20, help="最多显示数量"),
+    limit: int = 20,
 ) -> None:
     """列出高光候选。
 
@@ -95,8 +99,9 @@ def cmd_list_candidates(
     console.print(table)
 
 
+@click.argument("candidate_id", type=int)
 def cmd_clip(
-    candidate_id: int = typer.Argument(..., help="highlight_candidates 主键"),
+    candidate_id: int,
 ) -> None:
     """把一个高光候选生成为成品 MP4(阶段3,不含文案)。
 
@@ -108,8 +113,9 @@ def cmd_clip(
     console.print(f"[green]切片完成[/green] clip_id={c.id} 时长={c.duration_s:.1f}s -> {c.file_path}")
 
 
+@click.argument("clip_id", type=int)
 def cmd_copywrite(
-    clip_id: int = typer.Argument(..., help="final_clips 主键"),
+    clip_id: int,
 ) -> None:
     """为成品切片生成标题/简介/标签等文案(阶段3)。
 
@@ -122,8 +128,9 @@ def cmd_copywrite(
     console.print(f"简介: {c.description}")
 
 
+@click.argument("candidate_id", type=int)
 def cmd_produce(
-    candidate_id: int = typer.Argument(..., help="highlight_candidates 主键"),
+    candidate_id: int,
 ) -> None:
     """对一个候选执行完整出片流程:切片 + 文案(阶段3)。
 
@@ -134,11 +141,12 @@ def cmd_produce(
     c = process_candidate(candidate_id)
     if c is None:
         console.print("[red]出片失败,详见日志。[/red]")
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
     console.print(f"[green]★ 出片完成[/green] clip_id={c.id} 状态={c.status}\n标题: {c.title}\n文件: {c.file_path}")
 
 
-def cmd_list_clips(limit: int = typer.Option(20, help="最多显示数量")) -> None:
+@click.option("--limit", default=20, type=int, help="最多显示数量", show_default=True)
+def cmd_list_clips(limit: int = 20) -> None:
     """列出成品切片。
 
     :param limit: 显示上限。

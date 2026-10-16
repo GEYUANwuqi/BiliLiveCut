@@ -619,7 +619,7 @@ def _build_service_command(venv_python: Path, web_port: int) -> list[str]:
         str(venv_python),
         "-c",
         "from app.cli import app; app()",
-        "serve",
+        "start",
         "--host",
         "127.0.0.1",
         "--port",

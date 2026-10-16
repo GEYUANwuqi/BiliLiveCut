@@ -7,19 +7,15 @@ import json
 import secrets
 import sqlite3
 from collections.abc import Callable
-from pathlib import Path
-from urllib.parse import quote
 
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
-from starlette.templating import Jinja2Templates
+from starlette.responses import JSONResponse, Response
 
 from app.core.docker_auth import COOKIE_NAME, AuthError, AuthStore
 
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 _WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -39,12 +35,7 @@ def _clear(response: Response) -> Response:
 
 
 def _required(request: Request, detail: str = "登录已失效，请重新登录。") -> Response:
-    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
-        # 目标仅来自本站路径；前端再校验同源，防止开放重定向。
-        target = request.url.path + ("?" + request.url.query if request.url.query else "")
-        response = RedirectResponse("/auth/login?next=" + quote(target, safe=""), status_code=303)
-    else:
-        response = _json({"detail": detail}, 401)
+    response = _json({"detail": detail}, 401)
     response.headers["X-BLC-Auth-Required"] = "1"
     response.headers["Cache-Control"] = "no-store"
     # 延迟到达的旧 401 不得删除刚登录的新 Cookie；仅显式退出/改密清理 Cookie。
@@ -91,14 +82,6 @@ async def _endpoint(
     if path == "/auth/status" and request.method == "GET":
         state = await run_in_threadpool(store.state)
         return _json({**state, "authenticated": session is not None, **(session or {})})
-    if path in {"/auth/login", "/auth/password"} and request.method == "GET":
-        if path == "/auth/password" and session is None:
-            return _required(request)
-        response = _TEMPLATES.TemplateResponse(request, "admin_auth.html", {"password_page": path == "/auth/password"})
-        response.headers.update(
-            {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY"}
-        )
-        return response
     if request.method != "POST" or path not in {"/auth/login", "/auth/setup", "/auth/logout", "/auth/password"}:
         return _json({"detail": "认证入口不存在。"}, 404)
     # 登录、初始化也禁止跨站提交，防止登录 CSRF；此 API 不使用跨域凭据。

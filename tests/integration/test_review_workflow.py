@@ -488,14 +488,14 @@ def test_admin_can_force_take_over_claim(review_client: TestClient) -> None:
     assert takeover.json()["claim"]["claimed_by"] == "admin"
 
 
-def test_review_queue_page_exposes_filters_and_claim_action(review_client: TestClient) -> None:
-    """审核队列页面提供筛选、我的领取和进入审核操作。"""
+def test_review_queue_api_exposes_filter_counts_and_claims(review_client: TestClient) -> None:
+    """审核队列 API 保留筛选和领取数据，页面由 React 提供。"""
     with review_client as client:
-        response = client.get("/review/queue", auth=("alice", "alice-pass"))
+        assert client.get("/review/queue", auth=("alice", "alice-pass")).status_code == 404
+        response = client.get("/review/api/queue?status=pending&mine=true", auth=("alice", "alice-pass"))
     assert response.status_code == 200
-    assert 'id="mine"' in response.text
-    assert 'data-status="pending"' in response.text
-    assert "/claim" in response.text
+    assert set(response.json()["counts"]) == {"pending", "claimed", "reviewed"}
+    assert response.json()["actor"] == "alice"
 
 
 def test_review_data_buckets_scalar_danmaku_timestamps(review_client: TestClient) -> None:

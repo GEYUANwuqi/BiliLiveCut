@@ -23,13 +23,14 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 60s
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file:
       - ../../.env
     environment:
       # 覆盖为容器内路径(优先级高于 .env)。
       DOCKER_AUTH_ENABLED: "true"
+      FORWARDED_ALLOW_IPS: "*"
       STORAGE_ROOT: /data
       DATABASE_URL: sqlite:////data/blc.db
       PLUGIN_DIR: /data/plugins
@@ -40,3 +41,18 @@ services:
     volumes:
       - ../../storage:/data
       # 模型和浏览器缓存位于 /data/cache，随 storage 一起持久化。
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    image: bili-live-cut-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "8000:8080"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true

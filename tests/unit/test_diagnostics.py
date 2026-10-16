@@ -395,8 +395,8 @@ def test_doctor_uses_current_settings_and_preserves_existing_files(
 def test_doctor_fails_explicit_cuda_and_caches_identical_backend_probes(
     temp_db: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import click
     import httpx
-    import typer
     from rich.console import Console
 
     from app.commands import doctor
@@ -422,7 +422,7 @@ def test_doctor_fails_explicit_cuda_and_caches_identical_backend_probes(
         return {"ok": False, "version": "2.13.0+cpu", "cuda_build": None, "error": "CPU 版"}
 
     monkeypatch.setattr(asr_devices, "probe_device", probe)
-    with pytest.raises(typer.Exit) as caught:
+    with pytest.raises(click.exceptions.Exit) as caught:
         doctor.cmd_doctor(yes=True)
     assert caught.value.exit_code == 1
     assert calls == [("torch", "cuda")]
@@ -432,26 +432,26 @@ def test_doctor_fails_explicit_cuda_and_caches_identical_backend_probes(
 
 
 def test_cli_failure_is_safe_and_nonzero() -> None:
-    import typer
-    from typer.testing import CliRunner
+    import click
+    from click.testing import CliRunner
 
     from app.cli import _diagnostic_command
 
-    cli = typer.Typer()
+    cli = click.Group()
 
     @cli.command()
     @_diagnostic_command
     def fail() -> None:
         raise _nested_error()
 
-    result = CliRunner().invoke(cli, [])
+    result = CliRunner().invoke(cli, ["fail"])
     assert result.exit_code == 1 and "TimeoutError" in result.output
     assert "private-" not in result.output
 
 
 def test_doctor_summarizes_broken_database(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    import click
     import httpx
-    import typer
     from rich.console import Console
 
     from app.commands import doctor
@@ -470,7 +470,7 @@ def test_doctor_summarizes_broken_database(temp_db: None, monkeypatch: pytest.Mo
         raise OperationalError("select * from app_settings", (), OSError("no such table: app_settings"))
 
     monkeypatch.setattr(settings_store, "biliup_enabled", missing_table)
-    with pytest.raises(typer.Exit) as caught:
+    with pytest.raises(click.exceptions.Exit) as caught:
         doctor.cmd_doctor(yes=True)
     assert caught.value.exit_code == 1
     assert "no such table" in output.getvalue() and "存在关键问题需修复" in output.getvalue()

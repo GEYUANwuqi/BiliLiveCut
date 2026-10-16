@@ -6,7 +6,7 @@
 
 Windows CUDA 运行时额外使用 `packaging/portable/locks/requirements-torch-{cu126|cu130}-{py311|py312}-win-x64.lock`，只替换 Torch/TorchAudio。更新基础锁中的这两个版本时，必须从 PyTorch 官方索引同步 CUDA URL、SHA-256 和 ABI，核对 wheel 元数据依赖，并运行 `packaging/portable/tests/test_torch_runtime.py`；不放宽哈希检查或自动接受未登记的 CUDA 版本。源码环境应用 CUDA 锁后，以现有虚拟环境的 Python 运行，安装说明见[使用指南](../features/asr.md#cuda-安装与实际设备确认)。
 
-使用 Python 3.11/3.12，准备 FFmpeg 和原生扩展所需的编译工具。uv 和传统 venv + pip 均受支持，共用 `pyproject.toml` 中的依赖与 extras。Web 控制台使用 HTML 模板、CSS 和 JavaScript，运行时无需 Node.js；执行 JavaScript 检查需另装 Node.js 22 或更高版本，目录和验证方式见 [Web 页面说明](frontend.md)。
+使用 Python 3.11/3.12，准备 FFmpeg 和原生扩展所需的编译工具。uv 和传统 venv + pip 均受支持，共用 `pyproject.toml` 中的依赖与 extras。Web 控制台使用独立 React 前端，开发与构建需要 Node.js 24。运行已构建页面不需要 Node.js，目录和验证方式见 [Web 页面说明](frontend.md)。
 
 ### uv
 
@@ -25,7 +25,7 @@ uv run --locked pre-commit run --all-files --show-diff-on-failure
 
 ```bash
 uv sync --locked --extra asr-all --extra llm
-uv run --locked --extra asr-all --extra llm blc serve
+uv run --locked --extra asr-all --extra llm blc start
 ```
 
 `uv run` 会同步环境，省略 extras 可能移除此前安装的可选依赖；已同步后可用 `uv run --no-sync ...` 运行当前环境。纯运行环境使用 `uv sync --locked --no-dev --extra web`，对应命令为 `uv run --locked --no-dev --extra web blc ...`。
@@ -46,7 +46,7 @@ python -m pre_commit install
 
 `pre-commit install` 为当前 checkout 安装提交钩子；每次克隆后执行一次。首次运行需要联网准备隔离的 hook 环境，之后复用缓存。项目的 Python 检查脚本不需要在 hook 环境安装应用或下载模型；前端检查使用 PATH 中的 Node.js。
 
-提交时以只读模式检查暂存文件的 Ruff lint/格式、JSON/YAML/TOML、冲突标记和新增文件大小（上限 1 MiB），并运行项目版本一致性、changelog 归档和快速发行契约审计。Web 或前端检查脚本变更时，还检查 JavaScript 文件、模板内联脚本的语法，以及仪表盘、设置中心、录播导入三组交互。需要修复时，对目标文件显式执行 Ruff 修复或格式化，检查 diff 后再暂存。
+提交时以只读模式检查暂存文件的 Ruff lint/格式、JSON/YAML/TOML、冲突标记和新增文件大小（上限 1 MiB），并运行项目版本一致性、changelog 归档和快速发行契约审计。React 文件变更时执行前端类型、lint 与单元测试；后端 API 变化还需更新 OpenAPI 类型。需要修复时，对目标文件显式执行 Ruff 修复或格式化，检查 diff 后再暂存。
 
 Ruff 与 pre-commit 的版本固定在项目配置中，外部 hook 和新增 Action 使用经核对的完整 Git 提交；更新 Ruff 时同步修改 `pyproject.toml`、hook 提交与 `additional_dependencies`。更新 pre-commit 时同步修改开发依赖、配置最低版本和 CI 安装版本。新增超过上限且确需入库的文件应明确调整 hook 配置；录像、模型及发行产物应继续放在存储或构建目录中。
 
@@ -101,7 +101,7 @@ python -m pytest
 python -m pre_commit run --all-files --show-diff-on-failure
 ```
 
-提交钩子、CI 的 lint job 和发布前检查共用 `.pre-commit-config.yaml`。只验证前端可执行 `python scripts/check_frontend.py`。完整测试、覆盖率、联网依赖审计和 Portable 构建由 CI/发布门禁执行，不放进每次提交。文档包含版本信息并参与源码发行，因此 Markdown 修改也触发 CI 的检查。
+提交钩子、CI 的 lint job 和发布前检查共用 `.pre-commit-config.yaml`。只验证 React 前端可执行 `python scripts/check_react_frontend.py`。完整测试、覆盖率、联网依赖审计和 Portable 构建由 CI/发布门禁执行，不放进每次提交。文档包含版本信息并参与源码发行，因此 Markdown 修改也触发 CI 的检查。
 
 CI 的每周定时任务只运行依赖审计，避免无源码变更时重复执行整套测试与 Portable 构建。各矩阵覆盖率文件按目录保存；`CI status` 汇总所有适用 job 的结果，可作为分支保护的必需检查。是否启用分支保护由仓库管理员配置。
 

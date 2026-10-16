@@ -11,6 +11,7 @@ from pathlib import Path
 # 需从 git archive 提取的目录/文件
 PAYLOAD_ITEMS = [
     "app/",
+    "frontend/",
     "config/",
     "pyproject.toml",
     "setup.py",
@@ -27,6 +28,9 @@ PAYLOAD_ITEMS = [
 
 # 禁止进入 Payload 的路径
 EXCLUDE_PATTERNS = [
+    "frontend/node_modules/",
+    "frontend/test-results/",
+    "frontend/playwright-report/",
     ".git",
     ".github",
     "tests/",

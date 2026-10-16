@@ -1002,7 +1002,7 @@ def test_cli_external_recording_cleans_state_and_hides_process_secrets(
     tmp_path: Path,
     failure: bool,
 ) -> None:
-    from typer.testing import CliRunner
+    from click.testing import CliRunner
 
     from app import cli
     from app.plugins.manager import PluginManager

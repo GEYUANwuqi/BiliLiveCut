@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import typer
+import click
 from rich.console import Console
 from rich.table import Table
 
@@ -11,9 +11,11 @@ from app.core.sanitize import safe_exception_summary
 console = Console()
 
 
+@click.option("--biliup/--no-biliup", default=None, help="启用/关闭 Biliup 上传", show_default=True)
+@click.option("--auto/--no-auto", default=None, help="成品就绪后自动上传", show_default=True)
 def cmd_set_upload(
-    biliup: bool = typer.Option(None, "--biliup/--no-biliup", help="启用/关闭 Biliup 上传"),
-    auto: bool = typer.Option(None, "--auto/--no-auto", help="成品就绪后自动上传"),
+    biliup: bool | None = None,
+    auto: bool | None = None,
 ) -> None:
     """查看或设置上传开关(与 Web 后台共享同一持久化状态)。
 
@@ -65,7 +67,7 @@ def cmd_llm_test() -> None:
     providers = provs.active_providers()
     if not providers:
         console.print("[yellow]无可用大模型(需已启用且配置 key)。[/yellow]")
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
     failed = False
     for p in providers:
         try:
@@ -77,7 +79,7 @@ def cmd_llm_test() -> None:
             failed = True
             console.print(f"[red]FAIL[/red] {p.name}({p.model}): {safe_exception_summary(exc)}")
     if failed:
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
 
 
 # 注册列表

@@ -197,7 +197,7 @@ def check_ci_bypass(audit: AuditResult) -> None:
             and "from app.cli import main" not in content
             and "source_dir=Path(os.environ['BLC_SMOKE_SOURCE_DIR'])" in content
             and "actual.is_relative_to(source)" in content,
-            "CLI smoke test 必须使用已安装 Runtime 源码导入 Typer app",
+            "CLI smoke test 必须使用已安装 Runtime 源码导入 Click app",
         )
         audit.check(
             "release.yml Full smoke Launcher 配置与 Payload 导入隔离",

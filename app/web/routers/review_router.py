@@ -1,15 +1,4 @@
-"""P1 横屏审片工作台路由。
-
-独立于 Dashboard 的完整审片页面,包含:
-- 16:9 横屏视频播放器
-- 弹幕密度曲线(Canvas)
-- 评分解释
-- 可拖动的入点/出点
-- 扩展按钮(+3/5/10/30s)
-- 键盘快捷键(Space/JKL/I/O/←→)
-- 细粒度审核决断
-- 边界调整后重新渲染
-"""
+"""审片 API：候选上下文、领取、边界、审核决策、预览与波形。"""
 
 from __future__ import annotations
 
@@ -21,8 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select as _sql_select
@@ -37,7 +25,6 @@ if TYPE_CHECKING:
 
 review_router = APIRouter(prefix="/review", tags=["review"])
 
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 _PREVIEW_LOCKS: dict[int, threading.Lock] = {}
 _PREVIEW_LOCKS_GUARD = threading.Lock()
 
@@ -288,12 +275,6 @@ def _ensure_review_preview(candidate_id: int, start_ts: datetime, end_ts: dateti
         return output_path
 
 
-@review_router.get("/queue", response_class=HTMLResponse)
-async def review_queue_page(request: Request) -> HTMLResponse:
-    """审核队列页面。"""
-    return _TEMPLATES.TemplateResponse(request, "review_queue.html")
-
-
 @review_router.get("/api/queue")
 def get_review_queue(
     request: Request,
@@ -404,20 +385,6 @@ def get_review_audit(request: Request, limit: int = 100) -> dict:
             for row in rows
         ]
     }
-
-
-@review_router.get("/{candidate_id}", response_class=HTMLResponse)
-async def review_page(request: Request, candidate_id: int) -> HTMLResponse:
-    """审片工作台主页面。"""
-    from app.db.entities import HighlightCandidate
-    from app.db.session import get_session
-
-    with get_session() as db:
-        c = db.get(HighlightCandidate, candidate_id)
-    if c is None:
-        raise HTTPException(status_code=404, detail="候选不存在")
-
-    return _TEMPLATES.TemplateResponse(request, "review.html", {"candidate_id": candidate_id})
 
 
 @review_router.get("/api/{candidate_id}")

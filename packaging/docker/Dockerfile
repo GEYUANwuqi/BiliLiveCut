@@ -120,4 +120,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD ["python", "/app/docker/healthcheck.py"]
 ENTRYPOINT ["python", "/app/docker/entrypoint.py"]
-CMD ["blc", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["blc", "backend", "--host", "0.0.0.0", "--port", "8000"]

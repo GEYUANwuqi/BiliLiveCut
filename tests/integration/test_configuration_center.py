@@ -288,7 +288,7 @@ def test_request_validation_never_echoes_nested_credentials(
 
 def test_actual_cli_bootstrap_loads_web_overrides_in_new_process(temp_db: None) -> None:
     save_configuration(ConfigurationChange(values={"clip_video_crf": 29}))
-    script = "from app.cli import app; import typer; from app.core.config import settings; app.command('config-probe')(lambda: print(f'CLI:{settings.clip_video_crf}')); app()"
+    script = "from app.cli import app; import click; from app.core.config import settings; app.command('config-probe')(lambda: print(f'CLI:{settings.clip_video_crf}')); app()"
     result = subprocess.run(
         [sys.executable, "-c", script, "config-probe"],
         env=os.environ.copy(),

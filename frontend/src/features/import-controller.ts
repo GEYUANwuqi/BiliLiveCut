@@ -1,0 +1,116 @@
+import { useSyncExternalStore } from "react";
+import { api, upload, type Row } from "@/api/client";
+import { obj } from "@/lib/data";
+
+export interface ImportProgress {
+  busy: boolean;
+  step: string;
+  percent: number;
+  error: string;
+  recordId: string;
+}
+let state: ImportProgress = {
+  busy: false,
+  step: "",
+  percent: 0,
+  error: "",
+  recordId: "",
+};
+let controller: AbortController | null = null;
+const listeners = new Set<() => void>();
+function update(value: Partial<ImportProgress>) {
+  state = { ...state, ...value };
+  listeners.forEach((listener) => listener());
+}
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
+export const useImportProgress = () =>
+  useSyncExternalStore(subscribe, () => state);
+export const cancelImportUpload = () => controller?.abort();
+
+export async function runImport({
+  declaration,
+  record,
+  video,
+  comments,
+  onRecord,
+}: {
+  declaration: Row;
+  record?: Row;
+  video?: File;
+  comments?: File;
+  onRecord: (record: Row) => void;
+}) {
+  if (state.busy) throw new Error("已有上传正在进行");
+  controller = new AbortController();
+  const signal = controller.signal;
+  update({
+    busy: true,
+    step: "正在登记导入",
+    percent: 0,
+    error: "",
+    recordId: String(record?.id || ""),
+  });
+  try {
+    let current = record;
+    if (!current?.id)
+      current = obj(
+        await api("/api/recording-imports", {
+          method: "POST",
+          body: JSON.stringify(declaration),
+          signal,
+        }),
+      );
+    update({ recordId: String(current.id) });
+    onRecord(current);
+    for (const [kind, file] of [
+      ["video", video],
+      ["comments", comments],
+    ] as const) {
+      if (signal.aborted) throw new DOMException("上传已停止", "AbortError");
+      if (
+        current[`${kind}_uploaded`] ||
+        (kind === "comments" && !current.comments_name)
+      )
+        continue;
+      if (!file) throw new Error(`请重新选择 ${current[`${kind}_name`]}`);
+      if (file.name !== current[`${kind}_name`])
+        throw new Error(`文件名不匹配，请选择 ${current[`${kind}_name`]}`);
+      update({
+        step: kind === "video" ? "正在上传视频" : "正在上传弹幕",
+        percent: 0,
+      });
+      const result = obj(
+        await upload(
+          `/api/recording-imports/${encodeURIComponent(String(current.id))}/files/${kind}`,
+          file,
+          (percent) => update({ percent }),
+          signal,
+        ),
+      );
+      current = { ...current, ...result, [`${kind}_uploaded`]: true };
+      onRecord(current);
+    }
+    if (signal.aborted) throw new DOMException("上传已停止", "AbortError");
+    update({ step: "正在提交预处理", percent: 100 });
+    await api(
+      `/api/recording-imports/${encodeURIComponent(String(current.id))}/start`,
+      { method: "POST" },
+    );
+    update({ step: "已提交后台预处理", error: "" });
+  } catch (error) {
+    const message =
+      error instanceof DOMException && error.name === "AbortError"
+        ? "上传已停止，已上传文件保留，可重新选择未完成文件继续。"
+        : error instanceof Error
+          ? error.message
+          : "导入失败";
+    update({ error: message });
+    throw error;
+  } finally {
+    controller = null;
+    update({ busy: false });
+  }
+}

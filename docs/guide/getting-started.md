@@ -12,7 +12,7 @@ BiliLiveCut 的完整流程是：添加直播间 → 录制或导入视频 → �
 | Windows、macOS 或 Linux 源码运行 | [源码部署](source.md) | Python、FFmpeg；默认原生扩展安装需要编译工具和 Python 开发头文件 |
 | 修改代码或参与开发 | [开发环境](../development/environment.md) | uv 或 venv + pip、FFmpeg、编译工具；JavaScript 检查和文档站另需 Node.js |
 
-源码安装同时支持 uv 和传统 venv + pip。Web 控制台直接使用随程序提供的 HTML 模板、CSS 和 JavaScript，无需安装 Node.js 或单独构建页面。JavaScript 开发检查和文档站使用独立的 Node.js 工具。
+源码安装同时支持 uv 和传统 venv + pip。Web 控制台使用独立 React 前端：源码安装需要 Node.js 24 构建页面；Docker 和新构建的 Portable 自带静态产物，运行时不需要 Node.js。文档站使用独立的依赖与构建。
 
 ## 第一次运行
 
