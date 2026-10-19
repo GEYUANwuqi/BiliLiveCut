@@ -264,6 +264,28 @@ def test_serve_exports_actual_cli_port_to_application(monkeypatch) -> None:  # n
     assert os.environ["BLC_APP_ROOT"] == os.getcwd()
 
 
+def test_backend_reload_watches_application_sources_independent_of_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """开发重载只监听业务和配置源码，不把测试、打包目录作为监听根。"""
+    import uvicorn
+
+    from app.commands import serve
+
+    captured: dict[str, object] = {}
+
+    def fake_run(app: str, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    serve.cmd_serve(host="127.0.0.1", port=8000, reload=True)
+
+    root = Path(serve.__file__).resolve().parents[2]
+    assert captured["reload_dirs"] == [str(root / "app"), str(root / "config")]
+    assert captured["reload"] is True
+
+
 def test_record_pipeline_default_persists_scheduler_switches(
     temp_db: None,
     monkeypatch: pytest.MonkeyPatch,

@@ -86,7 +86,11 @@ def cmd_serve(
             raise click.exceptions.Exit(code=1) from None
 
     console.print(f"[green]API 启动中[/green] -> http://{host}:{actual_port}")
-    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None)
+    reload_options = {}
+    if reload:
+        source_root = Path(__file__).resolve().parents[2]
+        reload_options["reload_dirs"] = [str(source_root / "app"), str(source_root / "config")]
+    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
 
 
 # 注册列表
@@ -165,12 +169,16 @@ def cmd_console(
         api_port = probe.getsockname()[1]
     child_env = {**os.environ, "BLC_FRONTEND_PORT": str(actual_port)}
     processes: list[subprocess.Popen] = []
-    previous_signal = signal.getsignal(signal.SIGTERM)
+    shutdown_signals = [signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        shutdown_signals.append(signal.SIGBREAK)
+    previous_signals = {number: signal.getsignal(number) for number in shutdown_signals}
 
     def terminate(_number, _frame):
         raise SystemExit(0)
 
-    signal.signal(signal.SIGTERM, terminate)
+    for number in shutdown_signals:
+        signal.signal(number, terminate)
     try:
         processes.append(
             subprocess.Popen(
@@ -222,7 +230,8 @@ def cmd_console(
     except KeyboardInterrupt:
         pass
     finally:
-        signal.signal(signal.SIGTERM, previous_signal)
+        for number, previous in previous_signals.items():
+            signal.signal(number, previous)
         for process in processes:
             if process.poll() is None:
                 process.terminate()

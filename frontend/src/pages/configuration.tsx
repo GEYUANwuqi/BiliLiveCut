@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router";
-import { useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -69,6 +69,7 @@ export default function ConfigurationPage() {
   const [params] = useSearchParams();
   const [advanced, setAdvanced] = useState(!!params.get("q"));
   const [group, setGroup] = useState("all");
+  const previousGroup = useRef(group);
   const [search, setSearch] = useState(params.get("q") || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -86,6 +87,11 @@ export default function ConfigurationPage() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
+  useLayoutEffect(() => {
+    if (previousGroup.current === group) return;
+    previousGroup.current = group;
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [group]);
   function change(key: string, next: Change) {
     setError("");
     draft.update({ view, changes: { ...changes, [key]: next } });
@@ -295,7 +301,7 @@ export default function ConfigurationPage() {
                 const spec = fieldSpec(
                   key,
                   { ...field, title: field.label },
-                  !field.secret && field.type !== "boolean",
+                  field.type === "integer" || field.type === "number",
                 );
                 spec.label = text(field.label);
                 spec.description = undefined;

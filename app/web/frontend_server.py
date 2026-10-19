@@ -13,6 +13,11 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 _API_PREFIXES = ("/api", "/auth", "/review/api", "/collection/api")
+_STATIC_MIME = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+}
 _HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -84,7 +89,11 @@ class FrontendHandler(BaseHTTPRequestHandler):
             with target.open("rb") as stream:
                 size = target.stat().st_size
                 self.send_response(200)
-                content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+                content_type = (
+                    _STATIC_MIME.get(target.suffix.lower())
+                    or mimetypes.guess_type(str(target))[0]
+                    or "application/octet-stream"
+                )
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(size))
                 self.send_header(

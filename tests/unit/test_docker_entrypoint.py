@@ -69,7 +69,7 @@ def test_legacy_password_is_migrated_once_without_changing_login(tmp_path: Path)
     env = environment(tmp_path)
     env["ADMIN_PASSWORD"] = ""
     legacy = tmp_path / "config/admin-password"
-    legacy.parent.mkdir()
+    legacy.parent.mkdir(mode=0o700)
     legacy.write_text("Abcdefghijk1234_")
     legacy.chmod(0o600)
     entrypoint.prepare_environment(env)
@@ -83,7 +83,7 @@ def test_custom_password_does_not_read_or_create_default_file(tmp_path: Path) ->
     entrypoint = load_entrypoint()
     env = environment(tmp_path)
     path = tmp_path / "config/admin-password"
-    path.parent.mkdir()
+    path.parent.mkdir(mode=0o700)
     path.write_text("invalid-old-file")
     entrypoint.prepare_environment(env)
     assert env["ADMIN_PASSWORD"] == "test-administrator-password"
@@ -96,7 +96,7 @@ def test_invalid_password_file_is_not_silently_rotated(tmp_path: Path, contents:
     env = environment(tmp_path)
     env["ADMIN_PASSWORD"] = ""
     path = tmp_path / "config/admin-password"
-    path.parent.mkdir()
+    path.parent.mkdir(mode=0o700)
     path.write_text(contents)
     path.chmod(0o600)
     with pytest.raises(RuntimeError, match="内容无效"):

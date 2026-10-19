@@ -13,10 +13,22 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
+import psutil
 import pytest
 
 
-@pytest.mark.skipif(os.name == "nt", reason="SIGTERM 子进程监督在 POSIX 验证，Windows 使用 Ctrl+C")
+def _stop_console(process: subprocess.Popen) -> None:
+    if os.name == "nt":
+        # Windows CI 没有可依赖的交互控制台；真实终止一个子进程，验证监督器回收其余服务。
+        children = psutil.Process(process.pid).children()
+        if children:
+            children[-1].kill()
+        else:
+            process.terminate()
+    else:
+        process.send_signal(signal.SIGTERM)
+
+
 @pytest.mark.parametrize("command", ["start", "console"])
 def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Path, command: str):
     root = Path(__file__).resolve().parents[2]
@@ -29,6 +41,7 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
     env = {
         **os.environ,
         "PYTHONPATH": str(root),
+        "PYTHONIOENCODING": "utf-8",
         "BLC_APP_ROOT": str(tmp_path),
         "STORAGE_ROOT": str(tmp_path / "storage"),
         "DATABASE_URL": f"sqlite:///{tmp_path / 'test.db'}",
@@ -40,7 +53,7 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
         "TREND_SCHEDULE_ENABLED": "false",
     }
     opener = build_opener(ProxyHandler({}))
-    with (tmp_path / "console.log").open("w+") as log:
+    with (tmp_path / "console.log").open("w+", encoding="utf-8") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "app.cli", command, "--port", str(port), "--frontend-dir", str(dist)],
             cwd=tmp_path,
@@ -66,13 +79,16 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
                 assert b'"rooms":[]' in response.read()
             with opener.open(f"http://127.0.0.1:{port}/api/settings", timeout=3) as response:
                 assert json.loads(response.read())["current_web_port"] == port
-            process.send_signal(signal.SIGTERM)
-            assert process.wait(timeout=25) == 0
+            children = psutil.Process(process.pid).children()
+            _stop_console(process)
+            assert process.wait(timeout=25) == (1 if os.name == "nt" else 0)
+            _, alive = psutil.wait_procs(children, timeout=5)
+            assert not alive, "停止后不能遗留前端或后端进程"
             with socket.socket() as probe:
                 assert probe.connect_ex(("127.0.0.1", port)) != 0
         finally:
             if process.poll() is None:
-                process.terminate()
+                _stop_console(process)
                 process.wait(timeout=25)
 
 
@@ -92,6 +108,7 @@ def test_frontend_alone_serves_build_without_opening_database(tmp_path: Path):
     env = {
         **os.environ,
         "PYTHONPATH": str(root),
+        "PYTHONIOENCODING": "utf-8",
         "BLC_APP_ROOT": str(tmp_path),
         "STORAGE_ROOT": str(tmp_path / "storage"),
         "DATABASE_URL": f"sqlite:///{database}",
@@ -99,7 +116,7 @@ def test_frontend_alone_serves_build_without_opening_database(tmp_path: Path):
         "DOCKER_AUTH_ENABLED": "false",
     }
     opener = build_opener(ProxyHandler({}))
-    with (tmp_path / "frontend.log").open("w+") as log:
+    with (tmp_path / "frontend.log").open("w+", encoding="utf-8") as log:
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -140,7 +157,6 @@ def test_frontend_alone_serves_build_without_opening_database(tmp_path: Path):
             process.wait(timeout=20)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="用 POSIX 信号验证私有后端回收")
 def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
     import re
 
@@ -151,6 +167,7 @@ def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
     env = {
         **os.environ,
         "PYTHONPATH": str(root),
+        "PYTHONIOENCODING": "utf-8",
         "BLC_APP_ROOT": str(tmp_path),
         "STORAGE_ROOT": str(tmp_path / "storage"),
         "DATABASE_URL": f"sqlite:///{tmp_path / 'test.db'}",
@@ -165,7 +182,7 @@ def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
         occupied.bind(("127.0.0.1", 0))
         occupied.listen()
         port = occupied.getsockname()[1]
-        with (tmp_path / "start.log").open("w+") as log:
+        with (tmp_path / "start.log").open("w+", encoding="utf-8") as log:
             process = subprocess.Popen(
                 [sys.executable, "-m", "app.cli", "start", "--port", str(port), "--frontend-dir", str(dist)],
                 cwd=tmp_path,
@@ -182,8 +199,8 @@ def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
                 for api_port in api_ports:
                     with socket.socket() as probe:
                         assert probe.connect_ex(("127.0.0.1", api_port)) != 0, output
-                assert "Address already in use" in output
+                assert any(message in output.lower() for message in ("address already in use", "winerror 10048"))
             finally:
                 if process.poll() is None:
-                    process.terminate()
+                    _stop_console(process)
                     process.wait(timeout=25)

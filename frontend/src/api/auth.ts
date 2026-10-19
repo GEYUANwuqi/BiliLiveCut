@@ -191,17 +191,24 @@ export async function login(username: string, password: string, code?: string) {
   );
 }
 
+async function sessionWrite(path: string, body: Record<string, unknown>) {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...authHeaders(true) },
+    body: JSON.stringify(body),
+  });
+  if (
+    response.status === 403 &&
+    response.headers.get("X-BLC-CSRF-Required") === "1"
+  )
+    await restore();
+  return read(response);
+}
+
 export async function logout(everywhere = false) {
-  if (state.mode === "session") {
-    await read(
-      await fetch("/auth/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", ...authHeaders(true) },
-        body: JSON.stringify({ everywhere }),
-      }),
-    );
-  }
+  if (state.mode === "session")
+    await sessionWrite("/auth/logout", { everywhere });
   basic = "";
   syncMediaAuth();
   update({ authenticated: false, csrf_token: "", username: "", error: "" });
@@ -214,14 +221,7 @@ export async function changePassword(
   current_password: string,
   password: string,
 ) {
-  await read(
-    await fetch("/auth/password", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", ...authHeaders(true) },
-      body: JSON.stringify({ current_password, password }),
-    }),
-  );
+  await sessionWrite("/auth/password", { current_password, password });
   basic = "";
   update({
     authenticated: false,

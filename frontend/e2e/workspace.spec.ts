@@ -146,6 +146,52 @@ test("editing and switching routes keeps the draft without a browser leave warni
   await expect(field).toHaveValue("120");
   expect(dialogs).toBe(0);
 });
+test("empty optional ASR settings do not block saving other configuration", async ({
+  page,
+}) => {
+  await page.route("**/api/settings/configuration", async (route) => {
+    if (route.request().method() === "PATCH") {
+      expect(route.request().postDataJSON()).toEqual({
+        revision: "optional-settings",
+        values: { segment_duration_s: 120 },
+        clear: [],
+        reset: [],
+      });
+      await route.fulfill({ json: {} });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        revision: "optional-settings",
+        fields: [
+          {
+            key: "segment_duration_s",
+            label: "分段时长",
+            group: "recording",
+            type: "integer",
+            value: 60,
+          },
+          {
+            key: "asr_remote_base_url",
+            label: "远程转写地址",
+            group: "asr",
+            type: "string",
+            value: "",
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/settings/configuration");
+  await page.getByLabel("分段时长", { exact: false }).fill("120");
+  const saved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/settings/configuration" &&
+      response.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  expect((await saved).status()).toBe(200);
+});
 test("401 pauses reads and retains settings under the reauthentication dialog", async ({
   page,
 }) => {
