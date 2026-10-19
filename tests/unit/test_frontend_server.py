@@ -28,6 +28,8 @@ def gateway(tmp_path: Path):
             self.send_header("Content-Type", "video/mp4" if "video" in self.path else "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Set-Cookie", "session=opaque; HttpOnly; Path=/")
+            if "folded-header" in self.path:
+                self.send_header("X-Broken", "one\r\n\tInjected: two")
             if "video" in self.path:
                 self.send_header("Content-Range", "bytes 0-4/100")
             self.end_headers()
@@ -106,6 +108,27 @@ def test_proxy_preserves_media_range_auth_csrf_and_cookies(gateway):
     assert forwarded["Authorization"] == "Basic test"
     assert forwarded["Range"] == "bytes=0-4"
     assert forwarded["X-Forwarded-For"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("path", ["http://elsewhere.invalid/api/test", "/api/test#fragment", "/api/test\\path"])
+def test_proxy_rejects_ambiguous_targets_without_contacting_backend(gateway, path):
+    port, observed = gateway
+    assert request(port, path)[0] == 400
+    assert observed == []
+
+
+def test_proxy_keeps_url_query_values_on_fixed_backend(gateway):
+    port, observed = gateway
+    path = "/api/test?url=https%3A%2F%2Felsewhere.invalid%2Fasset&text=%E5%BC%B9%E5%B9%95"
+    assert request(port, path)[0] == 200
+    assert observed[-1]["path"] == path
+
+
+def test_proxy_rejects_folded_backend_headers_before_sending_response(gateway):
+    port, _ = gateway
+    status, headers, _ = request(port, "/api/folded-header")
+    assert status == 502
+    assert "X-Broken" not in headers and "Injected" not in headers
 
 
 @pytest.mark.parametrize("chunked", [False, True])

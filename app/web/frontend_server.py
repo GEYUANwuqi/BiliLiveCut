@@ -18,6 +18,10 @@ _STATIC_MIME = {
     ".mjs": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
 }
+_API_TARGET = (
+    r"/(?:api|auth|review/api|collection/api)(?:/[^\x00-\x20\x7f?#\\]*)?(?:\?[^\x00-\x20\x7f#\\]*)?"
+    r"|/openapi\.json(?:\?[^\x00-\x20\x7f#\\]*)?"
+)
 _HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -33,6 +37,20 @@ _UI_ROUTE = re.compile(
     r"|settings(?:/(?:configuration|automation|llm|login|plugins|subtitles|intros))?"
     r"|review(?:/(?:queue|[0-9]+))?|collection/[0-9]+|plugins/[^/]+/settings)?/?$"
 )
+
+
+def _response_header(key: str, value: str) -> tuple[str, str]:
+    """仅转发合法的单行响应头；规范化前后不一致时拒绝整个响应。"""
+    name = key.replace("\r", "").replace("\n", "")
+    content = value.replace("\r", "").replace("\n", "")
+    if (
+        name != key
+        or content != value
+        or re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None
+        or re.fullmatch(r"[^\x00-\x08\x0a-\x1f\x7f]*", content) is None
+    ):
+        raise ValueError("invalid backend response header")
+    return name, content
 
 
 class FrontendHandler(BaseHTTPRequestHandler):
@@ -113,6 +131,11 @@ class FrontendHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def _proxy(self) -> None:
+        target = self.path
+        if not re.fullmatch(_API_TARGET, target):
+            self.send_error(400, "Invalid API request target")
+            self.close_connection = True
+            return
         # 禁止不明确的消息边界，避免前后端对同一请求产生不同解释。
         lengths = self.headers.get_all("Content-Length", [])
         transfer = self.headers.get("Transfer-Encoding", "").lower()
@@ -143,7 +166,7 @@ class FrontendHandler(BaseHTTPRequestHandler):
             headers["Connection"] = "close"
             headers["X-Forwarded-For"] = self.client_address[0]
             headers["X-Forwarded-Proto"] = "http"
-            connection.putrequest(self.command, self.path, skip_host=True, skip_accept_encoding=True)
+            connection.putrequest(self.command, target, skip_host=True, skip_accept_encoding=True)
             if transfer:
                 headers["Transfer-Encoding"] = "chunked"
             for key, value in headers.items():
@@ -160,12 +183,16 @@ class FrontendHandler(BaseHTTPRequestHandler):
                     connection.send(chunk)
                     remaining -= len(chunk)
             response = connection.getresponse()
+            connection_headers = {item.strip().lower() for item in response.getheader("Connection", "").split(",")}
+            response_headers = [
+                _response_header(key, value)
+                for key, value in response.getheaders()
+                if key.lower() not in _HOP_HEADERS | connection_headers
+            ]
             self.send_response(response.status)
             started = True
-            connection_headers = {item.strip().lower() for item in response.getheader("Connection", "").split(",")}
-            for key, value in response.getheaders():
-                if key.lower() not in _HOP_HEADERS | connection_headers:
-                    self.send_header(key, value)
+            for key, value in response_headers:
+                self.send_header(key, value)
             # 使用关闭连接结束流式响应，保留 Range、Set-Cookie、CSRF 和限流响应头。
             self.send_header("Connection", "close")
             self.end_headers()

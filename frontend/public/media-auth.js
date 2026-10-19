@@ -6,6 +6,7 @@ self.addEventListener("activate", (event) =>
 );
 self.addEventListener("message", (event) => {
   if (
+    event.origin !== self.location.origin ||
     !event.source?.id ||
     new URL(event.source.url).origin !== self.location.origin ||
     event.data?.type !== "blc:media-auth"

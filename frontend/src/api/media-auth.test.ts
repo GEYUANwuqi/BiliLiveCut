@@ -23,6 +23,7 @@ it("scopes Basic media credentials to one client and keeps Range requests", asyn
     { self, URL, Headers, Request, Map, fetch },
   );
   handlers.message({
+    origin,
     source: { id: "tab-1", url: `${origin}/review/1` },
     data: { type: "blc:media-auth", authorization: "Basic private" },
   });
@@ -40,6 +41,20 @@ it("scopes Basic media credentials to one client and keeps Range requests", asyn
   expect(forwarded.mode).toBe("same-origin");
   expect(forwarded.headers.get("Authorization")).toBe("Basic private");
   expect(forwarded.headers.get("Range")).toBe("bytes=0-99");
+  for (const untrusted of [undefined, "", "null", "https://other.test"]) {
+    handlers.message({
+      origin: untrusted,
+      source: { id: "tab-1", url: `${origin}/review/1` },
+      data: { type: "blc:media-auth", authorization: "Basic attacker" },
+    });
+    handlers.fetch({
+      request: new Request(`${origin}/api/clips/1/video`),
+      clientId: "tab-1",
+      respondWith,
+    });
+    const latest = fetch.mock.calls.at(-1)![0] as Request;
+    expect(latest.headers.get("Authorization")).toBe("Basic private");
+  }
   for (const [client, url] of [
     ["tab-2", `${origin}/api/clips/1/video`],
     ["tab-1", "https://other.test/api/clips/1/video"],
@@ -54,6 +69,7 @@ it("scopes Basic media credentials to one client and keeps Range requests", asyn
     expect(respondWith).not.toHaveBeenCalled();
   }
   handlers.message({
+    origin,
     source: { id: "tab-1", url: `${origin}/` },
     data: { type: "blc:media-auth", authorization: "" },
   });
