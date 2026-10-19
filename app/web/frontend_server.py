@@ -10,6 +10,7 @@ from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from urllib.parse import unquote, urlsplit
 
 _API_PREFIXES = ("/api", "/auth", "/review/api", "/collection/api")
@@ -51,6 +52,15 @@ def _response_header(key: str, value: str) -> tuple[str, str]:
     ):
         raise ValueError("invalid backend response header")
     return name, content
+
+
+class FrontendHTTPServer(ThreadingHTTPServer):
+    """绑定静态服务不做反向 DNS 查询，启动不依赖主机名解析服务。"""
+
+    def server_bind(self) -> None:
+        """沿用 TCP 绑定规则，以实际监听地址填写 HTTP 服务元数据。"""
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class FrontendHandler(BaseHTTPRequestHandler):
@@ -255,7 +265,7 @@ def serve_frontend(directory: Path, backend: str, host: str = "127.0.0.1", port:
     validate_backend(backend)
     if not (directory / "index.html").is_file():
         raise FileNotFoundError(f"未找到前端构建产物: {directory}，请先执行 npm ci && npm run build")
-    server = ThreadingHTTPServer((host, port), partial(FrontendHandler, directory=directory, backend=backend))
+    server = FrontendHTTPServer((host, port), partial(FrontendHandler, directory=directory, backend=backend))
     server.daemon_threads = True
     print(f"前端服务 -> http://{host}:{port}，API -> {backend}", flush=True)
     try:

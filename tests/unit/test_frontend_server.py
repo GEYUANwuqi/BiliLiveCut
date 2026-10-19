@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import socket
 import threading
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.web.frontend_server import FrontendHandler
+from app.web.frontend_server import FrontendHandler, FrontendHTTPServer
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def gateway(tmp_path: Path):
             pass
 
     backend = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
-    frontend = ThreadingHTTPServer(
+    frontend = FrontendHTTPServer(
         ("127.0.0.1", 0),
         partial(FrontendHandler, directory=tmp_path, backend=f"http://127.0.0.1:{backend.server_port}"),
     )
@@ -74,6 +75,25 @@ def request(port, path, method="GET", body=None, headers=None, **kwargs):
     result = response.status, dict(response.getheaders()), response.read()
     conn.close()
     return result
+
+
+def test_frontend_starts_without_reverse_dns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def forbidden(*args):
+        pytest.fail("静态前端启动不应等待反向 DNS")
+
+    monkeypatch.setattr(socket, "getfqdn", forbidden)
+    (tmp_path / "index.html").write_text("<main>frontend without DNS</main>")
+    server = FrontendHTTPServer(
+        ("127.0.0.1", 0), partial(FrontendHandler, directory=tmp_path, backend="http://127.0.0.1:1")
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert request(server.server_port, "/")[2] == b"<main>frontend without DNS</main>"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_spa_and_assets_have_separate_cache_and_fallback_rules(gateway):

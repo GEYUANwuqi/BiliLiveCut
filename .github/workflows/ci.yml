@@ -309,11 +309,11 @@ jobs:
         run: |
           python -c "from app.accelerators import _c_speedups, _cython_speedups, _repeat_speedups; from app.accelerators.dispatcher import get_repeat_backend; assert get_repeat_backend() == 'C++'; assert _repeat_speedups.consecutive_repeat_details('abc' * 100) == (0, 3, 100)"
 
-      - name: Verify process cleanup and service shutdown
+      - name: Verify process cleanup, frontend startup and service shutdown
         shell: bash
         env:
           ASR_NO_MODEL_DOWNLOAD: "1"
-        run: python -m pytest tests/unit/test_process_tree.py tests/unit/test_process_control.py tests/unit/test_service_shutdown.py --timeout=120 --fail-on-skip
+        run: python -m pytest tests/unit/test_process_tree.py tests/unit/test_process_control.py tests/unit/test_service_shutdown.py tests/integration/test_frontend_console.py --timeout=120 --fail-on-skip
         timeout-minutes: 10
 
       - name: Run pytest with coverage (>=50%)
