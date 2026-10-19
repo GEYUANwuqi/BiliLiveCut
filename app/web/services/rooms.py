@@ -19,10 +19,12 @@ from app.core.osutil import open_path
 from app.core.paths import clips_dir, ready_to_upload_dir
 from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
+    AppSetting,
     HighlightCandidate,
     HighlightEvent,
     LiveRoom,
     RawSegment,
+    RecordingSchedule,
     RecordingSession,
     ReviewStatus,
     SegmentTask,
@@ -35,7 +37,7 @@ from app.plugins.live_source import SourceUnavailable
 from app.recording.metadata import refresh_room_metadata
 from app.recording.recorder import Recorder
 from app.sources.registry import source_registry
-from app.sources.rooms import room_source
+from app.sources.rooms import REMOVED_ROOM_PREFIX, room_is_removed, room_source
 from app.web.services.notifications import push_notification
 
 
@@ -219,7 +221,7 @@ class RecorderManager:
         async with self._controls.setdefault(db_id, asyncio.Lock()):
             with get_session() as db:
                 room = db.get(LiveRoom, db_id)
-                if room is None:
+                if room is None or room_is_removed(db, db_id):
                     raise ValueError("房间不存在")
                 identity = room_source(room, db)
                 if not source_registry.available(identity.platform):
@@ -248,6 +250,27 @@ class RecorderManager:
         """返回当前正在录制的直播间 db_id 列表。"""
         return [rid for rid in self._tasks if self.is_running(rid)]
 
+    async def remove_room(self, db_id: int) -> None:
+        """移除闲置直播间及预约，保留身份、历史会话和媒体。"""
+        async with self._controls.setdefault(db_id, asyncio.Lock()):
+            with get_session() as db:
+                if db.get_bind().dialect.name == "sqlite":
+                    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                room = db.get(LiveRoom, db_id)
+                if room is None or room_is_removed(db, db_id):
+                    raise RoomNotFoundError(f"房间不存在: db_id={db_id}")
+                if room.platform == "local":
+                    raise ValueError("本地录播来源请在录播分析中管理")
+                if self.is_running(db_id) or room.enabled:
+                    raise RoomUpdateConflictError("直播间正在录制或收尾，请先停止录制再删除。")
+                room.auto_record = False
+                room.schedule_enabled = False
+                db.add(room)
+                for schedule in db.exec(select(RecordingSchedule).where(RecordingSchedule.room_id == db_id)).all():
+                    db.delete(schedule)
+                db.add(AppSetting(key=f"{REMOVED_ROOM_PREFIX}{db_id}", value=str(db_id)))
+            self._runtime.pop(db_id, None)
+
     async def start(
         self, db_id: int, pipeline: bool | None = None, produce: bool = False, *, automatic: bool = False
     ) -> None:
@@ -261,6 +284,7 @@ class RecorderManager:
                     config = load_room_config(room)
                     if (
                         room is None
+                        or room_is_removed(db, db_id)
                         or not room.auto_record
                         or any(
                             config.get(key, False)
@@ -290,7 +314,7 @@ class RecorderManager:
 
         with get_session() as db:
             room = db.get(LiveRoom, db_id)
-            if room is None:
+            if room is None or room_is_removed(db, db_id):
                 raise ValueError(f"房间不存在: db_id={db_id}")
             if room.platform == "local":
                 raise ValueError("本地录播来源不能启动直播录制")
@@ -306,7 +330,7 @@ class RecorderManager:
             if db.get_bind().dialect.name == "sqlite":
                 db.connection().exec_driver_sql("BEGIN IMMEDIATE")
             room = db.get(LiveRoom, db_id)
-            if room is None:
+            if room is None or room_is_removed(db, db_id):
                 raise ValueError(f"房间不存在: db_id={db_id}")
             if automatic:
                 from app.analysis.room_config import load_room_config
@@ -711,7 +735,7 @@ async def add_room(url: str, authorized: bool, platform: str | None = None) -> L
 
 
 class RoomNotFoundError(ValueError):
-    """请求更新的直播间不存在。"""
+    """请求操作的直播间不存在。"""
 
 
 class RoomUpdateConflictError(ValueError):
@@ -751,7 +775,7 @@ def update_room(db_id: int, fields: dict[str, Any]) -> LiveRoom:
     }
     with get_session() as db:
         room = db.get(LiveRoom, db_id)
-        if room is None:
+        if room is None or room_is_removed(db, db_id):
             raise RoomNotFoundError(f"房间不存在: db_id={db_id}")
         # 录制中不允许修改功能开关(锁定保护)。
         if recorder_manager.is_running(db_id):
@@ -820,7 +844,7 @@ async def auto_recover_interrupted_sessions() -> list[int]:
 
             with get_session() as db:
                 room = db.get(LiveRoom, room_id)
-                if room is None or not room.authorized:
+                if room is None or room_is_removed(db, room_id) or not room.authorized:
                     continue
                 room_config = load_room_config(room)
                 paused = bool(room_config.get("recording_paused", False))

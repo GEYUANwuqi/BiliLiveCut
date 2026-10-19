@@ -64,6 +64,100 @@ async function mock(page: Page) {
   });
 }
 test.beforeEach(async ({ page }) => mock(page));
+
+for (const path of ["/rooms", "/"]) {
+  test(`room deletion requires confirmation and refreshes the list on ${path}`, async ({
+    page,
+  }) => {
+    let removed = false;
+    let deletions = 0;
+    await page.route("**/api/dashboard", (route) =>
+      route.fulfill({
+        json: {
+          rooms: removed
+            ? []
+            : [{ id: 88, room_id: 123, uploader_name: "待删除的主播" }],
+          counts: {},
+        },
+      }),
+    );
+    await page.route("**/api/rooms/88", (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      deletions++;
+      removed = true;
+      return route.fulfill({ json: { status: "deleted" } });
+    });
+    await page.goto(path);
+    await page.getByRole("button", { name: "删除", exact: true }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("已有录制、弹幕和切片仍会保留");
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(deletions).toBe(0);
+    await expect(
+      page.getByRole("heading", { name: "待删除的主播" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "删除", exact: true }).click();
+    await page.getByRole("button", { name: "确认删除", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "待删除的主播" }),
+    ).toHaveCount(0);
+    await expect(dialog).toHaveCount(0);
+    expect(deletions).toBe(1);
+  });
+}
+
+test("room deletion shows recording conflicts and permits a manual retry", async ({
+  page,
+}) => {
+  let attempts = 0;
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({
+      json: {
+        rooms: [{ id: 88, room_id: 123, uploader_name: "状态变化的主播" }],
+        counts: {},
+      },
+    }),
+  );
+  await page.route("**/api/rooms/88", (route) => {
+    attempts++;
+    return attempts === 1
+      ? route.fulfill({
+          status: 409,
+          json: { detail: "直播间正在录制或收尾，请先停止录制再删除。" },
+        })
+      : route.fulfill({ json: { status: "deleted" } });
+  });
+  await page.goto("/rooms");
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.getByRole("alertdialog").getByRole("alert")).toContainText(
+    "请先停止录制再删除",
+  );
+  expect(attempts).toBe(1);
+  await page.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(attempts).toBe(2);
+});
+
+test("recording rooms explain why deletion is unavailable", async ({
+  page,
+}) => {
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({
+      json: {
+        rooms: [{ id: 88, running: true, uploader_name: "正在录制的主播" }],
+        counts: {},
+      },
+    }),
+  );
+  await page.goto("/rooms");
+  await expect(
+    page.getByRole("button", { name: "删除", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByText("停止录制后可删除")).toBeVisible();
+});
+
 test("workspace renders and opens every navigation page without errors", async ({
   page,
 }) => {

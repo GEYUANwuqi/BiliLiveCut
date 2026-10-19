@@ -11,6 +11,7 @@ import {
   Radio,
   Settings2,
   Square,
+  Trash2,
   WandSparkles,
 } from "lucide-react";
 import { useAction, useApi, send, type Row, type Schemas } from "@/api/client";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Empty,
+  ConfirmButton,
   FormDialog,
   Page,
   QueryState,
@@ -395,6 +397,28 @@ export function RoomCard({
                 }}
               />
             </>
+          )}
+          <ConfirmButton
+            title="删除直播间"
+            description={`确认删除「${text(room.uploader_name || room.source_name, `直播间 #${id}`)}」？删除后停止开播守候并取消录制预约，已有录制、弹幕和切片仍会保留。重新添加同一房间可继续查看历史记录。`}
+            confirm="确认删除"
+            destructive
+            disabled={running}
+            onConfirm={() =>
+              action.mutateAsync({
+                path: `/api/rooms/${id}`,
+                method: "DELETE",
+                success: "直播间已删除，录制历史已保留",
+              })
+            }
+          >
+            <Trash2 className="size-3" />
+            删除
+          </ConfirmButton>
+          {running && (
+            <span className="text-xs text-muted-foreground">
+              停止录制后可删除
+            </span>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -105,6 +105,20 @@ async def create_room(req: AddRoomRequest) -> dict[str, Any]:
     }
 
 
+@router.delete("/rooms/{db_id}")
+async def delete_room(db_id: int) -> dict[str, str]:
+    """从直播间列表移除房间及预约，保留录制历史和媒体文件。"""
+    try:
+        await rooms_service.recorder_manager.remove_room(db_id)
+    except RoomNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RoomUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
 @router.patch("/rooms/{db_id}")
 def patch_room(db_id: int, req: UpdateRoomRequest) -> dict[str, Any]:
     """更新直播间阈值/模式等参数。"""

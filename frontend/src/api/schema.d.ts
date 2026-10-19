@@ -1095,7 +1095,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Room
+         * @description 从直播间列表移除房间及预约，保留录制历史和媒体文件。
+         */
+        delete: operations["delete_room_api_rooms__db_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -4531,6 +4535,39 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_room_api_rooms__db_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                db_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
                     };
                 };
             };

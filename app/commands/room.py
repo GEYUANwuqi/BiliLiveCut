@@ -7,6 +7,7 @@ from rich.console import Console
 
 from app.db.entities import LiveRoom
 from app.db.session import get_session
+from app.sources.rooms import room_is_removed
 
 console = Console()
 
@@ -41,7 +42,7 @@ def cmd_schedule(
 
     with get_session() as db:
         room = db.get(LiveRoom, room_id)
-        if room is None:
+        if room is None or room_is_removed(db, room_id):
             console.print(f"[red]房间不存在: db_id={room_id}[/red]")
             raise click.exceptions.Exit(code=1)
 

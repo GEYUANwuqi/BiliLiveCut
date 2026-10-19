@@ -3364,6 +3364,48 @@
       }
     },
     "/api/rooms/{db_id}": {
+      "delete": {
+        "description": "从直播间列表移除房间及预约，保留录制历史和媒体文件。",
+        "operationId": "delete_room_api_rooms__db_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Room Api Rooms  Db Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Room"
+      },
       "patch": {
         "description": "更新直播间阈值/模式等参数。",
         "operationId": "patch_room_api_rooms__db_id__patch",

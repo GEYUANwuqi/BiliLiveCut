@@ -9,7 +9,6 @@ import click
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
-from sqlmodel import select
 
 from app.core.config import settings
 from app.db.entities import LiveRoom
@@ -58,8 +57,10 @@ def cmd_add_room(
 
 def cmd_list_rooms() -> None:
     """列出所有已登记的直播间。"""
+    from app.sources.rooms import registered_rooms
+
     with get_session() as db:
-        rooms = db.exec(select(LiveRoom)).all()
+        rooms = registered_rooms(db)
 
     if not rooms:
         console.print("[yellow]暂无已登记的直播间。[/yellow]")
@@ -154,7 +155,7 @@ def cmd_record(
     from app.plugins.live_source import SourceError, SourceUnavailable
     from app.plugins.runtime import plugin_runtime
     from app.sources.registry import source_registry
-    from app.sources.rooms import room_source
+    from app.sources.rooms import room_is_removed, room_source
 
     async def execute() -> None:
         async with plugin_runtime():
@@ -167,7 +168,7 @@ def cmd_record(
 
             with get_session() as db:
                 room = db.get(LiveRoom, db_id)
-                if room is None:
+                if room is None or room_is_removed(db, db_id):
                     console.print(f"[red]未找到 db_id={db_id} 的直播间。[/red]")
                     raise click.exceptions.Exit(code=1)
                 if settings.require_authorization and not room.authorized:

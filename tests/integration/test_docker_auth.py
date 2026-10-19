@@ -102,6 +102,29 @@ async def test_cookie_writes_require_csrf_and_do_not_execute_on_failure(browser:
     assert not (await browser.get("/auth/status")).json()["authenticated"]
 
 
+async def test_room_deletion_requires_admin_and_csrf(browser: httpx.AsyncClient) -> None:
+    from app.db.entities import LiveRoom
+    from app.db.session import get_session
+    from app.sources.rooms import room_is_removed
+
+    with get_session() as db:
+        room = LiveRoom(input_url="123", room_id=123)
+        db.add(room)
+        db.flush()
+        room_id = room.id
+    path = f"/api/rooms/{room_id}"
+    assert (await browser.delete(path)).status_code == 401
+    await login(browser, "editor", "reviewer-password")
+    assert (await browser.delete(path)).status_code == 403
+    await login(browser)
+    csrf = browser.headers.pop("X-BLC-CSRF")
+    assert (await browser.delete(path)).status_code == 403
+    with get_session() as db:
+        assert not room_is_removed(db, room_id)
+    browser.headers["X-BLC-CSRF"] = csrf
+    assert (await browser.delete(path)).status_code == 200
+
+
 async def test_basic_api_remains_supported_and_roles_are_enforced(browser: httpx.AsyncClient) -> None:
     header = "Basic " + base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
     assert (await browser.get("/api/dashboard", headers={"Authorization": header})).status_code == 200
