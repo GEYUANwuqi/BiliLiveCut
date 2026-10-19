@@ -144,6 +144,14 @@ jobs:
           pip install -e ".[dev,web]"
           python setup.py build_ext --inplace
 
+      - name: Verify frontend process supervision (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ASR_NO_MODEL_DOWNLOAD: "1"
+        run: python -m pytest tests/integration/test_frontend_console.py --timeout=120 --fail-on-skip
+        timeout-minutes: 3
+
       - name: Run pytest with coverage (≥50%)
         shell: bash
         env:

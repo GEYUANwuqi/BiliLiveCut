@@ -81,7 +81,9 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
                 assert json.loads(response.read())["current_web_port"] == port
             children = psutil.Process(process.pid).children()
             _stop_console(process)
-            assert process.wait(timeout=25) == (1 if os.name == "nt" else 0)
+            exit_code = process.wait(timeout=25)
+            # Windows 的 TerminateProcess 退出码由调用方决定；监督器须保留失败语义。
+            assert exit_code != 0 if os.name == "nt" else exit_code == 0
             _, alive = psutil.wait_procs(children, timeout=5)
             assert not alive, "停止后不能遗留前端或后端进程"
             with socket.socket() as probe:
@@ -179,6 +181,8 @@ def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
         "ASR_NO_MODEL_DOWNLOAD": "1",
     }
     with socket.socket() as occupied:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            occupied.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         occupied.bind(("127.0.0.1", 0))
         occupied.listen()
         port = occupied.getsockname()[1]
@@ -199,7 +203,10 @@ def test_start_cleans_up_api_when_frontend_port_is_occupied(tmp_path: Path):
                 for api_port in api_ports:
                     with socket.socket() as probe:
                         assert probe.connect_ex(("127.0.0.1", api_port)) != 0, output
-                assert any(message in output.lower() for message in ("address already in use", "winerror 10048"))
+                assert any(
+                    message in output.lower()
+                    for message in ("address already in use", "winerror 10048", "winerror 10013")
+                ), output
             finally:
                 if process.poll() is None:
                     _stop_console(process)
