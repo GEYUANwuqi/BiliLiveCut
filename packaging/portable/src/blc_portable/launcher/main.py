@@ -33,7 +33,7 @@ from config.launcher_settings import APP_ROOT_ENV, WEB_PORT_ENV, load_launcher_c
 APP_NAME = "BiliLiveCut"
 VERSION = "V0.1.19.2 Alpha"
 RELEASE_VERSION = "0.1.19.2-alpha"
-SOURCE_COMMIT_SHORT = "3e20e2f"
+SOURCE_COMMIT_SHORT = "32bbc1b"
 # NOTE: RELEASE_ID 将在获得 Payload SHA-256 后动态生成 (内容寻址)
 SUPPORTED_PYTHON_VERSIONS = frozenset({(3, 11), (3, 12)})
 
