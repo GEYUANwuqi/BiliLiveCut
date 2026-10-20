@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/StarGazerQQD/BiliLiveCut)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-00AEEC?logo=readthedocs&logoColor=white)](https://stargazerqqd.github.io/BiliLiveCut/)
 
-**当前版本：V0.1.19.2 Alpha** (`0.1.19.2-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
+**当前版本：V0.1.19.3 Alpha** (`0.1.19.3-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
 
 面向 Bilibili 直播的自动切片工具：**录制 → 转写 → 识别高光 → 人工审核 → 生成切片与文案 → 可选上传**。通过 Web 控制台管理直播间、录制场次、转写、候选和成品。
 
@@ -97,6 +97,8 @@ python -m app.cli start
 - GitHub：[BEIJUUUUU](https://github.com/BEIJUUUUU)（[#68 定位反馈](https://github.com/StarGazerQQD/BiliLiveCut/issues/68#issuecomment-6108960218)，提供镜像重定向和 SDK 兼容性复现）
 - GitHub：[GEYUANwuqi](https://github.com/GEYUANwuqi)（[PR #73](https://github.com/StarGazerQQD/BiliLiveCut/pull/73)，贡献 uv 支持、pre-commit 钩子及 [Docker 部署修复](https://github.com/StarGazerQQD/BiliLiveCut/pull/78)）
 - GitHub：[Aethey](https://github.com/Aethey)（[#85](https://github.com/StarGazerQQD/BiliLiveCut/issues/85)，反馈直播线路连接及重连问题）
+
+- GitHub：[2335181](https://github.com/2335181)（[#88](https://github.com/StarGazerQQD/BiliLiveCut/issues/88)，反馈直播间删除入口）
 
 - Bilibili：[大口径喷子](https://space.bilibili.com/13886027)
 - Bilibili：[口米_K-Mi](https://space.bilibili.com/493488643)
