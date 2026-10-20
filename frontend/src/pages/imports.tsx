@@ -30,11 +30,13 @@ import { useDraft } from "@/lib/drafts";
 import { duration, number, obj, rows, text, time } from "@/lib/data";
 import {
   cancelImportUpload,
-  runImport,
+  runImportBatch,
   useImportProgress,
+  type ImportItem,
 } from "@/features/import-controller";
+import { fileStem, planImports, type ImportPair } from "@/features/import-plan";
 
-function requestId() {
+function requestId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
     value.toString(16).padStart(2, "0"),
   ).join("");
@@ -51,45 +53,73 @@ export default function ImportsPage() {
   const data = obj(query.data);
   const imports = rows(data.imports);
   const record = obj(draft.value.record);
-  const video =
-    draft.value.video instanceof File ? draft.value.video : undefined;
-  const comments =
-    draft.value.comments instanceof File ? draft.value.comments : undefined;
+  const videos = (draft.value.videos || []) as File[];
+  const comments = (draft.value.comments || []) as File[];
+  const batch = draft.value.batch as ImportItem[] | undefined;
   const videoLimit = number(data.max_video_bytes) || 50 * 1024 ** 3;
   const commentLimit = number(data.max_comment_bytes) || 32 * 1024 ** 2;
-  function update(value: Row) {
+  let plan: ImportPair[] = [];
+  let pairingError = "";
+  if (videos.length && !record.id && !batch) {
+    try {
+      plan = planImports(videos, comments, videoLimit, commentLimit);
+    } catch (error) {
+      pairingError = error instanceof Error ? error.message : "文件配对失败";
+    }
+  }
+  function update(value: Row): void {
     draft.update({ ...draft.value, ...value });
   }
-  function select(file: File | undefined, kind: "video" | "comments") {
-    if (!file) return;
-    const limit = kind === "video" ? videoLimit : commentLimit;
+  function select(files: File[], kind: "videos" | "comments"): void {
+    if (!files.length) return;
+    if (record.id && files.length !== 1) {
+      toast.error("继续已有记录时请选择一份同名文件");
+      return;
+    }
+    if (record.id) {
+      const expected =
+        record[kind === "videos" ? "video_name" : "comments_name"];
+      if (!expected || files[0].name !== expected) {
+        toast.error(
+          expected
+            ? `请重新选择 ${expected}`
+            : "本条记录未声明弹幕，请新建导入",
+        );
+        return;
+      }
+    }
+    const limit = kind === "videos" ? videoLimit : commentLimit;
     const allowed =
-      kind === "video"
+      kind === "videos"
         ? /\.(mp4|mkv|flv|ts|mov|webm|m4v)$/i
         : /\.(xml|json|srt|ass)$/i;
-    if (!allowed.test(file.name) || file.size === 0 || file.size > limit) {
+    if (
+      files.some(
+        (file) =>
+          !allowed.test(file.name) || file.size === 0 || file.size > limit,
+      )
+    ) {
       toast.error(
-        `文件格式不支持、文件为空或超过限制（${(limit / 1024 ** (kind === "video" ? 3 : 2)).toFixed(0)} ${kind === "video" ? "GiB" : "MiB"}）`,
+        `文件格式不支持、文件为空或超过限制（${(limit / 1024 ** (kind === "videos" ? 3 : 2)).toFixed(0)} ${kind === "videos" ? "GiB" : "MiB"}）`,
       );
       return;
     }
     update({
-      [kind]: file,
-      ...(kind === "video" && !draft.value.title
-        ? { title: file.name.replace(/\.[^.]+$/, "") }
-        : {}),
+      [kind]: files,
     });
   }
-  async function submit() {
-    if (!String(draft.value.title || "").trim()) {
-      toast.error("请填写录播标题");
-      return;
-    }
-    if (!record.video_uploaded && !video) {
+  async function submit(): Promise<void> {
+    if (progress.busy) return;
+    if (!batch && !record.video_uploaded && !videos.length) {
       toast.error("请选择视频文件");
       return;
     }
-    if (record.comments_name && !record.comments_uploaded && !comments) {
+    if (
+      !batch &&
+      record.comments_name &&
+      !record.comments_uploaded &&
+      !comments.length
+    ) {
       toast.error(`请重新选择 ${record.comments_name}`);
       return;
     }
@@ -98,25 +128,40 @@ export default function ImportsPage() {
       toast.error("弹幕偏移应在正负 604800 秒以内");
       return;
     }
-    const declaration: Schemas["ImportRequest"] = {
-      title: String(draft.value.title).trim(),
-      video_name: video?.name || String(record.video_name),
-      comments_name:
-        comments?.name || (record.comments_name as string | null | undefined),
-      offset_s: offset,
-      request_id: String(
-        draft.value.request_id || record.request_id || requestId(),
-      ),
-    };
-    const snapshot = { ...draft.value, request_id: declaration.request_id };
-    draft.update(snapshot);
     try {
-      await runImport({
-        declaration,
-        record: record.id ? record : undefined,
-        video,
-        comments,
-        onRecord: (next) => draft.update({ ...snapshot, record: next }),
+      let queue: ImportItem[];
+      if (batch) queue = [...batch];
+      else if (record.id)
+        queue = [
+          { declaration: {}, record, video: videos[0], comments: comments[0] },
+        ];
+      else {
+        const pairs = planImports(videos, comments, videoLimit, commentLimit);
+        const title = String(draft.value.title || "").trim();
+        queue = pairs.map((pair): ImportItem => {
+          const stem = fileStem(pair.video.name);
+          const declaration: Schemas["ImportRequest"] = {
+            title: (title
+              ? pairs.length > 1
+                ? `${title} · ${stem}`
+                : title
+              : stem
+            ).slice(0, 200),
+            video_name: pair.video.name,
+            comments_name: pair.comments?.name || null,
+            offset_s: offset,
+            request_id: requestId(),
+          };
+          return { ...pair, declaration };
+        });
+      }
+      const snapshot = { ...draft.value, batch: queue };
+      draft.update(snapshot);
+      await runImportBatch(queue, (index, next) => {
+        queue = queue.map((item, position) =>
+          position === index ? next : item,
+        );
+        draft.update({ ...snapshot, batch: queue });
       });
       draft.reset();
       toast.success("录播已提交，预处理和分析在后台继续");
@@ -127,7 +172,14 @@ export default function ImportsPage() {
       await query.refetch();
     }
   }
-  function resume(item: Row) {
+  function resume(item: Row): void {
+    if (
+      batch &&
+      !window.confirm(
+        "切换导入会放弃本页剩余队列；已创建记录仍保留。是否继续？",
+      )
+    )
+      return;
     draft.update({
       record: item,
       title: item.title,
@@ -148,6 +200,13 @@ export default function ImportsPage() {
             variant="outline"
             disabled={progress.busy}
             onClick={() => {
+              if (
+                batch &&
+                !window.confirm(
+                  "放弃本页剩余队列并重新选择？已创建记录仍保留。",
+                )
+              )
+                return;
               draft.reset();
               if (videoRef.current) videoRef.current.value = "";
               if (commentsRef.current) commentsRef.current.value = "";
@@ -168,14 +227,14 @@ export default function ImportsPage() {
               </span>
               <div>
                 <h2 className="font-semibold">
-                  {record.id ? "继续未完成的导入" : "导入一段录播"}
+                  {record.id || batch ? "继续未完成的导入" : "导入录播"}
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  视频必选，弹幕按需附加
+                  可多选视频，弹幕按文件名配对
                 </p>
               </div>
             </div>
-            <fieldset disabled={progress.busy} className="space-y-5">
+            <fieldset disabled={progress.busy || !!batch} className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="import-title">录播标题</Label>
                 <Input
@@ -183,7 +242,7 @@ export default function ImportsPage() {
                   maxLength={200}
                   value={String(draft.value.title || "")}
                   disabled={!!record.id}
-                  placeholder="给这段内容起一个容易找到的名字"
+                  placeholder="可留空使用文件名；多段时作为标题前缀"
                   onChange={(event) => update({ title: event.target.value })}
                 />
               </div>
@@ -192,8 +251,8 @@ export default function ImportsPage() {
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (!progress.busy && !record.video_uploaded)
-                    select(event.dataTransfer.files[0], "video");
+                  if (!progress.busy && !batch && !record.video_uploaded)
+                    select(Array.from(event.dataTransfer.files), "videos");
                 }}
               >
                 <Film className="mb-3 size-8 text-primary/70" />
@@ -205,7 +264,9 @@ export default function ImportsPage() {
                 ) : (
                   <>
                     <p className="max-w-full truncate text-sm font-medium">
-                      {video?.name || "拖入视频，或点击选择文件"}
+                      {videos.length
+                        ? videos.map((file) => file.name).join("、")
+                        : "拖入视频，或点击选择文件"}
                     </p>
                     <p className="mt-2 text-xs text-muted-foreground">
                       MP4、MKV、FLV、TS、MOV、WebM · 最大{" "}
@@ -226,9 +287,12 @@ export default function ImportsPage() {
                   ref={videoRef}
                   hidden
                   type="file"
+                  multiple={!record.id}
                   accept=".mp4,.mkv,.flv,.ts,.mov,.webm,.m4v"
                   aria-label="选择录播视频"
-                  onChange={(event) => select(event.target.files?.[0], "video")}
+                  onChange={(event) =>
+                    select(Array.from(event.target.files || []), "videos")
+                  }
                 />
               </div>
               <div className="rounded-xl border p-4">
@@ -249,7 +313,7 @@ export default function ImportsPage() {
                   </Button>
                 </div>
                 <p className="truncate text-xs text-muted-foreground">
-                  {comments?.name ||
+                  {comments.map((file) => file.name).join("、") ||
                     text(
                       record.comments_name,
                       "XML、JSON、SRT、ASS；支持后续继续上传",
@@ -259,10 +323,11 @@ export default function ImportsPage() {
                   ref={commentsRef}
                   hidden
                   type="file"
+                  multiple={!record.id}
                   accept=".xml,.json,.srt,.ass"
                   aria-label="选择弹幕文件"
                   onChange={(event) =>
-                    select(event.target.files?.[0], "comments")
+                    select(Array.from(event.target.files || []), "comments")
                   }
                 />
                 <div className="mt-4 flex items-center gap-3">
@@ -284,10 +349,43 @@ export default function ImportsPage() {
                 </div>
               </div>
             </fieldset>
+            {pairingError && (
+              <p className="error-panel mt-4 text-sm" role="alert">
+                {pairingError}
+              </p>
+            )}
+            {(batch || plan.length > 0) && (
+              <div
+                className="mt-4 space-y-2 text-sm"
+                aria-label="文件配对与上传队列"
+              >
+                <p>
+                  共 {batch?.length || plan.length} 段 · 已提交{" "}
+                  {batch?.filter((item) => item.submitted).length || 0} 段
+                </p>
+                <ol>
+                  {(batch || plan).map((item, index) => (
+                    <li key={index}>
+                      {item.video?.name ||
+                        text((item as ImportItem).record?.video_name)}{" "}
+                      →{" "}
+                      {item.comments?.name ||
+                        text(
+                          (item as ImportItem).record?.comments_name,
+                          "无弹幕",
+                        )}
+                      {batch?.[index].submitted ? " · 已提交" : " · 待完成"}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
             {progress.busy && (
               <div className="mt-5 space-y-3" role="status">
                 <div className="flex justify-between text-xs">
-                  <span>{progress.step}</span>
+                  <span>
+                    第 {progress.position}/{progress.total} 段 · {progress.step}
+                  </span>
                   <span>{progress.percent}%</span>
                 </div>
                 <Progress value={progress.percent} />
@@ -312,9 +410,9 @@ export default function ImportsPage() {
                   停止上传
                 </Button>
               ) : (
-                <Button onClick={() => void submit()}>
+                <Button disabled={!!pairingError} onClick={() => void submit()}>
                   <Upload className="size-4" />
-                  {record.id ? "继续上传并分析" : "上传并开始分析"}
+                  {record.id || batch ? "继续上传并分析" : "上传并开始分析"}
                 </Button>
               )}
             </div>

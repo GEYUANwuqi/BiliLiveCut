@@ -19,6 +19,8 @@
 
 旧模板和原生脚本保留在源码中供迁移核对，运行入口不再使用它们。
 
+React 录播页面支持视频与弹幕多选，在请求前完成同名配对、歧义校验和自然排序。当前标签页保存每段声明和完成状态；失败或停止后继续同一队列，先核对服务端已上传状态，再上传剩余文件。相关行为由 `import-plan`、`import-controller` 单元测试和真实浏览器的批量导入测试共同覆盖。
+
 ## 本地修改与刷新
 
 准备 Python 3.12 和 Node.js 24。下面的命令都从当前工作树根目录执行；使用 Git worktree 时，每个工作树需要自己的 Python 环境。
@@ -87,7 +89,7 @@ npm --prefix frontend exec playwright install chromium
 npm --prefix frontend run test:e2e
 ```
 
-检查包含 TypeScript、lint、Vitest 和构建；浏览器测试覆盖桌面与手机导航、空列表、设置计数、草稿保留、认证失效等行为。代理测试使用真实 HTTP 请求验证流式上传、Range、Cookie、CSRF、缓存和路由回退。
+检查包含 TypeScript、lint、Vitest 和构建；浏览器测试先构建生产前端，再使用独立预览服务覆盖桌面与手机导航、空列表、设置计数、草稿保留、认证失效等行为，避免开发服务器的依赖预构建干扰验收。代理测试使用真实 HTTP 请求验证流式上传、Range、Cookie、CSRF、缓存和路由回退。
 
 后端接口变化后，在已安装 web 依赖的 Python 环境执行：
 

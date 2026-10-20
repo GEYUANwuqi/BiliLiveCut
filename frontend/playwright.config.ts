@@ -15,7 +15,8 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: "npm run dev -- --port 5199",
+      command:
+        "npm run build && npm run preview -- --host 127.0.0.1 --port 5199 --strictPort",
       env: { BLC_API_PROXY: "http://127.0.0.1:5196" },
       url: "http://127.0.0.1:5199",
       reuseExistingServer: false,
