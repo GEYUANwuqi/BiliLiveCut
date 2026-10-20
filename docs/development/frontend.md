@@ -91,6 +91,8 @@ npm --prefix frontend run test:e2e
 
 检查包含 TypeScript、lint、Vitest 和构建；浏览器测试先构建生产前端，再使用独立预览服务覆盖桌面与手机导航、空列表、设置计数、草稿保留、认证失效等行为，避免开发服务器的依赖预构建干扰验收。代理测试使用真实 HTTP 请求验证流式上传、Range、Cookie、CSRF、缓存和路由回退。
 
+CI 与 Release 的共享提交检查均先准备 Node.js 24，再通过 `npm --prefix frontend ci` 按锁文件安装依赖。Release 的 Payload 作业单独准备 Node.js 24；Payload 构建器在冻结的源码快照中安装前端依赖并构建，不依赖其他作业的 `node_modules` 或 runner 自带的 Node。
+
 后端接口变化后，在已安装 web 依赖的 Python 环境执行：
 
 ```bash

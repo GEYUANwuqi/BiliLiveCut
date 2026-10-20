@@ -31,6 +31,35 @@ def test_hook_tool_versions_match_development_and_ci() -> None:
     assert any(f"pre-commit=={version}" in step.get("run", "") for step in workflow["jobs"]["lint"]["steps"])
 
 
+@pytest.mark.parametrize("workflow_name,job_name", [("ci.yml", "lint"), ("release.yml", "test")])
+def test_react_hooks_prepare_locked_dependencies_before_clean_checkout_checks(
+    workflow_name: str, job_name: str
+) -> None:
+    workflow = yaml.safe_load((ci_gate.REPO_ROOT / ".github/workflows" / workflow_name).read_text(encoding="utf-8"))
+    steps = workflow["jobs"][job_name]["steps"]
+    checks = next(i for i, step in enumerate(steps) if "pre_commit run --all-files" in step.get("run", ""))
+    installs = [i for i, step in enumerate(steps[:checks]) if step.get("run", "").strip() == "npm --prefix frontend ci"]
+    assert installs, f"{workflow_name}/{job_name}: React hooks require npm ci before the shared checks"
+    install = installs[-1]
+    setup = next(step for step in steps[:install] if step.get("uses", "").startswith("actions/setup-node@"))
+    assert str(setup["with"]["node-version"]) == "24"
+    for step in (setup, steps[install], steps[checks]):
+        assert not step.get("if")
+        assert not step.get("continue-on-error", False)
+
+
+@pytest.mark.parametrize("workflow_name,job_name", [("ci.yml", "portable-test"), ("release.yml", "build-payload")])
+def test_payload_frontend_build_prepares_compatible_node(workflow_name: str, job_name: str) -> None:
+    workflow = yaml.safe_load((ci_gate.REPO_ROOT / ".github/workflows" / workflow_name).read_text(encoding="utf-8"))
+    steps = workflow["jobs"][job_name]["steps"]
+    build = next(i for i, step in enumerate(steps) if "python build_payload.py" in step.get("run", ""))
+    setups = [step for step in steps[:build] if step.get("uses", "").startswith("actions/setup-node@")]
+    assert setups, f"{workflow_name}/{job_name}: Payload includes a frontend build and requires Node"
+    assert str(setups[-1]["with"]["node-version"]) == "24"
+    assert not setups[-1].get("if")
+    assert not setups[-1].get("continue-on-error", False)
+
+
 def test_uv_default_build_tools_match_reproducible_wheel_builder() -> None:
     from scripts.build_portable_runtime_wheels import REQUIRED_BUILD_TOOLS
 
