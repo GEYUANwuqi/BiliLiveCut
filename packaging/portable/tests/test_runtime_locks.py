@@ -74,7 +74,7 @@ def test_runtime_locks_cover_core_application_imports() -> None:
         "sqlmodel",
         "torch",
         "torchaudio",
-        "typer",
+        "click",
         "uvicorn",
     }
     assert required <= _direct_requirement_names()

@@ -31,6 +31,8 @@ jobs:
           enable-cache: false
       - name: Build CPU image
         run: docker build --tag bili-live-cut:docker-test --file packaging/docker/Dockerfile .
+      - name: Build independent frontend image
+        run: docker build --tag bili-live-cut-frontend:docker-test --file frontend/Dockerfile .
       - name: Audit installed Python dependencies
         run: uv run --no-project --python 3.12 --with pip-audit==2.10.1 python scripts/audit_docker_runtime.py
       - name: Install browser for authentication acceptance

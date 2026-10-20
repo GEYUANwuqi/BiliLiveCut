@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/StarGazerQQD/BiliLiveCut)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-00AEEC?logo=readthedocs&logoColor=white)](https://stargazerqqd.github.io/BiliLiveCut/)
 
-**当前版本：V0.1.19.2 Alpha** (`0.1.19.2-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
+**当前版本：V0.1.19.3 Alpha** (`0.1.19.3-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
 
 面向 Bilibili 直播的自动切片工具：**录制 → 转写 → 识别高光 → 人工审核 → 生成切片与文案 → 可选上传**。通过 Web 控制台管理直播间、录制场次、转写、候选和成品。
 
@@ -34,7 +34,7 @@ Engine Pack 的本地构建与导入方式见 [Portable 构建说明](https://st
 
 ### 源码运行
 
-准备 FFmpeg，在已下载的项目根目录选择一种安装方式。C/Cython 扩展需要编译器与 Python 开发头文件，准备方法见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html#原生扩展构建与安装排错)。
+准备 FFmpeg 和 Node.js 24，在已下载的项目根目录选择一种 Python 安装方式。C/Cython 扩展需要编译器与 Python 开发头文件，准备方法见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html#原生扩展构建与安装排错)。
 
 使用 [uv](https://docs.astral.sh/uv/getting-started/installation/)（默认 Python 3.12），以下 PowerShell 命令安装运行依赖和全部 ASR、LLM 后端：
 
@@ -42,7 +42,9 @@ Engine Pack 的本地构建与导入方式见 [Portable 构建说明](https://st
 uv sync --locked --no-dev --extra web --extra asr-all --extra llm
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 uv run --locked --no-dev --extra web --extra asr-all --extra llm blc init
-uv run --locked --no-dev --extra web --extra asr-all --extra llm blc serve
+npm --prefix frontend ci
+npm --prefix frontend run build
+uv run --no-sync blc start
 ```
 
 仅录制和使用 Web 后台时可以省略 `--extra asr-all --extra llm`，后续 `uv run` 也使用同样的 extras。开发环境直接执行 `uv sync --locked`，详见[开发说明](https://stargazerqqd.github.io/BiliLiveCut/development/environment.html)。
@@ -55,10 +57,12 @@ python -m venv .venv
 pip install -e ".[web,asr-all,llm]"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m app.cli init
-python -m app.cli serve
+npm --prefix frontend ci
+npm --prefix frontend run build
+python -m app.cli start
 ```
 
-默认访问 `http://127.0.0.1:8000`。直播间、录制与大部分业务配置都可在 Web 页面管理；安装镜像、CLI 录制和排错见[使用指南](https://stargazerqqd.github.io/BiliLiveCut/features/)。Docker 部署见 [Docker 说明](https://stargazerqqd.github.io/BiliLiveCut/guide/docker.html)。
+默认访问 `http://127.0.0.1:8000`。Click 命令入口为 `blc`；`start` 启动独立静态前端与 FastAPI API 两个进程，只运行后端 API 使用 `blc backend`，只运行已构建的前端使用 `blc frontend --backend http://127.0.0.1:8000`（默认前端端口 8080）。前端开发和热更新见 [Web 页面开发](https://stargazerqqd.github.io/BiliLiveCut/development/frontend.html)。直播间、录制与大部分业务配置都可在 Web 页面管理；安装镜像、CLI 录制和排错见[使用指南](https://stargazerqqd.github.io/BiliLiveCut/features/)。Docker 部署见 [Docker 说明](https://stargazerqqd.github.io/BiliLiveCut/guide/docker.html)。
 
 ## 使用与升级注意事项
 
@@ -93,6 +97,8 @@ python -m app.cli serve
 - GitHub：[BEIJUUUUU](https://github.com/BEIJUUUUU)（[#68 定位反馈](https://github.com/StarGazerQQD/BiliLiveCut/issues/68#issuecomment-6108960218)，提供镜像重定向和 SDK 兼容性复现）
 - GitHub：[GEYUANwuqi](https://github.com/GEYUANwuqi)（[PR #73](https://github.com/StarGazerQQD/BiliLiveCut/pull/73)，贡献 uv 支持、pre-commit 钩子及 [Docker 部署修复](https://github.com/StarGazerQQD/BiliLiveCut/pull/78)）
 - GitHub：[Aethey](https://github.com/Aethey)（[#85](https://github.com/StarGazerQQD/BiliLiveCut/issues/85)，反馈直播线路连接及重连问题）
+
+- GitHub：[2335181](https://github.com/2335181)（[#88](https://github.com/StarGazerQQD/BiliLiveCut/issues/88)，反馈直播间删除入口）
 
 - Bilibili：[大口径喷子](https://space.bilibili.com/13886027)
 - Bilibili：[口米_K-Mi](https://space.bilibili.com/493488643)

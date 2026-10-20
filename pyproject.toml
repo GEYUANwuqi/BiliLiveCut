@@ -1,6 +1,6 @@
 [project]
 name = "bili-live-cut"
-version = "0.1.19.2-alpha"
+version = "0.1.19.3-alpha"
 description = "AI 直播实时切片系统:监听 Bilibili 直播,自动录制、转写、识别高光、生成切片与文案"
 readme = "README.md"
 license = "MIT"
@@ -16,7 +16,7 @@ dependencies = [
     "pydantic-settings>=2.3", # 从 .env / 环境变量读取配置
     "sqlmodel>=0.0.22,<0.0.45", # 0.0.45 改变默认 datetime 存储语义，当前 Schema 仍使用无时区 UTC
     "loguru>=0.7",            # 结构化日志
-    "typer>=0.12",            # 命令行入口
+    "click>=8.1.7,<9",        # 命令行入口
     "rich>=13.7",             # 终端美化输出
     "websockets>=12.0",       # 弹幕 WebSocket 长连接
     "brotli>=1.1",            # 弹幕协议解压(B 站使用 brotli)

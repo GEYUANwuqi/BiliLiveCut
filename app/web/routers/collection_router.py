@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 
 collection_router = APIRouter(prefix="/collection", tags=["collection"])
@@ -29,19 +25,6 @@ class RenderCollectionRequest(BaseModel):
     event_ids: list[int]
     chapter_titles: list[str] | None = None
     include_chapter_cards: bool = True
-
-
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
-
-
-@collection_router.get("/{topic_id}", response_class=HTMLResponse)
-async def collection_page(request: Request, topic_id: int) -> HTMLResponse:
-    """合集编辑器页面。"""
-    return _TEMPLATES.TemplateResponse(
-        request=request,
-        name="collection.html",
-        context={"topic_id": topic_id},
-    )
 
 
 @collection_router.get("/api/{topic_id}")

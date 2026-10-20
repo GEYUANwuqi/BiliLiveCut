@@ -18,7 +18,7 @@ from app.db.entities import (
 )
 from app.db.session import get_session
 from app.sources.registry import source_registry
-from app.sources.rooms import room_source_view
+from app.sources.rooms import registered_rooms, room_source_view
 from app.web.services.rooms import recorder_manager
 
 
@@ -30,7 +30,7 @@ def dashboard_state() -> dict[str, Any]:
     from sqlalchemy import func
 
     with get_session() as db:
-        rooms = db.exec(select(LiveRoom).where(LiveRoom.platform != "local")).all()
+        rooms = [room for room in registered_rooms(db) if room.platform != "local"]
         n_candidates = db.scalar(select(func.count()).select_from(HighlightCandidate)) or 0
         n_clips = db.scalar(select(func.count()).select_from(FinalClip)) or 0
         sessions = db.exec(

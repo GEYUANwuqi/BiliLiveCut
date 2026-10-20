@@ -1,0 +1,6535 @@
+{
+  "components": {
+    "schemas": {
+      "AddRoomRequest": {
+        "additionalProperties": false,
+        "description": "添加直播间请求体。",
+        "properties": {
+          "authorized": {
+            "default": false,
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "url": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "AddRoomRequest",
+        "type": "object"
+      },
+      "BatchRequest": {
+        "additionalProperties": false,
+        "description": "批量审批/发布/删除请求体。",
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "reject",
+              "publish",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Candidate Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_ids",
+          "action"
+        ],
+        "title": "BatchRequest",
+        "type": "object"
+      },
+      "Body_import_ass_file_api_templates_import_ass_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "max_size": 1048576,
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_ass_file_api_templates_import_ass_post",
+        "type": "object"
+      },
+      "BoundaryAdjustRequest": {
+        "additionalProperties": false,
+        "description": "人工调整剪辑边界的请求。",
+        "properties": {
+          "adjust_s": {
+            "maximum": 900.0,
+            "minimum": -900.0,
+            "title": "Adjust S",
+            "type": "number"
+          },
+          "side": {
+            "enum": [
+              "start",
+              "end",
+              "both"
+            ],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adjust_s",
+          "side"
+        ],
+        "title": "BoundaryAdjustRequest",
+        "type": "object"
+      },
+      "ClaimRequest": {
+        "additionalProperties": false,
+        "description": "领取审核项请求。",
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "title": "ClaimRequest",
+        "type": "object"
+      },
+      "ConfigurationChange": {
+        "additionalProperties": false,
+        "description": "省略或空白密钥保留，clear 明确清空，reset 删除覆盖。",
+        "properties": {
+          "clear": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clear",
+            "type": "array"
+          },
+          "reset": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reset",
+            "type": "array"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "title": "ConfigurationChange",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImportRecord": {
+        "additionalProperties": false,
+        "description": "版本化导入清单；session_id 与全部分析输入同事务提交。",
+        "properties": {
+          "comment_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment Count"
+          },
+          "comments_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments Name"
+          },
+          "comments_uploaded": {
+            "default": false,
+            "title": "Comments Uploaded",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "offset_s": {
+            "default": 0,
+            "maximum": 604800.0,
+            "minimum": -604800.0,
+            "title": "Offset S",
+            "type": "number"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "sealed": {
+            "default": false,
+            "title": "Sealed",
+            "type": "boolean"
+          },
+          "segment_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Count"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "video_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Video Name",
+            "type": "string"
+          },
+          "video_uploaded": {
+            "default": false,
+            "title": "Video Uploaded",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title",
+          "video_name",
+          "id",
+          "owner",
+          "created_at"
+        ],
+        "title": "ImportRecord",
+        "type": "object"
+      },
+      "ImportRequest": {
+        "additionalProperties": false,
+        "description": "创建导入时的文件声明；服务端从不接受客户端本地路径。",
+        "properties": {
+          "comments_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments Name"
+          },
+          "offset_s": {
+            "default": 0,
+            "maximum": 604800.0,
+            "minimum": -604800.0,
+            "title": "Offset S",
+            "type": "number"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "video_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Video Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "video_name"
+        ],
+        "title": "ImportRequest",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "LLMProviderIn": {
+        "additionalProperties": false,
+        "description": "大模型提供商配置项。",
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "clear_api_key": {
+            "default": false,
+            "title": "Clear Api Key",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "price_input_per_m": {
+            "default": 0.0,
+            "title": "Price Input Per M",
+            "type": "number"
+          },
+          "price_output_per_m": {
+            "default": 0.0,
+            "title": "Price Output Per M",
+            "type": "number"
+          },
+          "priority": {
+            "default": 100,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "web_search_param": {
+            "default": "",
+            "title": "Web Search Param",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_url",
+          "model"
+        ],
+        "title": "LLMProviderIn",
+        "type": "object"
+      },
+      "LLMProvidersRequest": {
+        "additionalProperties": false,
+        "description": "大模型提供商批量设置请求体。",
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/LLMProviderIn"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "LLMProvidersRequest",
+        "type": "object"
+      },
+      "MarkerRequest": {
+        "additionalProperties": false,
+        "description": "直播中人工高光打点请求体。",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "post_roll_s": {
+            "default": 40.0,
+            "maximum": 300.0,
+            "minimum": 2.0,
+            "title": "Post Roll S",
+            "type": "number"
+          },
+          "pre_roll_s": {
+            "default": 60.0,
+            "maximum": 300.0,
+            "minimum": 0.0,
+            "title": "Pre Roll S",
+            "type": "number"
+          }
+        },
+        "title": "MarkerRequest",
+        "type": "object"
+      },
+      "MergeTopicsRequest": {
+        "additionalProperties": false,
+        "description": "合并主题请求体（将 source_id 并入 target_id）。",
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "integer"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_id",
+          "target_id"
+        ],
+        "title": "MergeTopicsRequest",
+        "type": "object"
+      },
+      "PluginSettingsBody": {
+        "additionalProperties": false,
+        "description": "插件设置保存请求。",
+        "properties": {
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "title": "PluginSettingsBody",
+        "type": "object"
+      },
+      "PluginToggleBody": {
+        "additionalProperties": false,
+        "description": "插件启停请求。",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "PluginToggleBody",
+        "type": "object"
+      },
+      "ReanalysisRequest": {
+        "additionalProperties": false,
+        "description": "场次重分析请求。",
+        "properties": {
+          "reason": {
+            "default": "manual",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "retranscribe": {
+            "default": false,
+            "title": "Retranscribe",
+            "type": "boolean"
+          }
+        },
+        "title": "ReanalysisRequest",
+        "type": "object"
+      },
+      "RenderCollectionRequest": {
+        "additionalProperties": false,
+        "description": "渲染合集请求。",
+        "properties": {
+          "chapter_titles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter Titles"
+          },
+          "event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "include_chapter_cards": {
+            "default": true,
+            "title": "Include Chapter Cards",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event_ids"
+        ],
+        "title": "RenderCollectionRequest",
+        "type": "object"
+      },
+      "ReorderEventsRequest": {
+        "additionalProperties": false,
+        "description": "重排事件请求。",
+        "properties": {
+          "chapter_titles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter Titles"
+          },
+          "event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_ids"
+        ],
+        "title": "ReorderEventsRequest",
+        "type": "object"
+      },
+      "ReorderTopicRequest": {
+        "additionalProperties": false,
+        "description": "主题内视频重排序请求体。",
+        "properties": {
+          "event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_ids"
+        ],
+        "title": "ReorderTopicRequest",
+        "type": "object"
+      },
+      "ReviewDraftRequest": {
+        "additionalProperties": false,
+        "description": "审核草稿请求。",
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ReviewDraftRequest",
+        "type": "object"
+      },
+      "ReviewSubmitRequest": {
+        "additionalProperties": false,
+        "description": "人工审核决策请求。",
+        "properties": {
+          "decision": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ReviewSubmitRequest",
+        "type": "object"
+      },
+      "ScheduleRequest": {
+        "additionalProperties": false,
+        "description": "录制预约请求体。",
+        "properties": {
+          "recurrent": {
+            "default": "",
+            "title": "Recurrent",
+            "type": "string"
+          },
+          "room_id": {
+            "title": "Room Id",
+            "type": "integer"
+          },
+          "scheduled_at": {
+            "title": "Scheduled At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "room_id",
+          "scheduled_at"
+        ],
+        "title": "ScheduleRequest",
+        "type": "object"
+      },
+      "SplitTopicRequest": {
+        "additionalProperties": false,
+        "description": "拆分主题请求体（提取指定事件组成新主题）。",
+        "properties": {
+          "event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_ids"
+        ],
+        "title": "SplitTopicRequest",
+        "type": "object"
+      },
+      "StartRequest": {
+        "additionalProperties": false,
+        "description": "录制/流水线启动请求体。",
+        "properties": {
+          "pipeline": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline"
+          },
+          "produce": {
+            "default": false,
+            "title": "Produce",
+            "type": "boolean"
+          }
+        },
+        "title": "StartRequest",
+        "type": "object"
+      },
+      "StopRequest": {
+        "additionalProperties": false,
+        "description": "停止录制请求体。",
+        "properties": {
+          "cancel_pending": {
+            "default": false,
+            "title": "Cancel Pending",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "graceful",
+            "enum": [
+              "graceful",
+              "force"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "StopRequest",
+        "type": "object"
+      },
+      "TopicUpdateRequest": {
+        "additionalProperties": false,
+        "description": "主题信息更新请求体。",
+        "properties": {
+          "is_collection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Collection"
+          },
+          "keywords_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords Json"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "TopicUpdateRequest",
+        "type": "object"
+      },
+      "TranscriptCorrectionRequest": {
+        "additionalProperties": false,
+        "description": "人工转写纠错请求。",
+        "properties": {
+          "aliases": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "object"
+          },
+          "corrected_text": {
+            "maxLength": 200000,
+            "minLength": 1,
+            "title": "Corrected Text",
+            "type": "string"
+          },
+          "learn_dictionary": {
+            "default": true,
+            "title": "Learn Dictionary",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "corrected_text"
+        ],
+        "title": "TranscriptCorrectionRequest",
+        "type": "object"
+      },
+      "TrendCollectRequest": {
+        "additionalProperties": false,
+        "description": "网感资料收集请求体。",
+        "properties": {
+          "topic": {
+            "default": "",
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "title": "TrendCollectRequest",
+        "type": "object"
+      },
+      "UpdateRoomRequest": {
+        "additionalProperties": false,
+        "description": "直播间配置更新请求体。",
+        "properties": {
+          "authorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorized"
+          },
+          "auto_analyze": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Analyze"
+          },
+          "auto_approve": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Approve"
+          },
+          "auto_approve_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Approve Threshold"
+          },
+          "auto_publish_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Publish Threshold"
+          },
+          "auto_record": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Record"
+          },
+          "auto_render": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Render"
+          },
+          "auto_threshold_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Threshold Enabled"
+          },
+          "auto_upload": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Upload"
+          },
+          "danmaku_sentiment_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Danmaku Sentiment Enabled"
+          },
+          "highlight_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highlight Threshold"
+          },
+          "review_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Threshold"
+          },
+          "room_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room Config"
+          },
+          "schedule_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Enabled"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "uploader_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploader Name"
+          }
+        },
+        "title": "UpdateRoomRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WebPortRequest": {
+        "additionalProperties": false,
+        "description": "下次启动时生效的 Web 端口。",
+        "properties": {
+          "web_port": {
+            "title": "Web Port",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "web_port"
+        ],
+        "title": "WebPortRequest",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "BiliLiveCut 控制台",
+    "version": "V0.1.19.3 Alpha (0.1.19.3-alpha)"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/analytics": {
+      "get": {
+        "description": "返回 Dashboard 统计分析数据。\n\n包含:\n- 录制趋势(近 30 天每日录制会话数/时长)\n- 切片统计(总数/已发布/总时长)\n- 候选分布(分数区间分布/状态分布)\n- 直播间排行(按切片数)",
+        "operationId": "get_analytics_api_analytics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Analytics Api Analytics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Analytics"
+      }
+    },
+    "/api/candidates": {
+      "get": {
+        "description": "返回高光候选列表。",
+        "operationId": "get_candidates_api_candidates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Candidates Api Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Candidates"
+      }
+    },
+    "/api/candidates/batch": {
+      "post": {
+        "description": "批量审核/发布/删除候选(V0.1.8 P0)。\n\n:param request: 包含 candidate_ids 和 action。\n:returns: 各候选操作结果。",
+        "operationId": "batch_candidates_api_candidates_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Batch Candidates Api Candidates Batch Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch Candidates"
+      }
+    },
+    "/api/candidates/{candidate_id}": {
+      "delete": {
+        "description": "删除候选。",
+        "operationId": "remove_candidate_api_candidates__candidate_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Remove Candidate Api Candidates  Candidate Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Candidate"
+      }
+    },
+    "/api/candidates/{candidate_id}/approve": {
+      "post": {
+        "description": "把候选批准出片提交到后台作业。",
+        "operationId": "approve_candidate_api_candidates__candidate_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Candidate Api Candidates  Candidate Id  Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Candidate"
+      }
+    },
+    "/api/candidates/{candidate_id}/reject": {
+      "post": {
+        "description": "拒绝候选。",
+        "operationId": "reject_candidate_api_candidates__candidate_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Reject Candidate Api Candidates  Candidate Id  Reject Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Candidate"
+      }
+    },
+    "/api/clips": {
+      "get": {
+        "description": "返回成品切片列表。",
+        "operationId": "get_clips_api_clips_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Clips Api Clips Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Clips"
+      }
+    },
+    "/api/clips/{clip_id}/confirm-manual-upload": {
+      "post": {
+        "description": "V0.1.12.7: 确认手动上传完成, 将 FinalClip 标记为 PUBLISHED。\n\nManualUploader 导出清单后, FinalClip 不会自动标记为 PUBLISHED。\n用户需在前端确认已完成手动投稿, 然后调用此接口完成状态更新。\n\n:param clip_id: FinalClip.id。\n:param platform: 投稿平台 (如 bilibili)。\n:param submission_id: 稿件号 (如 BV 号)。\n:param published_url: 已发布链接。\n:returns: 操作结果。",
+        "operationId": "confirm_manual_upload_api_clips__clip_id__confirm_manual_upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Platform"
+            }
+          },
+          {
+            "in": "query",
+            "name": "submission_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Submission Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "published_url",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Published Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Confirm Manual Upload Api Clips  Clip Id  Confirm Manual Upload Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Manual Upload"
+      }
+    },
+    "/api/clips/{clip_id}/cover": {
+      "get": {
+        "description": "返回成品封面图。",
+        "operationId": "clip_cover_api_clips__clip_id__cover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clip Cover"
+      }
+    },
+    "/api/clips/{clip_id}/enqueue": {
+      "post": {
+        "description": "把成品上传提交到后台作业。",
+        "operationId": "enqueue_upload_api_clips__clip_id__enqueue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Enqueue Upload Api Clips  Clip Id  Enqueue Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue Upload"
+      }
+    },
+    "/api/clips/{clip_id}/publish": {
+      "post": {
+        "description": "人工发布:置 ready 并导出待上传清单;上传模块开启时入队上传。",
+        "operationId": "publish_clip_api_clips__clip_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Publish Clip Api Clips  Clip Id  Publish Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Clip"
+      }
+    },
+    "/api/clips/{clip_id}/reject": {
+      "post": {
+        "description": "拒绝成品切片。",
+        "operationId": "reject_clip_api_clips__clip_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Reject Clip Api Clips  Clip Id  Reject Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Clip"
+      }
+    },
+    "/api/clips/{clip_id}/video": {
+      "get": {
+        "description": "返回成品 MP4 以便页面内预览。",
+        "operationId": "clip_video_api_clips__clip_id__video_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "title": "Clip Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clip Video"
+      }
+    },
+    "/api/cookie-status": {
+      "get": {
+        "description": "返回当前 Bilibili Cookie 存续状态。",
+        "operationId": "cookie_status_api_cookie_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cookie Status Api Cookie Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Cookie Status"
+      }
+    },
+    "/api/danmaku": {
+      "get": {
+        "description": "返回最近弹幕与各会话弹幕热度统计。\n\n:param limit: 返回的最近弹幕条数。\n:param session_id: 仅查询指定会话(可选)。",
+        "operationId": "get_danmaku_api_danmaku_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Danmaku Api Danmaku Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Danmaku"
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "description": "返回仪表盘概览数据。",
+        "operationId": "get_dashboard_api_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Dashboard Api Dashboard Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Dashboard"
+      }
+    },
+    "/api/events/{event_id}/variants": {
+      "get": {
+        "description": "列出某事件的所有成品版本。",
+        "operationId": "list_variants_api_events__event_id__variants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Variants Api Events  Event Id  Variants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Variants"
+      }
+    },
+    "/api/intro-templates": {
+      "get": {
+        "description": "列出所有片头/片尾模板。",
+        "operationId": "list_templates_api_intro_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Templates Api Intro Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Templates",
+        "tags": [
+          "intro_templates"
+        ]
+      },
+      "post": {
+        "description": "创建默认片头/片尾模板。",
+        "operationId": "create_template_api_intro_templates_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Template Api Intro Templates Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Template",
+        "tags": [
+          "intro_templates"
+        ]
+      }
+    },
+    "/api/intro-templates/{template_id}": {
+      "delete": {
+        "description": "删除模板。",
+        "operationId": "delete_template_api_intro_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Template Api Intro Templates  Template Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Template",
+        "tags": [
+          "intro_templates"
+        ]
+      },
+      "get": {
+        "description": "获取模板详情。",
+        "operationId": "get_template_api_intro_templates__template_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Template Api Intro Templates  Template Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Template",
+        "tags": [
+          "intro_templates"
+        ]
+      },
+      "put": {
+        "description": "更新模板配置。",
+        "operationId": "update_template_api_intro_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Update Template Api Intro Templates  Template Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Template",
+        "tags": [
+          "intro_templates"
+        ]
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "description": "列出后台作业；审核员只能看到自己的作业。",
+        "operationId": "get_jobs_api_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mine",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Mine",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Jobs Api Jobs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Jobs"
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "description": "查询单个后台作业。",
+        "operationId": "get_job_detail_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Job Detail Api Jobs  Job Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job Detail"
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "description": "请求取消排队或运行中的后台作业。",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Job Api Jobs  Job Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Job"
+      }
+    },
+    "/api/jobs/{job_id}/retry": {
+      "post": {
+        "description": "重试失败或已取消的后台作业。",
+        "operationId": "retry_job_api_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Job Api Jobs  Job Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Job"
+      }
+    },
+    "/api/live-sources": {
+      "get": {
+        "description": "列出已注册来源及输入域名，供外部调用方识别平台能力。",
+        "operationId": "live_sources_api_live_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Live Sources Api Live Sources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Live Sources"
+      }
+    },
+    "/api/llm-providers": {
+      "get": {
+        "description": "返回多大模型配置(key 掩码)与可用数量。",
+        "operationId": "get_llm_providers_api_llm_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Llm Providers Api Llm Providers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Llm Providers"
+      },
+      "put": {
+        "description": "保存多大模型配置(按优先级失败回退；未填 key 保留已保存值)。",
+        "operationId": "put_llm_providers_api_llm_providers_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMProvidersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Llm Providers Api Llm Providers Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Llm Providers"
+      }
+    },
+    "/api/llm-providers/test": {
+      "post": {
+        "description": "逐个测试当前表单或已保存大模型的连通性，不持久化草稿。",
+        "operationId": "test_llm_providers_api_llm_providers_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LLMProvidersRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Test Llm Providers Api Llm Providers Test Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Llm Providers"
+      }
+    },
+    "/api/login": {
+      "post": {
+        "description": "启动一次浏览器登录流程（Playwright）,返回任务 ID 供前端轮询。",
+        "operationId": "login_start_api_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Login Start Api Login Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Login Start"
+      }
+    },
+    "/api/login/clear": {
+      "post": {
+        "description": "清除已保存的 Bilibili Cookie。",
+        "operationId": "login_clear_api_login_clear_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Login Clear Api Login Clear Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Login Clear"
+      }
+    },
+    "/api/login/qrcode": {
+      "get": {
+        "description": "恢复本浏览器任务；仅签发浏览器标识，不创建或重放登录操作。",
+        "operationId": "qr_login_current_api_login_qrcode_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Qr Login Current"
+      },
+      "post": {
+        "description": "申请网页扫码任务，无需服务器桌面。",
+        "operationId": "qr_login_start_api_login_qrcode_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Qr Login Start"
+      }
+    },
+    "/api/login/qrcode/{task_id}": {
+      "get": {
+        "description": "返回二维码和四种平台状态，不返回 Cookie 或刷新口令。",
+        "operationId": "qr_login_status_api_login_qrcode__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Qr Login Status"
+      }
+    },
+    "/api/login/qrcode/{task_id}/cancel": {
+      "post": {
+        "description": "停止当前扫码任务，不清除已保存 Cookie。",
+        "operationId": "qr_login_cancel_api_login_qrcode__task_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Qr Login Cancel"
+      }
+    },
+    "/api/login/status": {
+      "get": {
+        "description": "查询登录任务当前状态。\n\n- ``starting``: 正在启动浏览器\n- ``waiting``: 等待用户在浏览器中完成登录\n- ``done``: 登录成功,Cookie 已保存\n- 含 ``error`` 时表示登录失败",
+        "operationId": "login_status_api_login_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Login Status Api Login Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login Status"
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "description": "返回系统日志(WARNING 及以上)。",
+        "operationId": "get_logs_api_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Logs Api Logs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Logs"
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "description": "返回实时运行指标 (V0.1.12.9)。\n\n轻量级监控端点, 包含:\n- 任务计数\n- Worker/录制状态\n- 平均性能耗时\n- 磁盘使用\n- 历史趋势 (最近 60 点)",
+        "operationId": "get_metrics_api_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Metrics Api Metrics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Metrics"
+      }
+    },
+    "/api/monitor": {
+      "get": {
+        "description": "运维面板数据:磁盘/CPU/任务统计/录制状态。",
+        "operationId": "get_monitor_data_api_monitor_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Monitor Data Api Monitor Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Monitor Data",
+        "tags": [
+          "monitor"
+        ]
+      }
+    },
+    "/api/monitor/asr-metrics": {
+      "get": {
+        "description": "返回 ASR 调用指标 (调用次数、耗时、复核、fallback、RTF)。",
+        "operationId": "get_asr_metrics_api_monitor_asr_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Asr Metrics",
+        "tags": [
+          "monitor"
+        ]
+      }
+    },
+    "/api/monitor/asr-models": {
+      "get": {
+        "description": "返回当前已加载 ASR 模型状态。",
+        "operationId": "get_asr_models_api_monitor_asr_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Asr Models",
+        "tags": [
+          "monitor"
+        ]
+      }
+    },
+    "/api/monitor/disk-maintenance": {
+      "post": {
+        "description": "手动触发磁盘维护。",
+        "operationId": "trigger_maintenance_api_monitor_disk_maintenance_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Maintenance Api Monitor Disk Maintenance Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trigger Maintenance",
+        "tags": [
+          "monitor"
+        ]
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "description": "返回比 since_id 更新的通知(供前端轮询弹出提示)。",
+        "operationId": "get_notifications_api_notifications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since_id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Since Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Notifications Api Notifications Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Notifications"
+      }
+    },
+    "/api/open-clips-dir": {
+      "post": {
+        "description": "在本机文件管理器打开切片目录。",
+        "operationId": "open_clips_dir_api_open_clips_dir_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Open Clips Dir Api Open Clips Dir Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Open Clips Dir"
+      }
+    },
+    "/api/plugins": {
+      "get": {
+        "description": "重新扫描并列出插件。",
+        "operationId": "list_plugins_api_plugins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Plugins Api Plugins Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Plugins",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/refresh": {
+      "post": {
+        "description": "手动重新扫描插件目录。",
+        "operationId": "refresh_plugins_api_plugins_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refresh Plugins Api Plugins Refresh Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh Plugins",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{plugin_id}": {
+      "patch": {
+        "description": "启用或停用一个插件。",
+        "operationId": "toggle_plugin_api_plugins__plugin_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginToggleBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Toggle Plugin Api Plugins  Plugin Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Toggle Plugin",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{plugin_id}/settings": {
+      "get": {
+        "description": "读取一个已启用插件的设置 Schema 与值。",
+        "operationId": "get_plugin_settings_api_plugins__plugin_id__settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Plugin Settings Api Plugins  Plugin Id  Settings Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Plugin Settings",
+        "tags": [
+          "plugins"
+        ]
+      },
+      "patch": {
+        "description": "校验并保存一个已启用插件的设置。",
+        "operationId": "save_plugin_settings_api_plugins__plugin_id__settings_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginSettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Save Plugin Settings Api Plugins  Plugin Id  Settings Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Plugin Settings",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/progress": {
+      "get": {
+        "description": "返回录制→转写→评分的进度统计。",
+        "operationId": "get_progress_api_progress_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Progress Api Progress Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Progress"
+      }
+    },
+    "/api/recording": {
+      "get": {
+        "description": "返回录制会话状态列表。",
+        "operationId": "get_recording_api_recording_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Recording Api Recording Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Recording"
+      }
+    },
+    "/api/recording-imports": {
+      "get": {
+        "description": "返回本地来源、上传状态和预处理状态。",
+        "operationId": "get_imports_api_recording_imports_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Imports Api Recording Imports Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Imports"
+      },
+      "post": {
+        "description": "创建声明，随后分别上传视频及可选弹幕。",
+        "operationId": "post_import_api_recording_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Import"
+      }
+    },
+    "/api/recording-imports/{import_id}": {
+      "delete": {
+        "description": "清理未登记场次的上传或失败导入，不删除已进入分析流程的媒体。",
+        "operationId": "discard_import_api_recording_imports__import_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Discard Import Api Recording Imports  Import Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Import"
+      }
+    },
+    "/api/recording-imports/{import_id}/files/{kind}": {
+      "put": {
+        "description": "限制真实读取字节数，流式落盘并在完整上传后原子替换。",
+        "operationId": "put_file_api_recording_imports__import_id__files__kind__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "video",
+                "comments"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put File"
+      }
+    },
+    "/api/recording-imports/{import_id}/start": {
+      "post": {
+        "description": "启动预处理；重复请求复用现有作业或已登记的场次。",
+        "operationId": "start_import_api_recording_imports__import_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Import Api Recording Imports  Import Id  Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Import"
+      }
+    },
+    "/api/rooms": {
+      "post": {
+        "description": "添加直播间。",
+        "operationId": "create_room_api_rooms_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRoomRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Room Api Rooms Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Room"
+      }
+    },
+    "/api/rooms/{db_id}": {
+      "delete": {
+        "description": "从直播间列表移除房间及预约，保留录制历史和媒体文件。",
+        "operationId": "delete_room_api_rooms__db_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Room Api Rooms  Db Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Room"
+      },
+      "patch": {
+        "description": "更新直播间阈值/模式等参数。",
+        "operationId": "patch_room_api_rooms__db_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRoomRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Room Api Rooms  Db Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Room"
+      }
+    },
+    "/api/rooms/{db_id}/arm-auto": {
+      "post": {
+        "description": "组合开启录制与分析，显式解除暂停后守候开播。",
+        "operationId": "arm_auto_recording_api_rooms__db_id__arm_auto_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Arm Auto Recording Api Rooms  Db Id  Arm Auto Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Arm Auto Recording"
+      }
+    },
+    "/api/rooms/{db_id}/markers": {
+      "post": {
+        "description": "在当前直播时刻创建带前后缓冲的人工高光候选。",
+        "operationId": "create_manual_marker_api_rooms__db_id__markers_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Manual Marker Api Rooms  Db Id  Markers Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Manual Marker"
+      }
+    },
+    "/api/rooms/{db_id}/pause": {
+      "post": {
+        "description": "优雅暂停录制;恢复时会创建新会话并明确形成时间缺口。",
+        "operationId": "pause_recording_api_rooms__db_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Pause Recording Api Rooms  Db Id  Pause Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Recording"
+      }
+    },
+    "/api/rooms/{db_id}/recording-state": {
+      "get": {
+        "description": "返回可轮询的录制生命周期状态。",
+        "operationId": "recording_state_api_rooms__db_id__recording_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recording State Api Rooms  Db Id  Recording State Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recording State"
+      }
+    },
+    "/api/rooms/{db_id}/resume": {
+      "post": {
+        "description": "恢复人工暂停的房间,并创建新的录制会话。",
+        "operationId": "resume_recording_api_rooms__db_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resume Recording Api Rooms  Db Id  Resume Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Recording"
+      }
+    },
+    "/api/rooms/{db_id}/start": {
+      "post": {
+        "description": "启动某直播间录制。",
+        "operationId": "start_recording_api_rooms__db_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Start Recording Api Rooms  Db Id  Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Recording"
+      }
+    },
+    "/api/rooms/{db_id}/stop": {
+      "post": {
+        "description": "停止某直播间录制。",
+        "operationId": "stop_recording_api_rooms__db_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StopRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stop Recording Api Rooms  Db Id  Stop Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Recording"
+      }
+    },
+    "/api/rooms/{db_id}/threshold-learning": {
+      "get": {
+        "description": "返回某房间的阈值自学习摘要。",
+        "operationId": "threshold_learning_api_rooms__db_id__threshold_learning_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "db_id",
+            "required": true,
+            "schema": {
+              "title": "Db Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Threshold Learning Api Rooms  Db Id  Threshold Learning Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Threshold Learning"
+      }
+    },
+    "/api/schedules": {
+      "get": {
+        "description": "返回所有录制预约。",
+        "operationId": "get_schedules_api_schedules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Schedules Api Schedules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Schedules"
+      },
+      "post": {
+        "description": "创建一个录制预约。",
+        "operationId": "create_schedule_api_schedules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Schedule Api Schedules Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Schedule"
+      }
+    },
+    "/api/schedules/{schedule_id}": {
+      "delete": {
+        "description": "删除一个录制预约。",
+        "operationId": "delete_schedule_api_schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Schedule Api Schedules  Schedule Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Schedule"
+      },
+      "patch": {
+        "description": "启用/禁用录制预约。",
+        "operationId": "patch_schedule_api_schedules__schedule_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "enabled",
+            "required": true,
+            "schema": {
+              "title": "Enabled",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Schedule Api Schedules  Schedule Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Schedule"
+      }
+    },
+    "/api/sessions/history": {
+      "get": {
+        "description": "返回全部录制场次及转写、弹幕数量，供历史列表选择。",
+        "operationId": "get_session_history_api_sessions_history_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Session History Api Sessions History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Session History"
+      }
+    },
+    "/api/sessions/timeline": {
+      "get": {
+        "description": "返回最近录制场次的高光时间线概览。",
+        "operationId": "get_session_timelines_api_sessions_timeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "room_db_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Room Db Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Session Timelines Api Sessions Timeline Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Timelines"
+      }
+    },
+    "/api/sessions/{session_id}/cluster": {
+      "post": {
+        "description": "对一场直播的候选进行主题聚类。",
+        "operationId": "cluster_session_candidates_api_sessions__session_id__cluster_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cluster Session Candidates Api Sessions  Session Id  Cluster Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cluster Session Candidates"
+      }
+    },
+    "/api/sessions/{session_id}/danmaku-archive": {
+      "get": {
+        "description": "Download complete JSONL records up to a fixed boundary, including during capture.",
+        "operationId": "download_danmaku_archive_api_sessions__session_id__danmaku_archive_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Danmaku Archive"
+      }
+    },
+    "/api/sessions/{session_id}/reanalyze": {
+      "post": {
+        "description": "持久化重分析请求；旧流水线稳定后整场重排，且保留人工成果。",
+        "operationId": "reanalyze_session_api_sessions__session_id__reanalyze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReanalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Reanalyze Session Api Sessions  Session Id  Reanalyze Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reanalyze Session"
+      }
+    },
+    "/api/sessions/{session_id}/timeline": {
+      "get": {
+        "description": "返回指定录制场次的 GMT+8 高光时间轴。",
+        "operationId": "get_session_timeline_api_sessions__session_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_rejected",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Rejected",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Session Timeline Api Sessions  Session Id  Timeline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Timeline"
+      }
+    },
+    "/api/sessions/{session_id}/timeline-summary": {
+      "post": {
+        "description": "使当前整场总结失效，并持久化重新生成请求。",
+        "operationId": "regenerate_session_timeline_summary_api_sessions__session_id__timeline_summary_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Regenerate Session Timeline Summary Api Sessions  Session Id  Timeline Summary Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Session Timeline Summary"
+      }
+    },
+    "/api/sessions/{session_id}/titles": {
+      "get": {
+        "description": "返回标题快照及按观测顺序保存的变化记录。",
+        "operationId": "get_session_titles_api_sessions__session_id__titles_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Session Titles Api Sessions  Session Id  Titles Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Titles"
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "description": "返回可切换的运行时开关与上传配置概览。",
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Settings Api Settings Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings"
+      }
+    },
+    "/api/settings/configuration": {
+      "get": {
+        "description": "返回完整业务配置注册表及脱敏后的有效值。",
+        "operationId": "get_configuration_api_settings_configuration_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Configuration Api Settings Configuration Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Configuration"
+      },
+      "patch": {
+        "description": "原子保存业务配置；过期表单返回冲突而不覆盖新设置。",
+        "operationId": "patch_configuration_api_settings_configuration_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigurationChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Configuration Api Settings Configuration Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Configuration"
+      }
+    },
+    "/api/settings/port": {
+      "patch": {
+        "description": "更新下次启动的端口。",
+        "operationId": "patch_web_port_api_settings_port_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPortRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Web Port Api Settings Port Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Web Port"
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "description": "返回任务队列列表及各阶段统计。",
+        "operationId": "get_tasks_api_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Tasks Api Tasks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tasks"
+      }
+    },
+    "/api/tasks/{task_id}/cancel": {
+      "post": {
+        "description": "请求取消；返回取消中或已经取消的真实阶段。",
+        "operationId": "cancel_task_api_tasks__task_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Cancel Task Api Tasks  Task Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Task"
+      }
+    },
+    "/api/tasks/{task_id}/retry": {
+      "post": {
+        "description": "手动重试一个失败/取消的任务。",
+        "operationId": "retry_task_api_tasks__task_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Task Api Tasks  Task Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Task"
+      }
+    },
+    "/api/templates": {
+      "get": {
+        "description": "列出所有字幕模板。\n\n:param request: FastAPI 请求对象。\n:returns: 模板列表。",
+        "operationId": "list_templates_api_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Templates Api Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Templates",
+        "tags": [
+          "subtitle_templates"
+        ]
+      },
+      "post": {
+        "description": "创建默认字幕模板。\n\n:param request: FastAPI 请求对象。\n:returns: 创建的模板。",
+        "operationId": "create_template_api_templates_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Template Api Templates Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Template",
+        "tags": [
+          "subtitle_templates"
+        ]
+      }
+    },
+    "/api/templates/import/ass": {
+      "post": {
+        "description": "导入 ASS 文件,提取其样式配置并创建模板。\n\n限制:最大 1 MiB (1,048,576 bytes), 防内存耗尽。\n使用流式读取, 超限立即返回 413, 不将完整超限内容读入内存。\n\n:param file: 上传的 .ass 文件。\n:returns: 创建的模板列表。",
+        "operationId": "import_ass_file_api_templates_import_ass_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_ass_file_api_templates_import_ass_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Import Ass File Api Templates Import Ass Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Ass File",
+        "tags": [
+          "subtitle_templates"
+        ]
+      }
+    },
+    "/api/templates/{template_id}": {
+      "delete": {
+        "description": "删除模板。\n\n:param template_id: 模板 ID。\n:param request: FastAPI 请求对象。\n:returns: 状态确认。",
+        "operationId": "delete_template_api_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Template Api Templates  Template Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Template",
+        "tags": [
+          "subtitle_templates"
+        ]
+      },
+      "get": {
+        "description": "获取模板详情。\n\n:param template_id: 模板 ID。\n:param request: FastAPI 请求对象。\n:returns: 模板完整配置。",
+        "operationId": "get_template_api_templates__template_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Template Api Templates  Template Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Template",
+        "tags": [
+          "subtitle_templates"
+        ]
+      },
+      "put": {
+        "description": "更新模板配置。\n\n:param template_id: 模板 ID。\n:param request: FastAPI 请求对象(JSON body)。\n:returns: 状态确认。",
+        "operationId": "update_template_api_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Update Template Api Templates  Template Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Template",
+        "tags": [
+          "subtitle_templates"
+        ]
+      }
+    },
+    "/api/templates/{template_id}/export": {
+      "get": {
+        "description": "导出模板为 ASS 文件格式。\n\n:param template_id: 模板 ID。\n:param request: FastAPI 请求对象。\n:returns: 完整 ASS 文本。",
+        "operationId": "export_template_api_templates__template_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Template",
+        "tags": [
+          "subtitle_templates"
+        ]
+      }
+    },
+    "/api/topics": {
+      "get": {
+        "description": "获取主题列表。",
+        "operationId": "list_topics_api_topics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Topics Api Topics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Topics"
+      }
+    },
+    "/api/topics/merge": {
+      "post": {
+        "description": "合并两个主题。",
+        "operationId": "merge_topics_api_topics_merge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeTopicsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Merge Topics Api Topics Merge Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Topics"
+      }
+    },
+    "/api/topics/{topic_id}": {
+      "get": {
+        "description": "获取单个主题详情。",
+        "operationId": "get_topic_api_topics__topic_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Topic Api Topics  Topic Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Topic"
+      },
+      "patch": {
+        "description": "更新主题属性(title/summary/keywords/status/is_collection)。",
+        "operationId": "update_topic_api_topics__topic_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Update Topic Api Topics  Topic Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Topic"
+      }
+    },
+    "/api/topics/{topic_id}/events/{event_id}": {
+      "delete": {
+        "description": "从主题移除事件。",
+        "operationId": "remove_event_from_topic_api_topics__topic_id__events__event_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Remove Event From Topic Api Topics  Topic Id  Events  Event Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Event From Topic"
+      },
+      "post": {
+        "description": "将事件加入主题。",
+        "operationId": "add_event_to_topic_api_topics__topic_id__events__event_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Add Event To Topic Api Topics  Topic Id  Events  Event Id  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Event To Topic"
+      }
+    },
+    "/api/topics/{topic_id}/reorder": {
+      "post": {
+        "description": "重排主题内事件顺序。",
+        "operationId": "reorder_topic_events_api_topics__topic_id__reorder_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderTopicRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Reorder Topic Events Api Topics  Topic Id  Reorder Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Topic Events"
+      }
+    },
+    "/api/topics/{topic_id}/split": {
+      "post": {
+        "description": "拆分主题:将指定事件移出并创建新主题。",
+        "operationId": "split_topic_api_topics__topic_id__split_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitTopicRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Split Topic Api Topics  Topic Id  Split Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Split Topic"
+      }
+    },
+    "/api/transcripts": {
+      "get": {
+        "description": "返回全局最近或指定场次的转写文本。",
+        "operationId": "get_transcripts_api_transcripts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Transcripts Api Transcripts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Transcripts"
+      }
+    },
+    "/api/transcripts/{transcript_id}": {
+      "patch": {
+        "description": "保存人工纠错、回流房间词典并安全重排场次分析。",
+        "operationId": "correct_transcript_api_transcripts__transcript_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscriptCorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Correct Transcript Api Transcripts  Transcript Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Correct Transcript"
+      }
+    },
+    "/api/transcripts/{transcript_id}/retranscribe": {
+      "post": {
+        "description": "安全清理旧自动分析结果并重新排队识别。",
+        "operationId": "retranscribe_transcript_api_transcripts__transcript_id__retranscribe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Retranscribe Transcript Api Transcripts  Transcript Id  Retranscribe Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retranscribe Transcript"
+      }
+    },
+    "/api/transcripts/{transcript_id}/source-mp4": {
+      "get": {
+        "description": "无损导出转写对应的源 TS，并确保 MP4 从首个真实视频帧开始。",
+        "operationId": "export_transcript_source_mp4_api_transcripts__transcript_id__source_mp4_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Transcript Source Mp4"
+      }
+    },
+    "/api/trends": {
+      "get": {
+        "description": "返回网感资料库概览(近期热门条目 + 热词排行)。",
+        "operationId": "get_trends_api_trends_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Trends Api Trends Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trends"
+      }
+    },
+    "/api/trends/collect": {
+      "post": {
+        "description": "立即触发一次联网采集并写入资料库。",
+        "operationId": "collect_trends_api_trends_collect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TrendCollectRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Collect Trends Api Trends Collect Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Collect Trends"
+      }
+    },
+    "/api/uploads": {
+      "get": {
+        "description": "返回上传任务队列。",
+        "operationId": "get_uploads_api_uploads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Uploads Api Uploads Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Uploads"
+      }
+    },
+    "/api/uploads/{task_id}/retry": {
+      "post": {
+        "description": "把上传重试提交到后台作业。",
+        "operationId": "retry_upload_api_uploads__task_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Upload Api Uploads  Task Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Upload"
+      }
+    },
+    "/collection/api/{topic_id}": {
+      "get": {
+        "description": "获取合集编辑所需数据:主题+事件列表+重叠检测。",
+        "operationId": "get_collection_data_collection_api__topic_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Collection Data Collection Api  Topic Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Collection Data",
+        "tags": [
+          "collection"
+        ]
+      }
+    },
+    "/collection/api/{topic_id}/copywriter": {
+      "post": {
+        "description": "为主题合集生成标题/简介/章节/标签等文案。",
+        "operationId": "generate_copywriter_collection_api__topic_id__copywriter_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Generate Copywriter Collection Api  Topic Id  Copywriter Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Copywriter",
+        "tags": [
+          "collection"
+        ]
+      }
+    },
+    "/collection/api/{topic_id}/render": {
+      "post": {
+        "description": "把合集 MP4 渲染提交到后台作业。",
+        "operationId": "render_collection_collection_api__topic_id__render_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderCollectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Render Collection Collection Api  Topic Id  Render Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render Collection",
+        "tags": [
+          "collection"
+        ]
+      }
+    },
+    "/collection/api/{topic_id}/reorder": {
+      "post": {
+        "description": "保存事件顺序及章节标题。",
+        "operationId": "reorder_events_collection_api__topic_id__reorder_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reorder Events Collection Api  Topic Id  Reorder Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Events",
+        "tags": [
+          "collection"
+        ]
+      }
+    },
+    "/review/api/audit": {
+      "get": {
+        "description": "管理员查询人工审核审计日志。",
+        "operationId": "get_review_audit_review_api_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Review Audit Review Api Audit Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Audit",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/queue": {
+      "get": {
+        "description": "返回可领取、审核中或已完成的候选队列。",
+        "operationId": "get_review_queue_review_api_queue_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "enum": [
+                "pending",
+                "claimed",
+                "reviewed",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mine",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Mine",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Review Queue Review Api Queue Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Queue",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}": {
+      "get": {
+        "description": "获取审片所需的完整数据:候选详情+转写+弹幕解释+评分曲线+前后上下文。",
+        "operationId": "get_review_data_review_api__candidate_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Review Data Review Api  Candidate Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Data",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/adjust": {
+      "post": {
+        "description": "调整入点/出点偏移量,保存调整后的边界到 HighlightEvent。\n\n:param candidate_id: 候选 id。\n:param payload: 调整量与目标边界。\n:returns: 新的边界。",
+        "operationId": "adjust_boundary_review_api__candidate_id__adjust_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoundaryAdjustRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Adjust Boundary Review Api  Candidate Id  Adjust Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Adjust Boundary",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/claim": {
+      "post": {
+        "description": "领取候选，防止多位审核员同时修改。",
+        "operationId": "claim_review_review_api__candidate_id__claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Claim Review Review Api  Candidate Id  Claim Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Review",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/draft": {
+      "put": {
+        "description": "持久化当前审核草稿。",
+        "operationId": "update_review_draft_review_api__candidate_id__draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Review Draft Review Api  Candidate Id  Draft Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Review Draft",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/preview": {
+      "get": {
+        "description": "返回候选的按需渲染预览，不要求候选已批准或已出片。",
+        "operationId": "get_review_preview_review_api__candidate_id__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Preview",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/release": {
+      "post": {
+        "description": "释放候选领取。",
+        "operationId": "release_review_review_api__candidate_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Release Review Review Api  Candidate Id  Release Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Review",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/rerender": {
+      "post": {
+        "description": "把调整边界后的切片提交到后台作业。\n\n:param candidate_id: 候选 id。\n:returns: 新的 clip 信息或状态。",
+        "operationId": "rerender_clip_review_api__candidate_id__rerender_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rerender Clip Review Api  Candidate Id  Rerender Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerender Clip",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/review": {
+      "post": {
+        "description": "提交审核决断(细粒度), V0.1.12.8: 消除双写, 统一走 approve_event_and_task。\n\n正向决断时调用 approve_event_and_task 传入外层 db session,\n在同一事务中更新 Task.stage + Event.review_status + Candidate.status。\n明确拒绝时同步更新 Event、Candidate、关联 Task 和未发布 FinalClip。\n\n:param candidate_id: 候选 id。\n:param decision: 审核决断(approved_solo/rejected/insufficient_context 等)。\n:param reason: 审核原因/备注。\n:returns: 操作结果。",
+        "operationId": "submit_review_review_api__candidate_id__review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Submit Review Review Api  Candidate Id  Review Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Review",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/undo": {
+      "post": {
+        "description": "撤销最近一次边界或审核决策修改。",
+        "operationId": "undo_review_action_review_api__candidate_id__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Undo Review Action Review Api  Candidate Id  Undo Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Review Action",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/review/api/{candidate_id}/waveform": {
+      "get": {
+        "description": "生成音频波形采样数据(FFmpeg→PCM→RMS峰值数组)。\n\n:param candidate_id: 候选 id。\n:param resolution: 采样点数(默认 400,前端 Canvas 宽度)。\n:returns: ``{peaks, duration_s, sample_rate}``。",
+        "operationId": "get_waveform_review_api__candidate_id__waveform_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": 400,
+              "maximum": 4000,
+              "minimum": 16,
+              "title": "Resolution",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Waveform Review Api  Candidate Id  Waveform Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Waveform",
+        "tags": [
+          "review"
+        ]
+      }
+    }
+  }
+}

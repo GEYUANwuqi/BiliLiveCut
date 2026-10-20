@@ -18,6 +18,7 @@ def main() -> int:
     """使用临时容器和卷执行验收，不下载模型或读取仓库 .env。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="bili-live-cut:docker-test")
+    parser.add_argument("--frontend-image", default="bili-live-cut-frontend:docker-test")
     parser.add_argument("--docker", default="docker")
     parser.add_argument("--browser", action="store_true", help="使用 Playwright Chromium 验证实际网页登录")
     parser.add_argument("--host-network", action="store_true", help="供禁用 bridge 的隔离测试 daemon 使用")
@@ -25,6 +26,7 @@ def main() -> int:
     prefix = "blc-docker-smoke-" + secrets.token_hex(5)
     volume = prefix + "-data"
     denied_volume = prefix + "-denied"
+    network_name = prefix + "-network"
     containers: list[str] = []
     password = secrets.token_urlsafe(24)
     environment = {**os.environ, "ADMIN_PASSWORD": password}
@@ -48,7 +50,7 @@ def main() -> int:
     def start(name: str, *, initialize: bool = False) -> str:
         containers.append(name)
         network = ["--network", "host"] if args.host_network else ["--publish", "127.0.0.1::8000"]
-        command = ["blc", "serve", "--host", "127.0.0.1", "--port", "8000"] if args.host_network else []
+        command = ["blc", "backend", "--host", "127.0.0.1", "--port", "8000"] if args.host_network else []
         docker(
             "run",
             "--detach",
@@ -95,6 +97,48 @@ def main() -> int:
                 pass
             time.sleep(1)
         raise RuntimeError("容器 Web 服务在 120 秒内没有就绪。")
+
+    def start_frontend(backend: str) -> str:
+        name = prefix + "-frontend"
+        containers.append(name)
+        if args.host_network:
+            network = ["--network", "host", "--add-host", "app:127.0.0.1"]
+        else:
+            docker("network", "create", network_name)
+            docker("network", "connect", "--alias", "app", network_name, backend)
+            network = ["--network", network_name, "--publish", "127.0.0.1::8080"]
+        docker(
+            "run",
+            "--detach",
+            "--name",
+            name,
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            *network,
+            args.frontend_image,
+        )
+        port = "8080" if args.host_network else docker("port", name, "8080/tcp").stdout.strip().rsplit(":", 1)[1]
+        url = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                if (
+                    request(url + "/")
+                    == request(url + "/settings/configuration")
+                    == request(url + "/auth/status")
+                    == 200
+                ):
+                    assert request(url + "/assets/missing-smoke.js") == 404
+                    return url
+            except (OSError, URLError):
+                pass
+            if not json.loads(docker("inspect", "--format", "{{json .State}}", name).stdout)["Running"]:
+                logs = docker("logs", name)
+                raise RuntimeError(f"前端容器提前退出：{logs.stdout}{logs.stderr}")
+            time.sleep(0.2)
+        raise RuntimeError("前端静态页面或 API 代理未就绪。")
 
     try:
         # 在 Linux 卷内设置权限，Windows bind mount 的 chmod 不具有等价语义。
@@ -304,6 +348,7 @@ def main() -> int:
         docker("stop", "--time", "60", second)
         third = prefix + "-initialized"
         url = start(third, initialize=True)
+        url = start_frontend(third)
         logs = docker("logs", third)
         code = re.findall(r"仅可使用一次）：([\w-]+)", logs.stdout + logs.stderr)[-1]
         password = secrets.token_urlsafe(24)
@@ -353,6 +398,8 @@ def main() -> int:
     finally:
         for name in containers:
             docker("rm", "--force", name, check=False)
+        if not args.host_network:
+            docker("network", "rm", network_name, check=False)
         docker("volume", "rm", volume, check=False)
         docker("volume", "rm", denied_volume, check=False)
 

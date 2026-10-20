@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import mimetypes
+import threading
+from functools import partial
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.web.frontend_server import FrontendHandler
 from app.web.staticfiles import WebStaticFiles
 
 
@@ -47,16 +52,33 @@ def test_static_files_override_polluted_mime_and_keep_cache(
         assert client.get("/static/image.svg").headers["content-type"] == "image/svg+xml"
 
 
-def test_production_mount_serves_all_modules_with_javascript_mime(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.web.main import app
-
+def test_production_frontend_serves_scripts_and_styles_with_correct_mime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     mimetypes.init()
-    monkeypatch.setitem(mimetypes.types_map, ".js", "text/plain")
-    root = Path(__file__).resolve().parents[2] / "app/web/static"
-    # 不启动应用 lifespan，避免访问运行中的录制、模型或数据库。
-    client = TestClient(app)
-    for source in sorted(root.rglob("*.js")):
-        response = client.get(f"/static/{source.relative_to(root).as_posix()}")
-        assert response.status_code == 200, source
-        assert response.headers["content-type"] == "text/javascript; charset=utf-8", source
-        assert response.content == source.read_bytes()
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    for suffix in (".js", ".mjs", ".css"):
+        monkeypatch.setitem(mimetypes.types_map, suffix, "text/plain")
+        (assets / f"asset{suffix}").write_bytes(b"/* built asset */")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(FrontendHandler, directory=tmp_path, backend="http://127.0.0.1:1")
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for suffix, media_type in ((".js", "text/javascript"), (".mjs", "text/javascript"), (".css", "text/css")):
+            connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                connection.request("GET", f"/assets/asset{suffix}")
+                response = connection.getresponse()
+                assert response.status == 200
+                assert response.getheader("Content-Type") == f"{media_type}; charset=utf-8"
+                assert response.getheader("X-Content-Type-Options") == "nosniff"
+                assert response.read() == b"/* built asset */"
+            finally:
+                connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

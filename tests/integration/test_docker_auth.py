@@ -49,15 +49,16 @@ async def login(browser: httpx.AsyncClient, username: str = "admin", password: s
     return state
 
 
-async def test_first_visit_redirects_but_api_uses_401_without_basic_popup(browser: httpx.AsyncClient) -> None:
+async def test_backend_auth_is_json_without_redirect_or_basic_popup(browser: httpx.AsyncClient) -> None:
     page = await browser.get("/imports?room=1", headers={"Accept": "text/html"})
-    assert page.status_code == 303
-    assert page.headers["location"] == "/auth/login?next=%2Fimports%3Froom%3D1"
+    assert page.status_code == 401
+    assert "location" not in page.headers
+    assert page.headers["content-type"].startswith("application/json")
     api = await browser.get("/api/dashboard")
     assert api.status_code == 401 and api.headers["X-BLC-Auth-Required"] == "1"
     assert "www-authenticate" not in api.headers
-    assert (await browser.get("/auth/login")).status_code == 200
-    assert (await browser.get("/static/js/admin-session.js")).status_code == 200
+    assert (await browser.get("/auth/login")).status_code == 404
+    assert (await browser.get("/static/js/admin-session.js")).status_code == 404
 
 
 async def test_login_cookie_and_state_do_not_leak_password(browser: httpx.AsyncClient) -> None:
@@ -101,15 +102,38 @@ async def test_cookie_writes_require_csrf_and_do_not_execute_on_failure(browser:
     assert not (await browser.get("/auth/status")).json()["authenticated"]
 
 
+async def test_room_deletion_requires_admin_and_csrf(browser: httpx.AsyncClient) -> None:
+    from app.db.entities import LiveRoom
+    from app.db.session import get_session
+    from app.sources.rooms import room_is_removed
+
+    with get_session() as db:
+        room = LiveRoom(input_url="123", room_id=123)
+        db.add(room)
+        db.flush()
+        room_id = room.id
+    path = f"/api/rooms/{room_id}"
+    assert (await browser.delete(path)).status_code == 401
+    await login(browser, "editor", "reviewer-password")
+    assert (await browser.delete(path)).status_code == 403
+    await login(browser)
+    csrf = browser.headers.pop("X-BLC-CSRF")
+    assert (await browser.delete(path)).status_code == 403
+    with get_session() as db:
+        assert not room_is_removed(db, room_id)
+    browser.headers["X-BLC-CSRF"] = csrf
+    assert (await browser.delete(path)).status_code == 200
+
+
 async def test_basic_api_remains_supported_and_roles_are_enforced(browser: httpx.AsyncClient) -> None:
     header = "Basic " + base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
     assert (await browser.get("/api/dashboard", headers={"Authorization": header})).status_code == 200
     assert not browser.cookies
     reviewer = "Basic " + base64.b64encode(b"editor:reviewer-password").decode()
-    assert (await browser.get("/review/queue", headers={"Authorization": reviewer})).status_code == 200
+    assert (await browser.get("/review/api/queue", headers={"Authorization": reviewer})).status_code == 200
     assert (await browser.get("/api/settings", headers={"Authorization": reviewer})).status_code == 403
     await login(browser, "editor", "reviewer-password")
-    assert (await browser.get("/review/queue")).status_code == 200
+    assert (await browser.get("/review/api/queue")).status_code == 200
     assert (await browser.get("/api/settings")).status_code == 403
     assert (
         await browser.post(

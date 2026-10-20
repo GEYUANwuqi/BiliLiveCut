@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import signal
 
-import typer
+import click
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
-from sqlmodel import select
 
 from app.core.config import settings
 from app.db.entities import LiveRoom
@@ -26,10 +25,13 @@ def cmd_init() -> None:
     console.print(f"[green]数据库已初始化:[/green] {settings.database_url}")
 
 
+@click.argument("url", type=str)
+@click.option("--authorize", default=False, is_flag=True, help="确认拥有录制授权", show_default=True)
+@click.option("--platform", default=None, type=str, help="显式来源平台；纯数字默认 Bilibili", show_default=True)
 def cmd_add_room(
-    url: str = typer.Argument(..., help="直播间 URL 或房间号"),
-    authorize: bool = typer.Option(False, "--authorize", help="确认拥有录制授权"),
-    platform: str | None = typer.Option(None, "--platform", help="显式来源平台；纯数字默认 Bilibili"),
+    url: str,
+    authorize: bool = False,
+    platform: str | None = None,
 ) -> None:
     """使用已启用的直播源插件解析并登记房间。"""
     from app.plugins.live_source import SourceError
@@ -46,7 +48,7 @@ def cmd_add_room(
         source = room_source(room)
     except (SourceError, PluginError, ValueError) as exc:
         console.print(str(exc), markup=False)
-        raise typer.Exit(code=1) from exc
+        raise click.exceptions.Exit(code=1) from exc
     console.print(
         f"已登记直播间 db_id={room.id} platform={source.platform} source_id={source.source_id} authorized={authorize}",
         markup=False,
@@ -55,8 +57,10 @@ def cmd_add_room(
 
 def cmd_list_rooms() -> None:
     """列出所有已登记的直播间。"""
+    from app.sources.rooms import registered_rooms
+
     with get_session() as db:
-        rooms = db.exec(select(LiveRoom)).all()
+        rooms = registered_rooms(db)
 
     if not rooms:
         console.print("[yellow]暂无已登记的直播间。[/yellow]")
@@ -84,9 +88,11 @@ def cmd_list_rooms() -> None:
     console.print(table)
 
 
+@click.argument("url", type=str)
+@click.option("--platform", default=None, type=str, help="显式来源平台", show_default=True)
 def cmd_check(
-    url: str = typer.Argument(..., help="直播间 URL 或房间号"),
-    platform: str | None = typer.Option(None, "--platform", help="显式来源平台"),
+    url: str,
+    platform: str | None = None,
 ) -> None:
     """通过同一来源契约检查直播状态和播放规格，不输出临时播放凭据。"""
     from app.plugins.live_source import LiveStatus, SourceError, StreamPreference
@@ -118,21 +124,27 @@ def cmd_check(
         asyncio.run(check())
     except (SourceError, PluginError, ValueError) as exc:
         console.print(str(exc), markup=False)
-        raise typer.Exit(code=1) from exc
+        raise click.exceptions.Exit(code=1) from exc
 
 
+@click.argument("db_id", type=int)
+@click.option(
+    "--pipeline/--no-pipeline",
+    default=None,
+    help="覆盖录制实时转写/高光分析默认值；未指定时读取运行时开关或 RECORDING_PIPELINE_ENABLED",
+    show_default=True,
+)
+@click.option(
+    "--produce",
+    default=False,
+    is_flag=True,
+    help="产生高光候选后自动切片+生成文案(阶段3);需配合 --pipeline",
+    show_default=True,
+)
 def cmd_record(
-    db_id: int = typer.Argument(..., help="直播间在数据库中的 db_id(见 list-rooms)"),
-    pipeline: bool | None = typer.Option(
-        None,
-        "--pipeline/--no-pipeline",
-        help="覆盖录制实时转写/高光分析默认值；未指定时读取运行时开关或 RECORDING_PIPELINE_ENABLED",
-    ),
-    produce: bool = typer.Option(
-        False,
-        "--produce",
-        help="产生高光候选后自动切片+生成文案(阶段3);需配合 --pipeline",
-    ),
+    db_id: int,
+    pipeline: bool | None = None,
+    produce: bool = False,
 ) -> None:
     """对指定直播间开始录制,直到 Ctrl+C 停止。
 
@@ -143,7 +155,7 @@ def cmd_record(
     from app.plugins.live_source import SourceError, SourceUnavailable
     from app.plugins.runtime import plugin_runtime
     from app.sources.registry import source_registry
-    from app.sources.rooms import room_source
+    from app.sources.rooms import room_is_removed, room_source
 
     async def execute() -> None:
         async with plugin_runtime():
@@ -152,16 +164,16 @@ def cmd_record(
             pipeline_enabled = settings_store.recording_pipeline_enabled() if pipeline is None else pipeline
             if produce and not pipeline_enabled:
                 console.print("[red]--produce 必须与 --pipeline 一起使用。[/red]")
-                raise typer.Exit(code=1)
+                raise click.exceptions.Exit(code=1)
 
             with get_session() as db:
                 room = db.get(LiveRoom, db_id)
-                if room is None:
+                if room is None or room_is_removed(db, db_id):
                     console.print(f"[red]未找到 db_id={db_id} 的直播间。[/red]")
-                    raise typer.Exit(code=1)
+                    raise click.exceptions.Exit(code=1)
                 if settings.require_authorization and not room.authorized:
                     console.print("[red]该直播间未确认授权,拒绝录制。[/red]")
-                    raise typer.Exit(code=1)
+                    raise click.exceptions.Exit(code=1)
                 identity = room_source(room, db)
                 if not source_registry.available(identity.platform):
                     raise SourceUnavailable("来源不可用，请安装并启用对应直播源插件")
@@ -230,13 +242,13 @@ def cmd_record(
         asyncio.run(execute())
     except KeyboardInterrupt:
         logger.info("已取消录制并完成收尾")
-    except typer.Exit:
+    except click.exceptions.Exit:
         raise
     except Exception as exc:
-        # CLI 最外层录制边界：禁止 Typer 的 traceback locals 回显 FFmpeg 播放凭据。
+        # CLI 最外层录制边界：禁止 traceback locals 回显 FFmpeg 播放凭据。
         code = exc.code if isinstance(exc, SourceError) else type(exc).__name__
         console.print(f"录制失败：{code}，请检查来源设置与 FFmpeg 配置", markup=False)
-        raise typer.Exit(code=1) from None
+        raise click.exceptions.Exit(code=1) from None
     console.print("[green]录制已结束。[/green]")
 
 

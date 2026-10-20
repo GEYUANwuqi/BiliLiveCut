@@ -23,8 +23,12 @@ Ubuntu 以外的发行版应安装对应 Python 版本的开发头文件，或�
 
 ```bash
 uv sync --locked --no-dev --extra web --extra asr-all --extra llm
+npm --prefix frontend ci
+npm --prefix frontend run build
 cp -n .env.example .env
 ```
+
+页面构建需要 Node.js 24，运行已构建产物时不需要。
 
 这是包含全部 ASR 后端的安装方式，依赖体积较大；只录制和管理时可以省略 `--extra asr-all --extra llm`。传统 pip 的对应命令为 `pip install -e ".[web,asr-all,llm]"`，虚拟环境准备见[开发说明](../development/environment.md#venv-pip)。
 
@@ -34,7 +38,7 @@ cp -n .env.example .env
 
 ```bash
 uv run --no-sync blc init
-uv run --no-sync blc serve --host 127.0.0.1 --port 8000
+uv run --no-sync blc start --host 127.0.0.1 --port 8000
 ```
 
 默认数据保存在当前运行目录下的 `storage/`。不要在验收新版本时复用旧版本的数据库、会话库和 Cookie；数据库版本不兼容时，保留原环境并使用新目录初始化。
@@ -71,4 +75,4 @@ ssh -N -L 8000:127.0.0.1:8000 your-user@your-server
 - **不知道管理员密码**：查看本次运行目录所使用的 `.env` 中的 `ADMIN_PASSWORD`；不是 Bilibili 密码。
 - **数据库应用版本不匹配**：保留旧目录，在独立目录初始化；不要仅修改数据库版本号绕过校验。
 - **连续收到 401、403 或 429**：先确认管理员登录状态和密码，等待限流窗口恢复；不要自动重复提交错误凭据。Bilibili 二维码排错见[登录恢复说明](login.md)。
-- **修改页面没有变化**：修改 HTML、CSS 或 JavaScript 后重新加载页面；静态资源仍被缓存时强制刷新。Python 服务的自动重启与页面刷新说明见 [Web 页面开发](../development/frontend.md#本地修改与刷新)。
+- **修改页面没有变化**：生产模式先重新构建 `frontend/dist/`；开发模式使用 Vite 热更新。说明见 [Web 页面开发](../development/frontend.md#本地修改与刷新)。

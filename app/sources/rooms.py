@@ -7,7 +7,7 @@ import json
 from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import text
+from sqlalchemy import String, cast, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -16,6 +16,19 @@ from app.db.entities import AppSetting, LiveRoom
 from app.db.session import get_session
 from app.plugins.live_source import RoomSnapshot, SourceError, SourceInvalidInput, SourceRoom
 from app.sources.registry import SourceRegistry, source_registry
+
+REMOVED_ROOM_PREFIX = "removed_room:"
+
+
+def room_is_removed(db: Session, db_id: int) -> bool:
+    """已移除的房间仅供历史会话引用，不再接受录制与配置操作。"""
+    return db.get(AppSetting, f"{REMOVED_ROOM_PREFIX}{db_id}") is not None
+
+
+def registered_rooms(db: Session) -> list[LiveRoom]:
+    """列出尚未移除的房间，保留数据库中的历史身份。"""
+    removed = select(AppSetting).where(AppSetting.key == REMOVED_ROOM_PREFIX + cast(LiveRoom.id, String)).exists()
+    return list(db.exec(select(LiveRoom).where(~removed)).all())
 
 
 class SourceBinding(BaseModel):
@@ -148,6 +161,9 @@ def _register(source: SourceRoom, snapshot: RoomSnapshot, authorized: bool) -> L
         if room.id is None:
             raise RuntimeError("数据库未分配房间主键")
         binding = SourceBinding(room_db_id=room.id, room=source)
+        removed = db.get(AppSetting, f"{REMOVED_ROOM_PREFIX}{room.id}")
+        if removed is not None:
+            db.delete(removed)
         for binding_key in (key, f"source_room:{room.id}"):
             stored = db.get(AppSetting, binding_key) or AppSetting(key=binding_key)
             stored.value = binding.model_dump_json()

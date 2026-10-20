@@ -113,10 +113,11 @@ wheels = [
 
 [[package]]
 name = "bili-live-cut"
-version = "0.1.19.2a0"
+version = "0.1.19.3a0"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },
+    { name = "click" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -127,7 +128,6 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "sqlmodel" },
-    { name = "typer" },
     { name = "websockets" },
 ]
 
@@ -198,6 +198,7 @@ requires-dist = [
     { name = "brotli", specifier = ">=1.1" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "check-manifest", marker = "extra == 'dev'", specifier = ">=0.51" },
+    { name = "click", specifier = ">=8.1.7,<9" },
     { name = "cython", marker = "extra == 'dev'", specifier = "==3.2.9" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.111" },
     { name = "faster-whisper", marker = "extra == 'asr-whisper'", specifier = ">=1.0" },
@@ -229,7 +230,6 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.10" },
     { name = "sqlmodel", specifier = ">=0.0.22,<0.0.45" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=12.0" },
 ]

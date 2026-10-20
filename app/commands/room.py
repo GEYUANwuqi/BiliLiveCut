@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
-import typer
+import click
 from rich.console import Console
 
 from app.db.entities import LiveRoom
 from app.db.session import get_session
+from app.sources.rooms import room_is_removed
 
 console = Console()
 
 
+@click.argument("room_id", type=int)
+@click.option(
+    "--at",
+    "at_time",
+    required=True,
+    type=str,
+    help="计划启动时间,ISO 格式(如 2026-07-03T20:00:00)或 HH:MM(默认今天)",
+    show_default=True,
+)
+@click.option("--daily", default=False, is_flag=True, help="设为每日重复", show_default=True)
 def cmd_schedule(
-    room_id: int = typer.Argument(..., help="live_rooms 主键(dbid)"),
-    at_time: str = typer.Option(..., "--at", help="计划启动时间,ISO 格式(如 2026-07-03T20:00:00)或 HH:MM(默认今天)"),
-    daily: bool = typer.Option(False, "--daily", help="设为每日重复"),
+    room_id: int,
+    at_time: str,
+    daily: bool = False,
 ) -> None:
     """为直播间创建一个录制预约(V0.1.2 新增)。
 
@@ -31,9 +42,9 @@ def cmd_schedule(
 
     with get_session() as db:
         room = db.get(LiveRoom, room_id)
-        if room is None:
+        if room is None or room_is_removed(db, room_id):
             console.print(f"[red]房间不存在: db_id={room_id}[/red]")
-            raise typer.Exit(code=1)
+            raise click.exceptions.Exit(code=1)
 
     # 解析时间:ISO 格式直接解析;HH:MM 则补齐到本地今天的完整时间。
     try:
@@ -50,7 +61,7 @@ def cmd_schedule(
                 ts += timedelta(days=1)
         except (ValueError, AttributeError) as err:
             console.print(f"[red]时间格式无效: {at_time}(支持 ISO 或 HH:MM)[/red]")
-            raise typer.Exit(code=1) from err
+            raise click.exceptions.Exit(code=1) from err
 
     recurrent = "daily" if daily else ""
     with get_session() as db:

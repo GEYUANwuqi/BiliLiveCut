@@ -31,9 +31,9 @@ from config.launcher_settings import APP_ROOT_ENV, WEB_PORT_ENV, load_launcher_c
 
 # -- Constants ──────────────────────────────────────────────────
 APP_NAME = "BiliLiveCut"
-VERSION = "V0.1.19.2 Alpha"
-RELEASE_VERSION = "0.1.19.2-alpha"
-SOURCE_COMMIT_SHORT = "3b6c8f4"
+VERSION = "V0.1.19.3 Alpha"
+RELEASE_VERSION = "0.1.19.3-alpha"
+SOURCE_COMMIT_SHORT = "8cf7d92"
 # NOTE: RELEASE_ID 将在获得 Payload SHA-256 后动态生成 (内容寻址)
 SUPPORTED_PYTHON_VERSIONS = frozenset({(3, 11), (3, 12)})
 
@@ -619,7 +619,7 @@ def _build_service_command(venv_python: Path, web_port: int) -> list[str]:
         str(venv_python),
         "-c",
         "from app.cli import app; app()",
-        "serve",
+        "start",
         "--host",
         "127.0.0.1",
         "--port",

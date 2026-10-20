@@ -16,6 +16,7 @@ from app.db.entities import (
     SystemLog,
 )
 from app.db.session import get_session
+from app.sources.rooms import room_is_removed
 
 
 def list_schedules() -> list[dict[str, Any]]:
@@ -58,7 +59,7 @@ def create_schedule(room_id: int, scheduled_at: str, recurrent: str = "") -> dic
         raise ValueError("重复规则必须是单次、daily 或 weekly")
     with get_session() as db:
         room = db.get(LiveRoom, room_id)
-        if room is None:
+        if room is None or room_is_removed(db, room_id):
             raise ValueError(f"房间不存在: id={room_id}")
         if settings.require_authorization and not room.authorized:
             raise ValueError("该直播间未确认授权,无法创建预约。")

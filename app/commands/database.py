@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import typer
+import click
 from rich.console import Console
 
 from app.core.config import settings
@@ -10,8 +10,9 @@ from app.core.config import settings
 console = Console()
 
 
+@click.option("--yes", "-y", default=False, is_flag=True, help="跳过确认提示", show_default=True)
 def cmd_db_reset(
-    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认提示"),
+    yes: bool = False,
 ) -> None:
     """重置数据库 (仅供开发使用)。
 
@@ -24,10 +25,10 @@ def cmd_db_reset(
         from app.db.schema import _db_path
 
         console.print(f"绝对路径: {_db_path()}\n")
-        confirm = typer.confirm("确认重置数据库?")
+        confirm = click.confirm("确认重置数据库?")
         if not confirm:
             console.print("[yellow]已取消。[/yellow]")
-            raise typer.Exit()
+            raise click.exceptions.Exit()
 
     from app.db.schema import reset_database
 
@@ -36,11 +37,12 @@ def cmd_db_reset(
         console.print("[green]数据库已重置重建。[/green]")
     else:
         console.print("[red]数据库重置失败, 请检查日志。[/red]")
-        raise typer.Exit(code=1)
+        raise click.exceptions.Exit(code=1)
 
 
+@click.option("--days", default=None, type=int, help="保留天数(留空用配置 TREND_RETENTION_DAYS)", show_default=True)
 def cmd_trends_purge(
-    days: int = typer.Option(None, help="保留天数(留空用配置 TREND_RETENTION_DAYS)"),
+    days: int | None = None,
 ) -> None:
     """清理超过保留期的网感资料库条目。
 

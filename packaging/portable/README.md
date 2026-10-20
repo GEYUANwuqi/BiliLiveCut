@@ -1,6 +1,6 @@
 # Portable 安装与构建
 
-**版本：V0.1.19.2 Alpha** (`0.1.19.2-alpha`)
+**版本：V0.1.19.3 Alpha** (`0.1.19.3-alpha`)
 
 本文介绍 Windows Portable 的发行结构、模型准备、运行依赖和构建方法。第一次使用请按下方用户指南完成安装；升级时保留旧运行目录，使用新目录和当前版本数据库。常见问题见[故障排查](../../docs/features/troubleshooting.md)。
 
@@ -119,7 +119,7 @@ python build_engine_pack.py --from-cache  # 从已验证缓存构建
 
 输出:
 
-- dist/engine-pack/BiliLiveCut-EnginePack-0.1.19.2-alpha.zip
+- dist/engine-pack/BiliLiveCut-EnginePack-0.1.19.3-alpha.zip
 - dist/engine-pack/engine-pack-manifest.json
 - dist/engine-pack/CRC32SUMS.txt
 - dist/engine-pack/SHA256SUMS.txt
@@ -230,7 +230,7 @@ packaging/portable/                     # ★ 即插即用分发版根目录 (�
 ├── runtime/                  # ★ Runtime 版本管理
 │   ├── current.json          #   当前激活的 Release 信息
 │   └── releases/
-│       └── 0.1.19.2-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
+│       └── 0.1.19.3-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
 │
 ├── .venv/                    # Python 虚拟环境（launcher.exe 自动创建）
 ├── models/                   # 四引擎 ASR 模型 (由 Engine Pack 或在线下载安装)
@@ -494,3 +494,9 @@ BILIUP_UPLOAD_CMD=                          # 自定义上传命令模板
 - **主仓库**: [README](../../README.md)
 - **完整变更日志**: [CHANGELOG](../../CHANGELOG.md)
 - **Portable 构建文档**: 本文件及 `packaging/portable/` 下的 Python 模块
+
+## React 前端构建
+
+Portable 构建机需要 Node.js 24 与 npm。Payload 从已冻结的源码提交提取 `frontend/`，执行 `npm ci` 和 `npm run build`，仅把 `frontend/dist/` 加入 Payload；不打包 node_modules 或前端开发源码。运行 Portable 无需 Node.js，Launcher 调用 `start` 启动独立前端和本机 API 进程。
+
+引入前端或后端源码修改后，需要先提交源码，再按已有发布流程同步 Payload 的源码基线并重新构建；旧基线不包含 React 入口，构建会明确拒绝混用。

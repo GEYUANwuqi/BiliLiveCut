@@ -34,7 +34,7 @@ def test_launcher_exports_callable_main() -> None:
     assert callable(main), "main must be callable"
 
 
-def test_service_command_calls_typer_app_explicitly(tmp_path: Path) -> None:
+def test_service_command_calls_click_app_explicitly(tmp_path: Path) -> None:
     """服务启动不能依赖锁定 Payload 是否实现 ``python -m app.cli``。"""
     from blc_portable.launcher.main import _build_service_command
 
@@ -42,7 +42,7 @@ def test_service_command_calls_typer_app_explicitly(tmp_path: Path) -> None:
     command = _build_service_command(venv_python, 8080)
 
     assert command[:3] == [str(venv_python), "-c", "from app.cli import app; app()"]
-    assert command[3:] == ["serve", "--host", "127.0.0.1", "--port", "8080"]
+    assert command[3:] == ["start", "--host", "127.0.0.1", "--port", "8080"]
     assert "-m" not in command
 
 

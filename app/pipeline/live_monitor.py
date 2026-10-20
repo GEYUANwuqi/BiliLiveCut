@@ -23,7 +23,7 @@ from app.db.entities import LiveRoom
 from app.db.session import get_session
 from app.plugins.live_source import LiveStatus, SourceError, SourceRoom
 from app.sources.registry import source_registry
-from app.sources.rooms import room_source
+from app.sources.rooms import registered_rooms, room_source
 
 
 class LiveMonitor:
@@ -124,7 +124,7 @@ class LiveMonitor:
     async def _check_all(self, *, wait: bool = True) -> None:
         """对所有启用了 auto_record 的房间检查开播状态。"""
         with get_session() as db:
-            rooms = list(db.exec(select(LiveRoom).where(LiveRoom.auto_record == True)).all())  # noqa: E712
+            rooms = [room for room in registered_rooms(db) if room.auto_record]
         # 每个平台独立排队；一个来源的请求预算不会阻塞另一来源开始检测。
         groups: dict[str, list[LiveRoom]] = {}
         for room in rooms:

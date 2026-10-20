@@ -41,3 +41,14 @@ recursive-include docs/.vuepress *.mjs *.css
 prune docs/.vuepress/.cache
 prune docs/.vuepress/.temp
 prune docs/.vuepress/dist
+
+# Independent frontend source; build output and dependencies ship separately.
+recursive-include frontend *.json *.ts *.tsx *.css *.html *.js *.mjs *.svg *.md
+include frontend/Dockerfile
+include frontend/nginx.conf
+include frontend/.oxlintrc.json
+prune frontend/node_modules
+prune frontend/dist
+prune frontend/test-results
+prune frontend/playwright-report
+include frontend/.prettierignore

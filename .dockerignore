@@ -93,3 +93,9 @@ tools/native/cython/_repeat_speedups.cpp
 # Documentation dependencies and output are deployed separately.
 docs/node_modules/
 docs/.vuepress/
+
+# Frontend dependencies are installed in the build stage.
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
