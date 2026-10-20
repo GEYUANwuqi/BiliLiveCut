@@ -80,6 +80,8 @@ uv run --no-sync blc frontend --port 8080 --backend http://127.0.0.1:8000
 
 对外服务推荐 Docker 中的 Nginx，或配置自己的 HTTPS 静态服务与反向代理。后端端口应保持内网访问；Basic 模式下，远程浏览器的媒体认证使用 Service Worker，需要 HTTPS 或 localhost 安全上下文。使用 SSH 隧道时访问本机 localhost 即可。
 
+Basic 媒体请求只向发起请求的同源标签页，通过独立消息端口读取该页面内存中的凭据。Worker 不缓存密码，浏览器回收并重新启动 Worker 后可继续播放；退出或认证失效后的新请求不再附加凭据。页面只回应当前控制它的同源 Worker。页面已关闭或在 1.5 秒内无法回应时，保留原请求交由服务端认证，不借用其他标签页的登录状态。Docker 的 HttpOnly Cookie 会话仍由浏览器随原请求发送。
+
 ## 语法与交互检查
 
 ```bash

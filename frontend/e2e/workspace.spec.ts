@@ -474,7 +474,7 @@ test("plugin settings preserve input kinds and send valid typed values", async (
   await expect(dialog).toHaveCount(0);
 });
 
-test("Basic media authentication works for native no-cors images and stays in one tab", async ({
+test("Basic media survives worker restart, stays in one tab and stops after logout", async ({
   page,
   context,
 }) => {
@@ -498,6 +498,60 @@ test("Basic media authentication works for native no-cors images and stays in on
     "naturalWidth",
     32,
   );
+  const cdp = await context.newCDPSession(page);
+  const versions = new Map<
+    string,
+    { runningStatus: string; scriptURL: string }
+  >();
+  cdp.on(
+    "ServiceWorker.workerVersionUpdated",
+    (event: {
+      versions: {
+        versionId: string;
+        runningStatus: string;
+        scriptURL: string;
+      }[];
+    }) => {
+      for (const version of event.versions)
+        versions.set(version.versionId, version);
+    },
+  );
+  await cdp.send("ServiceWorker.enable");
+  const running = () =>
+    [...versions].find(
+      ([, version]) =>
+        version.runningStatus === "running" &&
+        version.scriptURL.endsWith("/media-auth.js"),
+    );
+  await expect.poll(running).toBeTruthy();
+  await page.evaluate(() => {
+    document.documentElement.dataset.controllerChanges = "0";
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      document.documentElement.dataset.controllerChanges = String(
+        Number(document.documentElement.dataset.controllerChanges) + 1,
+      );
+    });
+  });
+  const versionId = running()![0];
+  await cdp.send("ServiceWorker.stopWorker", { versionId });
+  await expect
+    .poll(() => versions.get(versionId)?.runningStatus)
+    .toBe("stopped");
+  await page.evaluate(() => {
+    const image = document.createElement("img");
+    image.id = "restarted-auth-image";
+    image.src = "/api/clips/1/cover?after-worker-restart";
+    document.body.append(image);
+  });
+  await expect(page.locator("#restarted-auth-image")).toHaveJSProperty(
+    "naturalWidth",
+    32,
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-controller-changes",
+    "0",
+  );
+  await cdp.detach();
   const other = await context.newPage();
   await other.goto("/");
   await expect(other.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
@@ -516,6 +570,24 @@ test("Basic media authentication works for native no-cors images and stays in on
     0,
   );
   await other.close();
+  await page.locator('header button[aria-haspopup="menu"]').click();
+  await page.getByRole("menuitem", { name: "退出登录", exact: true }).click();
+  const denied = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/clips/1/cover?after-logout") &&
+      response.status() === 401,
+  );
+  await page.evaluate(() => {
+    const image = document.createElement("img");
+    image.id = "logged-out-image";
+    image.src = "/api/clips/1/cover?after-logout";
+    document.body.append(image);
+  });
+  await denied;
+  await expect(page.locator("#logged-out-image")).toHaveJSProperty(
+    "naturalWidth",
+    0,
+  );
 });
 
 test("running room settings omit locked flags while saving other changes", async ({

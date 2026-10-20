@@ -110,6 +110,7 @@ async function restore() {
 
 export function bootAuth() {
   if (!booting) {
+    listenForMediaAuth();
     window.addEventListener("focus", () => {
       if (state.mode === "session") void restore();
     });
@@ -173,7 +174,6 @@ export async function login(username: string, password: string, code?: string) {
     );
     basic = token;
     await prepareMediaAuth();
-    syncMediaAuth();
     update({
       ready: true,
       authenticated: true,
@@ -182,7 +182,6 @@ export async function login(username: string, password: string, code?: string) {
       role: username === "admin" ? "admin" : "reviewer",
       error: "",
     });
-    syncMediaAuth();
   }
   window.dispatchEvent(
     new CustomEvent("blc:identity", {
@@ -210,7 +209,6 @@ export async function logout(everywhere = false) {
   if (state.mode === "session")
     await sessionWrite("/auth/logout", { everywhere });
   basic = "";
-  syncMediaAuth();
   update({ authenticated: false, csrf_token: "", username: "", error: "" });
   window.dispatchEvent(
     new CustomEvent("blc:identity", { detail: { clear: true } }),
@@ -233,15 +231,31 @@ export async function changePassword(
   );
 }
 
-function syncMediaAuth() {
-  navigator.serviceWorker?.controller?.postMessage({
-    type: "blc:media-auth",
-    authorization: basic,
+let listeningForMediaAuth = false;
+
+function listenForMediaAuth(): void {
+  if (listeningForMediaAuth || !("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
+    if (
+      event.origin !== window.location.origin ||
+      !event.source ||
+      event.source !== navigator.serviceWorker.controller ||
+      event.data?.type !== "blc:media-auth-request" ||
+      event.ports.length !== 1
+    )
+      return;
+    const port = event.ports[0];
+    port.postMessage({
+      authorization: state.authenticated && state.mode === "basic" ? basic : "",
+    });
+    port.close();
   });
+  listeningForMediaAuth = true;
 }
 
 export async function prepareMediaAuth() {
   if (!("serviceWorker" in navigator) || !window.isSecureContext) return false;
+  listenForMediaAuth();
   await navigator.serviceWorker.register("/media-auth.js");
   await navigator.serviceWorker.ready;
   if (!navigator.serviceWorker.controller)
@@ -254,7 +268,5 @@ export async function prepareMediaAuth() {
       const timer = setTimeout(done, 5000);
       navigator.serviceWorker.addEventListener("controllerchange", done);
     });
-  navigator.serviceWorker.addEventListener("controllerchange", syncMediaAuth);
-  syncMediaAuth();
   return true;
 }

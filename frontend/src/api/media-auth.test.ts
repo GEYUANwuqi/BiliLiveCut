@@ -2,82 +2,172 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
-it("scopes Basic media credentials to one client and keeps Range requests", async () => {
-  const handlers: Record<string, (event: Record<string, unknown>) => void> = {};
+
+const origin = "https://example.test";
+const token = "Basic cHJpdmF0ZQ==";
+interface PageClient {
+  url: string;
+  postMessage: (message: unknown, ports: MessagePort[]) => void;
+}
+function worker(pages: Map<string, PageClient>) {
+  const handlers: Record<string, (event: unknown) => void> = {};
   const fetch = vi.fn().mockResolvedValue(new Response("video"));
-  const origin = "https://example.test";
-  const self = {
-    location: { origin },
-    addEventListener: (
-      kind: string,
-      handler: (event: Record<string, unknown>) => void,
-    ) => {
-      handlers[kind] = handler;
-    },
-  };
+  const get = vi.fn(async (id: string) => pages.get(id));
   runInNewContext(
     readFileSync(
       new URL("../../public/media-auth.js", import.meta.url),
       "utf8",
     ),
-    { self, URL, Headers, Request, Map, fetch },
+    {
+      self: {
+        location: { origin },
+        clients: { get },
+        addEventListener: (
+          kind: string,
+          callback: (event: unknown) => void,
+        ) => {
+          handlers[kind] = callback;
+        },
+      },
+      URL,
+      Headers,
+      Request,
+      MessageChannel,
+      setTimeout,
+      clearTimeout,
+      fetch,
+    },
   );
-  handlers.message({
-    origin,
-    source: { id: "tab-1", url: `${origin}/review/1` },
-    data: { type: "blc:media-auth", authorization: "Basic private" },
-  });
-  const respondWith = vi.fn();
-  handlers.fetch({
-    request: new Request(`${origin}/api/clips/1/video`, {
+  return {
+    get,
+    fetch,
+    request(
+      clientId = "tab-1",
+      path = "/api/clips/1/video",
+      options: RequestInit = {},
+    ) {
+      let response: Promise<Response> | undefined;
+      handlers.fetch({
+        clientId,
+        request: new Request(new URL(path, origin), options),
+        respondWith: (value: Promise<Response>) => {
+          response = value;
+        },
+      });
+      return response;
+    },
+  };
+}
+function page(authorization: unknown): PageClient {
+  return {
+    url: `${origin}/review/1`,
+    postMessage: (_message, ports) => ports[0].postMessage({ authorization }),
+  };
+}
+
+it("recovers credentials after a fresh worker starts and preserves native Range requests", async () => {
+  const pages = new Map([
+    ["tab-1", page(token)],
+    ["tab-2", page("")],
+  ]);
+  for (let restart = 0; restart < 2; restart++) {
+    const current = worker(pages);
+    await current.request("tab-1", "/api/clips/1/video", {
       headers: { Range: "bytes=0-99" },
       mode: "no-cors",
-    }),
-    clientId: "tab-1",
-    respondWith,
-  });
-  expect(respondWith).toHaveBeenCalledOnce();
-  const forwarded = fetch.mock.calls[0][0] as Request;
-  expect(forwarded.mode).toBe("same-origin");
-  expect(forwarded.headers.get("Authorization")).toBe("Basic private");
-  expect(forwarded.headers.get("Range")).toBe("bytes=0-99");
-  for (const untrusted of [undefined, "", "null", "https://other.test"]) {
-    handlers.message({
-      origin: untrusted,
-      source: { id: "tab-1", url: `${origin}/review/1` },
-      data: { type: "blc:media-auth", authorization: "Basic attacker" },
     });
-    handlers.fetch({
-      request: new Request(`${origin}/api/clips/1/video`),
-      clientId: "tab-1",
-      respondWith,
-    });
-    const latest = fetch.mock.calls.at(-1)![0] as Request;
-    expect(latest.headers.get("Authorization")).toBe("Basic private");
+    const forwarded = current.fetch.mock.calls[0][0] as Request;
+    expect(forwarded.mode).toBe("same-origin");
+    expect(forwarded.cache).toBe("no-store");
+    expect(forwarded.headers.get("Authorization")).toBe(token);
+    expect(forwarded.headers.get("Range")).toBe("bytes=0-99");
+    await current.request("tab-2");
+    expect(current.get.mock.calls).toEqual([["tab-1"], ["tab-2"]]);
+    expect(
+      (current.fetch.mock.calls.at(-1)![0] as Request).headers.has(
+        "Authorization",
+      ),
+    ).toBe(false);
   }
-  for (const [client, url] of [
-    ["tab-2", `${origin}/api/clips/1/video`],
-    ["tab-1", "https://other.test/api/clips/1/video"],
-    ["tab-1", `${origin}/api/dashboard`],
-  ]) {
-    respondWith.mockClear();
-    handlers.fetch({
-      request: new Request(url),
-      clientId: client,
-      respondWith,
+});
+
+it("does not retain credentials after the source page logs out", async () => {
+  const pages = new Map([["tab-1", page(token)]]);
+  const current = worker(pages);
+  await current.request();
+  pages.set("tab-1", page(""));
+  await current.request();
+  expect(
+    (current.fetch.mock.calls.at(-1)![0] as Request).headers.has(
+      "Authorization",
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  undefined,
+  null,
+  "",
+  "Bearer private",
+  "Basic a\r\nX: y",
+  `Basic ${"a".repeat(8192)}`,
+])(
+  "rejects invalid replies and preserves the original cookie request (%j)",
+  async (authorization) => {
+    const current = worker(new Map([["tab-1", page(authorization)]]));
+    await current.request("tab-1", "/api/clips/1/cover", {
+      credentials: "same-origin",
     });
-    expect(respondWith).not.toHaveBeenCalled();
-  }
-  handlers.message({
-    origin,
-    source: { id: "tab-1", url: `${origin}/` },
-    data: { type: "blc:media-auth", authorization: "" },
-  });
-  respondWith.mockClear();
-  handlers.fetch({
-    request: new Request(`${origin}/api/clips/1/video`),
-    clientId: "tab-1",
-    respondWith,
-  });
-  expect(respondWith).not.toHaveBeenCalled();
+    const forwarded = current.fetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.has("Authorization")).toBe(false);
+    expect(forwarded.credentials).toBe("same-origin");
+  },
+);
+
+it("does not request credentials from other origins, missing clients or closed pages", async () => {
+  const foreign = {
+    ...page(token),
+    url: "https://other.test/",
+    postMessage: vi.fn(),
+  };
+  const closed = {
+    ...page(token),
+    postMessage: () => {
+      throw new Error("page closed");
+    },
+  };
+  const current = worker(
+    new Map<string, PageClient>([
+      ["foreign", foreign],
+      ["closed", closed],
+    ]),
+  );
+  for (const id of ["", "missing", "foreign", "closed"])
+    await current.request(id);
+  expect(foreign.postMessage).not.toHaveBeenCalled();
+  for (const [request] of current.fetch.mock.calls)
+    expect((request as Request).headers.has("Authorization")).toBe(false);
+});
+
+it("bounds the wait when a page cannot respond", async () => {
+  const current = worker(
+    new Map([["tab-1", { ...page(token), postMessage: () => {} }]]),
+  );
+  await current.request();
+  expect(current.fetch).toHaveBeenCalledOnce();
+  expect(
+    (current.fetch.mock.calls[0][0] as Request).headers.has("Authorization"),
+  ).toBe(false);
+});
+
+it("ignores cross-origin, non-media and write requests", () => {
+  const current = worker(new Map([["tab-1", page(token)]]));
+  for (const [path, method] of [
+    ["https://other.test/api/clips/1/video", "GET"],
+    ["/api/dashboard", "GET"],
+    ["/api/clips/1/video", "POST"],
+  ])
+    expect(current.request("tab-1", path, { method })).toBeUndefined();
+  expect(current.get).not.toHaveBeenCalled();
+  expect(current.fetch).not.toHaveBeenCalled();
 });
