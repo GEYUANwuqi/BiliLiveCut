@@ -400,6 +400,7 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
         def __init__(self):
             self.stopping = False
             self.waits = 0
+            self.stdin = None
 
         def poll(self):
             if self.stopping:
@@ -409,7 +410,11 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
             return self.returncode
 
         def send_signal(self, number):
-            assert number == (signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+            assert number == signal.SIGINT
+            self.stopping = True
+
+        def terminate(self):
+            assert self.stdin is None, "Windows 后端须通过管道正常退出"
             self.stopping = True
 
         def kill(self):
@@ -422,6 +427,8 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
 
     def spawn(*args, **kwargs):
         process = Process()
+        if kwargs.get("stdin") == subprocess.PIPE:
+            process.stdin = SimpleNamespace(close=lambda: setattr(process, "stopping", True))
         processes.append(process)
         options.append(kwargs)
         return process
@@ -445,3 +452,15 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
         else:
             assert kwargs["start_new_session"] is True
     assert all(signal.getsignal(number) == handler for number, handler in original_signals.items())
+
+
+def test_windows_console_stops_without_console_signals() -> None:
+    from types import SimpleNamespace
+
+    from app.commands.serve import _request_console_stop
+
+    stopped = []
+    backend = SimpleNamespace(poll=lambda: None, stdin=SimpleNamespace(close=lambda: stopped.append("backend-eof")))
+    frontend = SimpleNamespace(poll=lambda: None, terminate=lambda: stopped.append("frontend"))
+    _request_console_stop([backend, frontend], windows=True)
+    assert stopped == ["backend-eof", "frontend"]

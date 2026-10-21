@@ -20,6 +20,49 @@ from config.launcher_settings import (
 console = Console()
 
 
+def _serve_with_parent_pipe(uvicorn, **options: object) -> None:
+    """受监管后端通过父进程管道正常退出，兼容没有控制台的 Windows 服务。"""
+    import sys
+    import threading
+
+    stop_requested = threading.Event()
+
+    class ParentPipeServer(uvicorn.Server):
+        async def on_tick(self, counter: int) -> bool:
+            # 仅在服务主循环中置退出标记，启动期间收到 EOF 也会执行 lifespan 清理。
+            if stop_requested.is_set():
+                self.should_exit = True
+            return await super().on_tick(counter)
+
+    def watch_parent() -> None:
+        try:
+            sys.stdin.read(1)
+        except (OSError, ValueError):
+            pass
+        stop_requested.set()
+
+    threading.Thread(target=watch_parent, name="blc-parent-pipe", daemon=True).start()
+    ParentPipeServer(uvicorn.Config("app.web.main:app", **options)).run()
+
+
+def _request_console_stop(processes: list, *, windows: bool) -> None:
+    """后端正常收尾；Windows 静态前端不依赖控制台信号即可关闭。"""
+    import signal
+
+    for index, process in enumerate(processes):
+        if process.poll() is not None:
+            continue
+        try:
+            if windows and index == 0:
+                process.stdin.close()
+            elif windows:
+                process.terminate()
+            else:
+                process.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            pass
+
+
 @click.option("--host", default="127.0.0.1", type=str, help="监听地址", show_default=True)
 @click.option(
     "--port",
@@ -90,7 +133,10 @@ def cmd_serve(
     if reload:
         source_root = Path(__file__).resolve().parents[2]
         reload_options["reload_dirs"] = [str(source_root / "app"), str(source_root / "config")]
-    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
+    if os.environ.pop("_BLC_PARENT_STDIN", "") == "1" and not reload:
+        _serve_with_parent_pipe(uvicorn, host=host, port=actual_port, log_config=None)
+    else:
+        uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
 
 
 # 注册列表
@@ -179,6 +225,8 @@ def cmd_console(
         probe.bind(("127.0.0.1", 0))
         api_port = probe.getsockname()[1]
     child_env = {**os.environ, "BLC_FRONTEND_PORT": str(actual_port)}
+    if os.name == "nt":
+        child_env["_BLC_PARENT_STDIN"] = "1"
     processes: list[subprocess.Popen] = []
     shutdown_signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
@@ -206,6 +254,7 @@ def cmd_console(
             subprocess.Popen(
                 [sys.executable, "-m", "app.cli", "backend", "--host", "127.0.0.1", "--port", str(api_port)],
                 env=child_env,
+                **({"stdin": subprocess.PIPE} if os.name == "nt" else {}),
                 **process_options,
             )
         )
@@ -257,15 +306,7 @@ def cmd_console(
         closing = True
         try:
             console.print("[yellow]正在停止录制并释放后台资源，再次按 Ctrl+C 可强制退出。[/yellow]")
-            for process in processes:
-                if process.poll() is None:
-                    try:
-                        if os.name == "nt":
-                            process.send_signal(signal.CTRL_BREAK_EVENT)
-                        else:
-                            process.send_signal(signal.SIGINT)
-                    except ProcessLookupError:
-                        pass
+            _request_console_stop(processes, windows=os.name == "nt")
             # 各服务自行管理关闭期限，不能在 Worker 宽限期结束前强杀 API。
             while any(process.poll() is None for process in processes):
                 if force_exit:
