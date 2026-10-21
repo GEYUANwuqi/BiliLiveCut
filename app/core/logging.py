@@ -3,7 +3,7 @@
 基于 loguru 提供结构化、带轮转的日志:
 
 * 控制台彩色输出(便于开发);
-* 文件输出到 ``storage/logs/blc.log``,自动轮转与压缩(便于排错追溯);
+* 各进程独占 ``storage/logs/blc-<pid>-<run_id>.log``,自动轮转与压缩;
 * 通过 :func:`setup_logging` 在程序入口初始化一次。
 
 业务模块直接 ``from loguru import logger`` 使用即可。
@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
+import time
 import traceback
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
+import psutil
 from loguru import logger
 
 from app.core.config import settings
@@ -27,6 +33,32 @@ if TYPE_CHECKING:
     from loguru import Message, Record
 
 _CONFIGURED = False
+_FILE_LOG_NAME = re.compile(
+    r"blc-(?P<pid>[1-9][0-9]*)-[0-9a-f]{32}"
+    r"(?:\.[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}(?:\.[0-9]+)?)?"
+    r"\.log(?:\.zip)?"
+)
+
+
+def _retain_file_logs(directory: Path, _rotated_files: list[str]) -> None:
+    """清理各进程的过期日志，保留活跃文件、旧版日志和非项目文件。"""
+    cutoff = time.time() - 14 * 24 * 60 * 60
+    for path in directory.glob("blc-*.log*"):
+        match = _FILE_LOG_NAME.fullmatch(path.name)
+        if match is None:
+            continue
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_mtime >= cutoff:
+                continue
+            if path.suffix != ".zip" and psutil.pid_exists(int(match["pid"])):
+                continue
+            path.unlink()
+        except FileNotFoundError:
+            # 独立进程可能同时清理同一归档，已删除即达到清理目标。
+            continue
+        except PermissionError as exc:
+            # 外部查看器或权限可阻止清理；保留文件并直接报告，避免递归写入当前 sink。
+            print(f"过期日志清理失败，已保留文件：{safe_exception_summary(exc)}", file=sys.stderr)
 
 
 class _ApplicationLogHandler(logging.Handler):
@@ -119,16 +151,18 @@ def setup_logging() -> None:
     # 控制台:彩色,级别取自配置。
     logger.add(sys.stderr, level=settings.log_level, format=fmt, enqueue=True, diagnose=False, backtrace=False)
 
-    # 文件:按大小轮转 10MB,保留 14 天,压缩为 zip,便于长期追溯。
+    # 独立解释器不共享 Loguru 队列；每次启动独占文件，避免 Windows 轮转时互相占用。
+    directory = logs_dir()
+    _retain_file_logs(directory, [])
     logger.add(
-        logs_dir() / "blc.log",
+        directory / f"blc-{os.getpid()}-{uuid4().hex}.log",
         level="DEBUG",
         format=fmt,
         rotation="10 MB",
-        retention="14 days",
+        retention=partial(_retain_file_logs, directory),
         compression="zip",
         encoding="utf-8",
-        enqueue=True,  # 多进程/多线程安全
+        enqueue=True,  # 本进程线程通过队列交给同一个文件写入者。
         backtrace=False,
         diagnose=False,  # 开发环境也不记录局部变量中的凭据。
     )
