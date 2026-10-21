@@ -58,7 +58,7 @@ async def test_backend_auth_is_json_without_redirect_or_basic_popup(browser: htt
     assert api.status_code == 401 and api.headers["X-BLC-Auth-Required"] == "1"
     assert "www-authenticate" not in api.headers
     assert (await browser.get("/auth/login")).status_code == 404
-    assert (await browser.get("/static/js/admin-session.js")).status_code == 404
+    assert (await browser.get("/assets/index.js")).status_code == 401
 
 
 async def test_login_cookie_and_state_do_not_leak_password(browser: httpx.AsyncClient) -> None:

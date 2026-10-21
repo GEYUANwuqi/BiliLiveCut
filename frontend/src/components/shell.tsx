@@ -9,9 +9,9 @@ import {
 import {
   Activity,
   Bell,
-  CalendarClock,
   ChartNoAxesCombined,
   ChevronDown,
+  CircleHelp,
   Clapperboard,
   Command,
   FolderKanban,
@@ -54,7 +54,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FormDialog } from "@/components/workbench";
-import { clearDrafts, hasDrafts } from "@/lib/drafts";
+import { TourTarget, useOnboarding } from "@/components/onboarding";
+import { hasDrafts } from "@/lib/drafts";
 import { rows, text, time } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
@@ -66,7 +67,6 @@ export const navigation = [
       { to: "/rooms", label: "直播间", icon: Radio },
       { to: "/recording", label: "录制状态", icon: Video },
       { to: "/imports", label: "录播分析", icon: Upload },
-      { to: "/schedules", label: "录制预约", icon: CalendarClock },
       { to: "/transcripts", label: "语音转写", icon: TextSearch },
       { to: "/danmaku", label: "弹幕热度", icon: Activity },
     ],
@@ -96,6 +96,8 @@ export const navigation = [
 
 export function Shell() {
   const auth = useAuth();
+  const intro = useOnboarding();
+  const touring = intro.stage.startsWith("tour:");
   const location = useLocation();
   const navigate = useNavigate();
   const query = useQueryClient();
@@ -109,6 +111,9 @@ export function Shell() {
   );
   const [pause, setPause] = useState(getPauseUntil);
   const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    setMobile(touring);
+  }, [touring]);
   const noticeQuery = useApi(
     "/api/notifications?since_id=0",
     10000,
@@ -150,8 +155,6 @@ export function Shell() {
     };
     const identity = (event: Event) => {
       if ((event as CustomEvent<{ clear: boolean }>).detail.clear) {
-        query.clear();
-        clearDrafts();
         setSeen(0);
         lastNotice.current = null;
       } else void query.invalidateQueries();
@@ -233,18 +236,22 @@ export function Shell() {
             <div key={group.label} className="mb-6">
               <p className="sidebar-label">{group.label}</p>
               {group.items.map(({ to, label, icon: Icon }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={to === "/"}
-                  onClick={() => setMobile(false)}
-                  className={({ isActive }) =>
-                    cn("sidebar-link", isActive && "sidebar-link-active")
-                  }
-                >
-                  <Icon className="size-[17px]" />
-                  <span>{label}</span>
-                </NavLink>
+                <TourTarget path={to} key={to}>
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === "/"}
+                    onClick={() => {
+                      if (!touring) setMobile(false);
+                    }}
+                    className={({ isActive }) =>
+                      cn("sidebar-link", isActive && "sidebar-link-active")
+                    }
+                  >
+                    <Icon className="size-[17px]" />
+                    <span>{label}</span>
+                  </NavLink>
+                </TourTarget>
               ))}
             </div>
           ))}
@@ -294,6 +301,16 @@ export function Shell() {
           >
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </Button>
+          {auth.role === "admin" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="重新打开使用引导"
+              onClick={intro.open}
+            >
+              <CircleHelp className="size-4" />
+            </Button>
+          )}
           {auth.role === "admin" && (
             <Button
               variant="ghost"

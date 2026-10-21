@@ -4,6 +4,7 @@
 - 钉钉机器人 Webhook(含加签)
 - 企业微信机器人 Webhook
 - SMTP 邮件
+- 飞书/Lark 应用机器人
 
 典型调用点:
 - 切片完成(clipping/core.py produce_clip 末尾)
@@ -15,17 +16,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import smtplib
-import ssl
 import time
 import urllib.parse
 from datetime import UTC, datetime
-from email.mime.text import MIMEText
 
 from loguru import logger
 
 from app.core.config import settings
 from app.core.sanitize import safe_exception_summary
+from app.notify.lark import configured as lark_configured
 
 # 允许的 webhook 域名白名单。
 _ALLOWED_WEBHOOK_DOMAINS = {"oapi.dingtalk.com", "qyapi.weixin.qq.com"}
@@ -47,7 +46,8 @@ def _enabled() -> bool:
         and (
             settings.dingtalk_webhook
             or settings.wecom_webhook
-            or (settings.smtp_host and settings.smtp_user and settings.smtp_to)
+            or (settings.smtp_host and settings.smtp_to)
+            or lark_configured()
         )
     )
 
@@ -181,40 +181,18 @@ def send_wecom(title: str, text: str) -> bool:
 
 
 def send_email(subject: str, body: str) -> bool:
-    """通过 SMTP 发送邮件通知。
+    """将邮件通知加入后台队列，发送前强制检查收件验证。
 
     :param subject: 邮件主题。
     :param body: HTML 正文。
-    :returns: 是否成功。
+    :returns: 是否接受投递，实际发信状态由邮件服务记录。
     """
-    if not (settings.smtp_host and settings.smtp_user and settings.smtp_to):
-        return False
+    from app.notify.delivery import publish_email
 
-    msg = MIMEText(body, "html", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = settings.smtp_from or settings.smtp_user
-    msg["To"] = settings.smtp_to
-    msg["Date"] = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
-
-    server = None
     try:
-        context = ssl.create_default_context()
-        server = smtplib.SMTP_SSL(
-            settings.smtp_host,
-            settings.smtp_port,
-            timeout=10,
-            context=context,
-        )
-        try:
-            server.login(settings.smtp_user, settings.smtp_password)
-            server.send_message(msg)
-        finally:
-            if server is not None:
-                server.quit()
-        logger.info("邮件通知已发送: {}", subject)
-        return True
-    except Exception as exc:
-        logger.error("邮件通知失败 host={}: {}", settings.smtp_host, safe_exception_summary(exc))
+        return publish_email(subject, body, html=True)
+    except Exception:  # noqa: BLE001 — 通知故障不影响主任务，避免原始 SMTP 响应泄露凭据
+        logger.warning("邮件提醒未发送，请检查邮箱验证、邮件配置及本地存储")
         return False
 
 
@@ -233,6 +211,9 @@ def notify(title: str, body: str) -> None:
         return
     send_dingtalk(title, body)
     send_wecom(title, body)
+    from app.notify.delivery import publish_lark
+
+    publish_lark(title, body)
     send_email(title, f"<h2>{title}</h2><pre>{body}</pre>")
 
 

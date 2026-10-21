@@ -5,13 +5,13 @@
 采样策略:
 - DANMAKU (普通弹幕): 保留率 30% (高频可适当丢弃)
 - SUPER_CHAT (SC / 醒目留言): 保留率 100% (高价值互动)
-- GUARD (舰长/提督/总督): 保留率 100% (付费用户行为)
+- INTERACT (进场等互动): 保留率 100%
 - GIFT (礼物): 保留率 80%
 - OTHER: 保留率 50%
 
 每房间维护滑动窗口缓冲区, 按窗口内密度动态调整丢弃率:
 - 窗口内弹幕数 > 1000/分钟 → 普通弹幕保留率降至 10%
-- 窗口内弹幕数 > 200/分钟 → 普通弹幕保留率 30% (默认)
+上述默认值可按房间覆盖；原始档不受采样影响。上舰等未映射消息不进入此入库采样路径。
 """
 
 from __future__ import annotations
@@ -20,23 +20,44 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from app.db.entities import DanmakuType
 
-# 基础保留率
-_BASE_RETAIN_RATE: dict[DanmakuType, float] = {
-    DanmakuType.DANMAKU: 0.30,
-    DanmakuType.SUPERCHAT: 1.0,
-    DanmakuType.INTERACT: 1.0,
-    DanmakuType.GIFT: 0.80,
-    DanmakuType.OTHER: 0.50,
+
+class DanmakuSamplingPolicy(BaseModel):
+    """房间独立的入库采样规则，保留率使用 0～1、精度为 1%。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    danmaku_rate: float = Field(default=0.30, ge=0, le=1, multiple_of=0.01, strict=True, allow_inf_nan=False)
+    gift_rate: float = Field(default=0.80, ge=0, le=1, multiple_of=0.01, strict=True, allow_inf_nan=False)
+    superchat_rate: float = Field(default=1.0, ge=0, le=1, multiple_of=0.01, strict=True, allow_inf_nan=False)
+    interact_rate: float = Field(default=1.0, ge=0, le=1, multiple_of=0.01, strict=True, allow_inf_nan=False)
+    high_density_enabled: bool = Field(default=True, strict=True)
+    high_density_threshold: int = Field(default=1000, ge=1, le=1_000_000, strict=True)
+    high_density_rate: float = Field(default=0.10, ge=0, le=1, multiple_of=0.01, strict=True, allow_inf_nan=False)
+
+
+def session_sampling_policy(session_id: int) -> DanmakuSamplingPolicy:
+    """从录制场次关联宿主房间，不能用平台房间号代替数据库主键。"""
+    from app.analysis.room_config import load_room_config
+    from app.db.entities import LiveRoom, RecordingSession
+    from app.db.session import get_session
+
+    with get_session() as db:
+        session = db.get(RecordingSession, session_id)
+        if session is None or (room := db.get(LiveRoom, session.room_id)) is None:
+            raise ValueError("弹幕采样场次或所属直播间不存在")
+        return DanmakuSamplingPolicy.model_validate(load_room_config(room)["danmaku_sampling"])
+
+
+_RATE_FIELDS = {
+    DanmakuType.DANMAKU: "danmaku_rate",
+    DanmakuType.GIFT: "gift_rate",
+    DanmakuType.SUPERCHAT: "superchat_rate",
+    DanmakuType.INTERACT: "interact_rate",
 }
-
-# 密度阈值 (每分钟条数)
-_HIGH_DENSITY_THRESHOLD = 1000  # 超高密度
-_MEDIUM_DENSITY_THRESHOLD = 200  # 中高密度
-
-# 超高密度下普通弹幕保留率
-_HIGH_DENSITY_RETAIN = 0.10
 
 
 @dataclass
@@ -49,6 +70,7 @@ class DanmakuSampler:
     """
 
     window_s: float = 60.0
+    policy: DanmakuSamplingPolicy = field(default_factory=DanmakuSamplingPolicy)
     _timestamps: deque[float] = field(default_factory=deque)
     _seq: int = 0  # 确定性 hash seed 序列号
 
@@ -63,7 +85,7 @@ class DanmakuSampler:
         # 简单分桶: 用 seq % 100 作为 0-99 的均匀分布
         bucket = (self._seq * 2654435761) % 100  # Knuth multiplicative hash
         rate = self._effective_rate(dm_type)
-        return bucket < int(rate * 100)
+        return bucket < round(rate * 100)
 
     def _effective_rate(self, dm_type: DanmakuType) -> float:
         """根据当前窗口密度计算实际保留率。
@@ -71,13 +93,14 @@ class DanmakuSampler:
         :param dm_type: 弹幕类型。
         :returns: 实际保留率 (0.0-1.0)。
         """
-        base = _BASE_RETAIN_RATE.get(dm_type, 0.50)
+        field_name = _RATE_FIELDS.get(dm_type)
+        base = getattr(self.policy, field_name) if field_name else 0.50
         if dm_type != DanmakuType.DANMAKU:
             return base
         # 仅普通弹幕受密度影响
         density = self._density_per_minute()
-        if density > _HIGH_DENSITY_THRESHOLD:
-            return _HIGH_DENSITY_RETAIN
+        if self.policy.high_density_enabled and density > self.policy.high_density_threshold:
+            return self.policy.high_density_rate
         return base
 
     def record(self) -> None:

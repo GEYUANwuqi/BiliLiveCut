@@ -12,6 +12,7 @@ from app.plugins.live_source import (
     DanmakuSink,
     DanmakuSource,
     DanmakuStateSink,
+    LiveStateSink,
     LiveStatus,
     RoomSnapshot,
     SourceAuthenticationError,
@@ -109,6 +110,16 @@ class BilibiliSource:
     async def aclose(self) -> None:
         """请求作用域已关闭所有 HTTP 连接，无共享连接需要释放。"""
 
+    async def collect_live_events(self, room: SourceRoom, emit: LiveStateSink, state: DanmakuStateSink) -> None:
+        """独立守候连接仅观察开下播，不受 COLLECT_DANMAKU 或采样率影响。"""
+        from app.sources.bilibili.live_events import BilibiliLiveEvents
+
+        client = BilibiliLiveEvents(int(room.source_id), get_bilibili_cookie(), emit, state)
+        try:
+            await client.run()
+        finally:
+            client.stop()
+
     def danmaku_for_session(self, session_id: int, *, archive: DanmakuArchive | None = None) -> DanmakuSource:
         """宿主内部会话适配，保留 Bilibili 既有事件类型、采样和存储语义。"""
         return _BilibiliSessionDanmaku(session_id, archive)
@@ -121,6 +132,7 @@ class _BilibiliSessionDanmaku:
 
     async def collect_danmaku(self, room: SourceRoom, emit: DanmakuSink, state: DanmakuStateSink) -> None:
         """现有客户端负责 Bili 事件入库，不重复发送为普通文本事件。"""
+        from app.analysis.danmaku_sampling import session_sampling_policy
         from app.sources.bilibili.danmaku import DanmakuClient
 
         client = DanmakuClient(
@@ -129,6 +141,7 @@ class _BilibiliSessionDanmaku:
             cookie=get_bilibili_cookie(),
             on_state=state,
             archive=self.archive,
+            sampling_policy=lambda: session_sampling_policy(self.session_id),
         )
         try:
             await client.run()

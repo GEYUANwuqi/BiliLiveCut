@@ -19,7 +19,8 @@ from typing import Any, BinaryIO, TextIO
 from blc_portable.diagnostics import redact_diagnostic
 
 PREFIX = "BLC_MODEL_PROGRESS="
-_PRINT_LOCK = threading.Lock()
+# tqdm 回收可能在同线程任意分配点重新发送事件，输出锁必须允许重入。
+_PRINT_LOCK = threading.RLock()
 
 
 def emit_progress(
@@ -29,8 +30,11 @@ def emit_progress(
     if os.environ.get("BLC_MODEL_PROGRESS") != "1":
         return
     payload = {"phase": phase, "label": redact_diagnostic(label), "completed": completed, "total": total, "unit": unit}
+    line = PREFIX + json.dumps(payload, ensure_ascii=False) + "\n"
     with _PRINT_LOCK:
-        print(PREFIX + json.dumps(payload, ensure_ascii=False), flush=True)
+        # 单次写入完整协议行，避免回收回调插入正文和换行之间。
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def hf_progress_class() -> type:

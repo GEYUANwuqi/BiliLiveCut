@@ -28,6 +28,21 @@ def pcm_wav(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def bili_live_feed(monkeypatch: MonkeyPatch):
+    """仅替换 Bilibili 开下播网络边界，测试仍使用真实事件监听生命周期。"""
+    from app.plugins.live_source import DanmakuStateSink, LiveStateSink, SourceRoom
+    from tests.source_fixtures import LiveEventFeed
+
+    feed = LiveEventFeed()
+
+    async def collect(_source: object, room: SourceRoom, emit: LiveStateSink, state: DanmakuStateSink) -> None:
+        await feed.collect(room, emit, state)
+
+    monkeypatch.setattr("app.sources.bilibili.source.BilibiliSource.collect_live_events", collect)
+    return feed
+
+
 @pytest.fixture(autouse=True)
 def isolated_pipeline_shutdown() -> Iterator[None]:
     """每个测试模拟独立进程，避免 Web lifespan 关闭标记污染随后直接调用的流水线。"""

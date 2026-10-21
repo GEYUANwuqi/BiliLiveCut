@@ -17,11 +17,11 @@ pip install funasr modelscope
 
 ```powershell
 # 对已录制的片段
-python -m app.cli process <segment_id>
-python -m app.cli list-candidates       # 查看高光候选
+blc process <segment_id>
+blc list-candidates       # 查看高光候选
 
 # 边录边分析（显式覆盖全局默认值）
-python -m app.cli record <db_id> --pipeline
+blc record <db_id> --pipeline
 ```
 
 `RECORDING_PIPELINE_ENABLED=true` 时，Web 手动开始/恢复、预约、崩溃恢复以及未显式传参的 CLI 录制都会启用实时转写与高光分析。可在控制台“设置中心 → 全部参数 → 录制与自动化”覆盖该默认值；CLI 可用 `--pipeline` 或 `--no-pipeline` 对单次录制覆盖。`TRANSCRIPT_LLM_REFINE_ENABLED=true` 时，每个切片完成 ASR 后还会调用已配置的大模型补全标点、整理正文并生成片段概括；调用失败时保留原始 ASR，不阻断流水线。录制流水线开关从下一次开始或恢复录制生效，转写整理开关从下一次转写任务生效。
@@ -69,10 +69,10 @@ Lite EXE 使用其实际文件名替换示例。CUDA wheel 体积较大，此操
 ```powershell
 uv pip install --python .venv/Scripts/python.exe --no-deps --require-hashes -r packaging/portable/locks/requirements-torch-cu126-py312-win-x64.lock
 .venv/Scripts/python.exe -m pip check
-.venv/Scripts/python.exe -m app.cli doctor --yes
+.\.venv\Scripts\blc.exe doctor --yes
 ```
 
-源码默认 `uv.lock` 仍是基础依赖环境；重新执行 `uv sync` 后应重新应用 CUDA 锁。使用目标环境的 Python 启动服务，避免启动时再次自动同步回基础环境。程序不下载模型来检测 GPU，也不在安装依赖时自动改写业务设备配置。
+源码默认 `uv.lock` 仍是基础依赖环境；重新执行 `uv sync` 后应重新应用 CUDA 锁。使用目标环境的 `blc` 启动服务；使用 uv 时执行 `uv run --no-sync blc start`，避免启动时再次自动同步回基础环境。程序不下载模型来检测 GPU，也不在安装依赖时自动改写业务设备配置。
 
 随后在「设置中心 → ASR」选择设备；已保存的 Web 配置优先于 `.env`，正在运行的任务仍使用开始时的快照。Fun-ASR-Nano/Paraformer 使用主设备，SenseVoice 使用辅助设备，Paraformer 的局部复核使用复核设备。Whisper 包括直接选择为主引擎时，均使用 `ASR_FALLBACK_DEVICE`。CPU 任务、媒体解码、调度及部分音频预处理仍会使用 CPU；增加并发前应确认显存余量。
 

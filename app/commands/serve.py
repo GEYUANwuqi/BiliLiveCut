@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import ModuleType
 
 import click
+from loguru import logger
 from rich.console import Console
 
+from app.core.sanitize import safe_exception_summary
 from config.launcher_settings import (
     APP_ROOT_ENV,
     WEB_PORT_ENV,
@@ -18,6 +21,83 @@ from config.launcher_settings import (
 )
 
 console = Console()
+
+
+def _wait_parent_pipe() -> None:
+    """等待父进程退出，避免同步管道读取阻塞 Windows 原生库初始化。"""
+    import sys
+
+    descriptor = sys.stdin.fileno()
+    if os.name != "nt":
+        os.read(descriptor, 1)
+        return
+    import ctypes
+    import msvcrt
+    import time
+    from ctypes import wintypes
+
+    peek = ctypes.WinDLL("kernel32", use_last_error=True).PeekNamedPipe
+    pointer = ctypes.POINTER(wintypes.DWORD)
+    peek.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, pointer, pointer, pointer]
+    peek.restype = wintypes.BOOL
+    handle, available = msvcrt.get_osfhandle(descriptor), wintypes.DWORD()
+    # 数值库 DLL 初始化也会探测 stdin；不能用挂起的 ReadFile 占住同步管道。
+    while True:
+        if not peek(handle, None, 0, None, ctypes.byref(available), None):
+            error = ctypes.get_last_error()
+            if error == 109:  # ERROR_BROKEN_PIPE：父进程已关闭写端。
+                return
+            raise ctypes.WinError(error)
+        if available.value:
+            return
+        time.sleep(0.1)
+
+
+def _serve_with_parent_pipe(uvicorn: ModuleType, **options: object) -> None:
+    """受监管后端通过父进程管道正常退出，兼容没有控制台的 Windows 服务。"""
+    import threading
+
+    stop_requested = threading.Event()
+    pipe_error: OSError | ValueError | None = None
+
+    class ParentPipeServer(uvicorn.Server):
+        async def on_tick(self, counter: int) -> bool:
+            # 仅在服务主循环中置退出标记，启动期间收到 EOF 也会执行 lifespan 清理。
+            if stop_requested.is_set():
+                self.should_exit = True
+            return await super().on_tick(counter)
+
+    def watch_parent() -> None:
+        nonlocal pipe_error
+        try:
+            _wait_parent_pipe()
+        except (OSError, ValueError) as exc:
+            pipe_error = exc
+        stop_requested.set()
+
+    threading.Thread(target=watch_parent, name="blc-parent-pipe", daemon=True).start()
+    ParentPipeServer(uvicorn.Config("app.web.main:app", **options)).run()
+    if pipe_error is not None:
+        logger.error("父进程监管管道异常：{}", safe_exception_summary(pipe_error))
+        raise click.ClickException("父进程监管管道异常，后端已完成关闭，请查看服务日志。") from pipe_error
+
+
+def _request_console_stop(processes: list, *, windows: bool) -> None:
+    """后端正常收尾；Windows 静态前端不依赖控制台信号即可关闭。"""
+    import signal
+
+    for index, process in enumerate(processes):
+        if process.poll() is not None:
+            continue
+        try:
+            if windows and index == 0:
+                process.stdin.close()
+            elif windows:
+                process.terminate()
+            else:
+                process.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            pass
 
 
 @click.option("--host", default="127.0.0.1", type=str, help="监听地址", show_default=True)
@@ -90,14 +170,28 @@ def cmd_serve(
     if reload:
         source_root = Path(__file__).resolve().parents[2]
         reload_options["reload_dirs"] = [str(source_root / "app"), str(source_root / "config")]
-    uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
+    if os.environ.pop("_BLC_PARENT_STDIN", "") == "1" and not reload:
+        _serve_with_parent_pipe(uvicorn, host=host, port=actual_port, log_config=None)
+    else:
+        uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
 
 
 # 注册列表
 def _frontend_directory(frontend_dir: str | None) -> Path:
-    """定位源码或 Portable 携带的前端构建，不自动构建或启动开发服务器。"""
-    root = Path(os.environ.get("BLC_SOURCE_DIR", Path(__file__).resolve().parents[2]))
-    directory = Path(frontend_dir or os.environ.get("BLC_FRONTEND_DIR", str(root / "frontend" / "dist"))).resolve()
+    """定位显式目录、Portable、wheel 或源码构建，不在运行时调用 npm。"""
+    override = frontend_dir if frontend_dir is not None else os.environ.get("BLC_FRONTEND_DIR")
+    if override is not None:
+        directory = Path(override)
+    elif source_dir := os.environ.get("BLC_SOURCE_DIR"):
+        directory = Path(source_dir) / "frontend" / "dist"
+    else:
+        packaged = Path(__file__).resolve().parents[1] / "web" / "ui"
+        directory = (
+            packaged
+            if (packaged / "index.html").is_file()
+            else Path(__file__).resolve().parents[2] / "frontend" / "dist"
+        )
+    directory = directory.resolve()
     if not (directory / "index.html").is_file():
         raise click.BadParameter(
             f"未找到前端构建: {directory}。请先执行 npm --prefix frontend ci 和 npm --prefix frontend run build。",
@@ -153,6 +247,8 @@ def cmd_console(
     import sys
     import time
 
+    from app.analysis.transcription.process_tree import ProcessTree
+
     directory = _frontend_directory(frontend_dir)
     actual_port = validate_web_port(port if port is not None else load_launcher_config(runtime_app_root()).web_port)
     # 对外发布独立前端同样要求后台密码，不能借助回环代理绕过既有访问边界。
@@ -168,13 +264,27 @@ def cmd_console(
         probe.bind(("127.0.0.1", 0))
         api_port = probe.getsockname()[1]
     child_env = {**os.environ, "BLC_FRONTEND_PORT": str(actual_port)}
+    if os.name == "nt":
+        child_env["_BLC_PARENT_STDIN"] = "1"
     processes: list[subprocess.Popen] = []
-    shutdown_signals = [signal.SIGTERM]
+    frontend_tree: ProcessTree | None = None
+    shutdown_signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
         shutdown_signals.append(signal.SIGBREAK)
     previous_signals = {number: signal.getsignal(number) for number in shutdown_signals}
+    closing = False
+    force_exit = False
+    process_options = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    )
 
     def terminate(_number, _frame):
+        nonlocal force_exit
+        if closing:
+            force_exit = True
+            return
+        if _number == signal.SIGINT:
+            raise KeyboardInterrupt
         raise SystemExit(0)
 
     for number in shutdown_signals:
@@ -184,6 +294,8 @@ def cmd_console(
             subprocess.Popen(
                 [sys.executable, "-m", "app.cli", "backend", "--host", "127.0.0.1", "--port", str(api_port)],
                 env=child_env,
+                **({"stdin": subprocess.PIPE} if os.name == "nt" else {}),
+                **process_options,
             )
         )
         from urllib.error import URLError
@@ -203,6 +315,10 @@ def cmd_console(
             if time.monotonic() >= deadline:
                 raise RuntimeError("等待 API 启动超时，请检查数据库与后端配置。")
             time.sleep(0.1)
+        frontend_options = dict(process_options)
+        if os.name == "nt":
+            # 先让 Job 接管，再运行虚拟环境启动器及其后代，避免父进程退出后遗留监听端口。
+            frontend_options["creationflags"] |= 0x00000004  # CREATE_SUSPENDED
         processes.append(
             subprocess.Popen(
                 [
@@ -218,9 +334,18 @@ def cmd_console(
                     host,
                     "--port",
                     str(actual_port),
-                ]
+                ],
+                **frontend_options,
             )
         )
+        if os.name == "nt":
+            try:
+                frontend_tree = ProcessTree(processes[-1].pid)
+                frontend_tree.resume_suspended()
+            except BaseException:
+                processes[-1].kill()
+                processes[-1].wait(timeout=5)
+                raise
         console.print(f"[green]工作台启动中[/green] -> http://{host}:{actual_port}")
         while all(process.poll() is None for process in processes):
             time.sleep(0.25)
@@ -230,17 +355,43 @@ def cmd_console(
     except KeyboardInterrupt:
         pass
     finally:
-        for number, previous in previous_signals.items():
-            signal.signal(number, previous)
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-        for process in processes:
+        closing = True
+        try:
+            console.print("[yellow]正在停止录制并释放后台资源，再次按 Ctrl+C 可强制退出。[/yellow]")
             try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
+                _request_console_stop(processes, windows=os.name == "nt")
+            finally:
+                if frontend_tree is not None:
+                    frontend_tree.terminate()
+            # 各服务自行管理关闭期限，不能在 Worker 宽限期结束前强杀 API。
+            while any(process.poll() is None for process in processes):
+                if force_exit:
+                    import psutil
+
+                    console.print("[yellow]强制终止前后端及其子进程。[/yellow]")
+                    for process in processes:
+                        if process.poll() is not None:
+                            continue
+                        try:
+                            parent = psutil.Process(process.pid)
+                            descendants = parent.children(recursive=True)
+                        except psutil.NoSuchProcess:
+                            continue
+                        for owned in [*reversed(descendants), parent]:
+                            try:
+                                # 资源追踪器须在管道关闭后自行清理命名信号量。
+                                if any("multiprocessing.resource_tracker" in arg for arg in owned.cmdline()):
+                                    continue
+                                owned.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                    break
+                time.sleep(0.1)
+            for process in processes:
                 process.wait()
+        finally:
+            for number, previous in previous_signals.items():
+                signal.signal(number, previous)
 
 
 SERVE_COMMANDS = [

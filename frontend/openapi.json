@@ -68,7 +68,6 @@
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
-            "max_size": 1048576,
             "title": "File",
             "type": "string"
           }
@@ -1159,6 +1158,29 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerifyEmailRequest": {
+        "additionalProperties": false,
+        "description": "验证码绑定服务端签发的当前挑战。",
+        "properties": {
+          "challenge_id": {
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[0-9]{6}$",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge_id",
+          "code"
+        ],
+        "title": "VerifyEmailRequest",
+        "type": "object"
+      },
       "WebPortRequest": {
         "additionalProperties": false,
         "description": "下次启动时生效的 Web 端口。",
@@ -1178,7 +1200,7 @@
   },
   "info": {
     "title": "BiliLiveCut 控制台",
-    "version": "V0.1.19.3 Alpha (0.1.19.3-alpha)"
+    "version": "V0.1.19.4 Alpha (0.1.19.4-alpha)"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4467,6 +4489,124 @@
           }
         },
         "summary": "Patch Configuration"
+      }
+    },
+    "/api/settings/notifications/email": {
+      "get": {
+        "description": "查询验证状态，不公开凭据或验证码。",
+        "operationId": "get_email_status_api_settings_notifications_email_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Email Status Api Settings Notifications Email Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Email Status",
+        "tags": [
+          "email_notifications"
+        ]
+      }
+    },
+    "/api/settings/notifications/email/verification-code": {
+      "post": {
+        "description": "向已保存的目标邮箱发送验证码，尚不允许发送运行提醒。",
+        "operationId": "send_verification_code_api_settings_notifications_email_verification_code_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Send Verification Code Api Settings Notifications Email Verification Code Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Send Verification Code",
+        "tags": [
+          "email_notifications"
+        ]
+      }
+    },
+    "/api/settings/notifications/email/verify": {
+      "post": {
+        "description": "验证一次性验证码后持久授权当前邮件配置。",
+        "operationId": "verify_email_api_settings_notifications_email_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Verify Email Api Settings Notifications Email Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email",
+        "tags": [
+          "email_notifications"
+        ]
+      }
+    },
+    "/api/settings/notifications/lark/test": {
+      "post": {
+        "description": "保存不会发信；仅此管理员操作发送固定测试消息。",
+        "operationId": "test_lark_notification_api_settings_notifications_lark_test_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Test Lark Notification Api Settings Notifications Lark Test Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Test Lark Notification",
+        "tags": [
+          "lark_notifications"
+        ]
       }
     },
     "/api/settings/port": {

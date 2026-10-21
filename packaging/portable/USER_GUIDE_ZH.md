@@ -1,8 +1,8 @@
 # BiliLiveCut Portable 小白使用说明
 
-适用版本：`v0.1.19.3-Alpha` · 适用系统：Windows 10/11 x64
+适用版本：`v0.1.19.4-Alpha` · 适用系统：Windows 10/11 x64
 
-本版重点修复首次模型准备、录制异常与后台任务的故障处理。下载失败会说明模型、来源、失败主机和根异常；录制遇到磁盘或权限错误会停止并保留原因，Web 错误提供日志定位编号。启动失败记录保存在 `logs/launcher-error.log`，详细排错见[使用指南](../../docs/features/README.md#排错)。升级仍须使用全新目录和新数据库。
+本版增加开播事件守候、房间弹幕保留规则、运行提醒和首次配置引导，并修复 Windows 退出清理、日志轮转及模型下载进度死锁。下载失败会说明模型、来源、失败主机和根异常；录制遇到磁盘或权限错误会停止并保留原因，Web 错误提供日志定位编号。启动失败记录保存在 `logs/launcher-error.log`，详细排错见[使用指南](../../docs/features/README.md#排错)。升级仍须使用全新目录和新数据库。
 
 这份说明面向不懂 Python、Git 或命令行的普通 Windows 用户。按顺序操作即可完成下载安装、首次启动、基础配置、添加直播间和首次录制。
 
@@ -20,7 +20,7 @@
 - “账号管理”会优先调用电脑已安装的 Google Chrome；没有 Chrome 时会自动下载一次 Playwright Chromium。
 - 第一次测试先完成一小段授权直播录制，并在 `storage/raw/` 找到文件。Cookie、大模型 API 和自动上传都不是首次使用的必需项。
 
-## V0.1.19.3 Alpha 先知道的新流程
+## V0.1.19.4 Alpha 先知道的新流程
 
 - 已有视频可从工作台导航进入“录播分析”，按需附带 XML、JSON、SRT、ASS 弹幕。预处理后由本地模型转写，再按已配置的本地或远程 LLM 分析；具体格式、进度和恢复方式见[录播导入说明](../../docs/features/recording-import.md)。
 - “场次时间线”先展示热点事件，再独立判断是否成片。每场录制按 GMT+8 展示标题、摘要、1～2 条代表弹幕、热度、成片分、语义置信度和证据覆盖；未达到成片阈值的事件仍留在时间线上，但不会出现“精审/预览”入口。达到阈值的候选仍可调整边界、批准或拒绝。
@@ -62,9 +62,9 @@ Full 版不要求系统安装 Python、FFmpeg、Visual Studio、Git 或其他编
 
 ## 2. 下载正确的文件
 
-打开项目的 [GitHub Releases 页面](https://github.com/StarGazerQQD/BiliLiveCut/releases)，进入 `v0.1.19.3-Alpha`，下载：
+打开项目的 [GitHub Releases 页面](https://github.com/StarGazerQQD/BiliLiveCut/releases)，进入 `v0.1.19.4-Alpha`，下载：
 
-1. `BiliLiveCut-Portable-Full-0.1.19.3-alpha-x64.zip`
+1. `BiliLiveCut-Portable-Full-0.1.19.4-alpha-x64.zip`
 2. `SHA256SUMS.txt`
 
 不要把下面这些文件当成 Windows 小白版：
@@ -82,7 +82,7 @@ Full 版不要求系统安装 Python、FFmpeg、Visual Studio、Git 或其他编
 3. 复制并执行：
 
 ```powershell
-Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.19.3-alpha-x64.zip" -Algorithm SHA256
+Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.19.4-alpha-x64.zip" -Algorithm SHA256
 ```
 
 4. 将输出的 `Hash` 与 `SHA256SUMS.txt` 中同名文件前面的值比较。英文字母大小写不同不影响结果。
@@ -92,7 +92,7 @@ Get-FileHash ".\BiliLiveCut-Portable-Full-0.1.19.3-alpha-x64.zip" -Algorithm SHA
 
 1. 新建目录，例如 `D:\BiliLiveCut`。
 2. 右键 ZIP，选择“全部解压”。
-3. 打开解压出来的 `BiliLiveCut-Portable-Full-0.1.19.3-alpha-x64` 文件夹。
+3. 打开解压出来的 `BiliLiveCut-Portable-Full-0.1.19.4-alpha-x64` 文件夹。
 4. 确认同一层能看到：
 
 ```text
@@ -120,7 +120,7 @@ Full 版包含运行环境，但不包含四个语音识别模型。
 当前版本新生成的 Engine Pack 文件名是：
 
 ```text
-BiliLiveCut-EnginePack-0.1.19.3-alpha.zip
+BiliLiveCut-EnginePack-0.1.19.4-alpha.zip
 ```
 
 将 ZIP 原样放到 `BiliLiveCut-Portable.exe` 同级目录，不要手动解压。Launcher 会先校验逐引擎内容身份，再把需要的模型原子安装到 `models/`。Engine Pack 内容清单仅支持 schema 5，已安装模型清单仅支持 schema 7，不迁移旧 schema。模型仓库、不可变 revision、格式、子模型/随附组件及逐文件完整性必须符合当前定义；发行版本或源码提交差异仅记录来源警告，内容相同的旧包及完整安装目录可以复用。Runtime、Payload 和数据库继续遵循各自严格身份与格式规则。
@@ -389,7 +389,7 @@ storage\
 
 备份前必须先停止录制并关闭 Launcher。把 `.env` 和整个 `storage` 文件夹复制到安全位置即可。
 
-V0.1.19.3 Alpha 只接受由当前版本创建并精确通过校验的数据库。V0.1.17.x 及其他历史数据库不会被备份、迁移或补写；切换版本时必须使用独立目录和新数据库。原始录像、成片与人工导出的资料可作为普通文件另行归档。历史版本的功能和修复记录只用于查阅，见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)，不能当作当前数据迁移说明。
+V0.1.19.4 Alpha 只接受由当前版本创建并精确通过校验的数据库。V0.1.19.3 Alpha 及其他历史数据库不会被备份、迁移或补写；切换版本时必须使用独立目录和新数据库。原始录像、成片与人工导出的资料可作为普通文件另行归档。历史版本的功能和修复记录只用于查阅，见 [0.1.17 系列 Changelog](../../docs/changelog/CHANGELOG_PRE_0.1.17.md)，不能当作当前数据迁移说明。
 
 测试其他版本或需要保留独立环境时：
 
@@ -428,7 +428,7 @@ V0.1.19.3 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 大模型测试提示“未安装 openai”
 
-`v0.1.19.3-Alpha` 已把 OpenAI 兼容 SDK 纳入 Portable 运行时。该提示说明当前 Full 的 `vendor\wheels\` 不完整或目录不是本版本的干净发行包；请重新下载并解压到全新目录。不要在 Portable 目录手工执行 `pip install -e`。
+`v0.1.19.4-Alpha` 的 Portable 运行时包含 OpenAI 兼容 SDK。该提示说明当前 Full 的 `vendor\wheels\` 不完整或目录不是本版本的干净发行包；请重新下载并解压到全新目录。不要在 Portable 目录手工执行 `pip install -e`。
 
 ### 控制台提示 pip 有新版本
 
@@ -436,7 +436,7 @@ V0.1.19.3 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 出现 `THESE PACKAGES DO NOT MATCH THE HASHES`
 
-新版 Full 应强制使用本地 wheelhouse，不应访问 PyPI 镜像。确认使用的是 `v0.1.19.3-Alpha` 最新 Full ZIP，并且没有只复制 EXE。不要修改锁文件或添加报错中的 sdist 哈希，直接重新下载并校验 Full ZIP。
+新版 Full 应强制使用本地 wheelhouse，不应访问 PyPI 镜像。确认使用的是 `v0.1.19.4-Alpha` 最新 Full ZIP，并且没有只复制 EXE。不要修改锁文件或添加报错中的 sdist 哈希，直接重新下载并校验 Full ZIP。
 
 ### 模型下载很慢或中断
 
@@ -450,7 +450,7 @@ V0.1.19.3 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 反复显示录制异常
 
-先查看 Web“错误日志”中的同一 `session`：摘要包含房间、`exit_code`、`category`、HTTP 状态、是否重试、次数/时间预算、下一次等待和停止原因。`storage/logs/blc.log` 中保留脱敏的 stderr 尾部（最多 20 行，每行 512 字符）；超长行省略，签名 URL、认证头和令牌不保留。
+先查看 Web“错误日志”中的同一 `session`：摘要包含房间、`exit_code`、`category`、HTTP 状态、是否重试、次数/时间预算、下一次等待和停止原因。`storage/logs/blc-<进程号>-<启动标识>.log` 中保留脱敏的 stderr 尾部（最多 20 行，每行 512 字符）；超长行省略，签名 URL、认证头和令牌不保留。
 
 磁盘、权限、FFmpeg 缺失或媒体参数错误会停止当前会话并暂停自动重新启动。解决提示的问题后手动开始，或重新开启自动录制。HTTP 403 可能与临时流地址及访问权限有关，不能只凭状态码判定 Cookie 过期。网络、上游和未知错误会有限重试；反复留下短末片也不会无限续期。
 
@@ -469,15 +469,15 @@ V0.1.19.3 Alpha 只接受由当前版本创建并精确通过校验的数据库�
 
 ### 主播下播后任务一直显示重连
 
-V0.1.19.3 Alpha 会先按 `LIVE_OFFLINE_CONFIRM_COUNT` 连续确认下播，再等待 `LIVE_SESSION_END_DELAY_S` 秒；期间恢复开播会取消停止。断流恢复受 20 次或 180 秒预算限制，单场还受 `RECORDING_MAX_DURATION_S` 限制。预算耗尽后当前会话会停止，并等待房间至少一次真实离线后才允许下一次开播自动录制；最后一个录制任务结束时网感定时采集会恢复。
+内置 Bilibili 来源收到明确下播事件后，直接等待 `LIVE_SESSION_END_DELAY_S` 秒，再查询状态并核对录制实例；复核遇到临时失败或未知状态时保留录制并重试，恢复开播会取消停止。`LIVE_OFFLINE_CONFIRM_COUNT` 只用于不提供事件能力的查询型来源。断流恢复受 20 次或 180 秒预算限制，单场还受 `RECORDING_MAX_DURATION_S` 限制。预算耗尽后当前会话会停止，并等待房间至少一次真实离线后才允许下一次开播自动录制；最后一个录制任务结束时网感定时采集会恢复。详见[开播事件守候](../../docs/features/recording.md#开播事件守候)。
 
 ### 候选理由、预览和视频内容不一致
 
-先确认使用 V0.1.19.3 Alpha。新分析先把多源证据聚合成完整热点事件，再用同一事件生成语义、成片分和动态边界；预览与最终成片使用同一候选边界。需要重新计算当前场次时，在“场次时间线”执行重分析；改过词典或 ASR 时选择重新转写。受保护数据不会被静默改写。
+先确认使用 V0.1.19.4 Alpha。新分析先把多源证据聚合成完整热点事件，再用同一事件生成语义、成片分和动态边界；预览与最终成片使用同一候选边界。需要重新计算当前场次时，在“场次时间线”执行重分析；改过词典或 ASR 时选择重新转写。受保护数据不会被静默改写。
 
 ### 拒绝候选后仍在成品列表显示 `reviewing`
 
-V0.1.19.3 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任务和未发布成片，并默认从时间线过滤。已经发布的成片按设计保留，避免篡改真实外部发布结果。任何非当前精确 Schema 的数据库都会明确拒绝，不会迁移或静默改写。
+V0.1.19.4 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任务和未发布成片，并默认从时间线过滤。已经发布的成片按设计保留，避免篡改真实外部发布结果。任何非当前精确 Schema 的数据库都会明确拒绝，不会迁移或静默改写。
 
 ### 修改 `.env` 后没有生效
 
@@ -495,7 +495,7 @@ V0.1.19.3 Alpha 的拒绝操作会同步拒绝当前候选、关联事件、任�
 
 ## 15. 给测试者的问题报告模板
 
-启动器退出报错时，安全诊断另存为安装目录下的 `logs/launcher-error.log`（保留最近一次启动失败）。其中包含失败阶段、子进程退出/超时信息和异常调用位置；模型准备还包含引擎、固定 revision 与实际请求主机。若无法写入该文件，窗口会显示写入失败原因。Web 启动后的详细日志位于 `storage/logs/blc.log`，后台错误日志与文件日志使用相同的脱敏内容。不要只截最后一行“启动失败”。
+启动器退出报错时，安全诊断另存为安装目录下的 `logs/launcher-error.log`（保留最近一次启动失败）。其中包含失败阶段、子进程退出/超时信息和异常调用位置；模型准备还包含引擎、固定 revision 与实际请求主机。若无法写入该文件，窗口会显示写入失败原因。Web 启动后的详细日志位于 `storage/logs/blc-<进程号>-<启动标识>.log`，各进程独占文件，避免 Windows 多进程轮转占用冲突；每 10 MB 轮转为 ZIP，启动和轮转时清理超过 14 天的归档及已退出进程的日志。旧 `blc.log` 保留，排错时一并收集故障时间附近各进程的日志和归档。后台错误日志与文件日志使用相同的脱敏内容。不要只截最后一行“启动失败”。
 
 Portable 的受管 Python 子进程忽略外部 `PYTHONPATH`、`PYTHONHOME`、`PYTHONUSERBASE` 与用户 site-packages，只使用受管虚拟环境及明确指定的 Runtime/模型准备源码。无需修改系统环境变量；下载源和业务配置仍按原有规则生效。这可避免其它开发环境的依赖被误认为 Portable 已安装版本，从而触发错误重装或离线失败。
 
@@ -503,7 +503,7 @@ Portable 的受管 Python 子进程忽略外部 `PYTHONPATH`、`PYTHONHOME`、`P
 
 - Windows 版本，例如 Windows 11 23H2；
 - 使用 Full 还是 Lite；
-- 程序版本 `v0.1.19.3-Alpha`；
+- 程序版本 `v0.1.19.4-Alpha`；
 - 解压目录；
 - 问题发生在 `[1/6]`～`[6/6]` 的哪一步；
 - 黑色窗口最后 30 行文字或截图；
@@ -515,7 +515,7 @@ Portable 的受管 Python 子进程忽略外部 `PYTHONPATH`、`PYTHONHOME`、`P
 
 ## 16. 当前 Alpha 的测试边界
 
-`v0.1.19.3-Alpha` 适合小规模、受控测试，不等同于稳定正式版。当前应重点验证：
+`v0.1.19.4-Alpha` 适合小规模、受控测试，不等同于稳定正式版。当前应重点验证：
 
 - Full ZIP 下载、校验和解压；
 - 首次离线依赖安装；

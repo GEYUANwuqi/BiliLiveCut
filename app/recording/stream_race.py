@@ -6,6 +6,7 @@ import asyncio
 import errno
 import json
 import math
+import os
 import re
 import subprocess
 import threading
@@ -369,7 +370,15 @@ class StreamRace:
         cmd[1:1] = ["-progress", "pipe:1"]
         spawn = asyncio.create_task(
             asyncio.create_subprocess_exec(
-                *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                **(
+                    {"creationflags": 0x00000200}  # CREATE_NEW_PROCESS_GROUP
+                    if os.name == "nt"
+                    else {"start_new_session": True}
+                ),
             )
         )
         waits: list[asyncio.Task[object]] = []

@@ -127,6 +127,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _setup_proxy_env()
 
     # V0.1.6:启动持久化任务队列 Worker。
+    from app.notify.delivery import start_email_delivery, stop_email_delivery
     from app.pipeline.lifecycle import shutdown_event
     from app.pipeline.task_worker import get_worker
     from app.plugins.manager import plugin_manager
@@ -142,6 +143,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             from app.web.qr_login import qr_logins
 
             cleanup.push_async_callback(_stop_service, "qr_login", qr_logins.stop)
+            cleanup.push_async_callback(_stop_service, "email_delivery", stop_email_delivery)
+            await start_email_delivery()
             cleanup.push_async_callback(asyncio.to_thread, stop_metrics_collector)
             start_metrics_collector(interval_s=60)
             cleanup.push_async_callback(_stop_service, "trends", trend_scheduler.stop)
@@ -172,6 +175,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         finally:
             # 先通知计算及媒体调用，再串行停止生产者、作业、Worker 和采样。
             shutdown_event.set()
+            rooms_service.recorder_manager.request_stop_all()
     logger.info("Web 服务资源已关闭；操作系统进程退出由服务器调用方确认。")
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "bili-live-cut"
-version = "0.1.19.3-alpha"
+version = "0.1.19.4-alpha"
 description = "AI 直播实时切片系统:监听 Bilibili 直播,自动录制、转写、识别高光、生成切片与文案"
 readme = "README.md"
 license = "MIT"
@@ -51,7 +51,6 @@ llm = [
 web = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
-    "jinja2>=3.1",
     "python-multipart>=0.0.18",
     "playwright>=1.61,<1.62",
     "qrcode==8.2",           # 网页扫码生成 SVG，无需 Pillow 或服务器浏览器
@@ -89,6 +88,11 @@ dev = ["bili-live-cut[dev,web]", "setuptools==83.0.0", "wheel==0.47.0"]
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "setup.py" },
+    { file = "frontend/*.json" },
+    { file = "frontend/*.ts" },
+    { file = "frontend/index.html" },
+    { file = "frontend/src/**/*" },
+    { file = "frontend/public/**/*" },
     { file = "tools/native/c/*.c" },
     { file = "tools/native/cython/*.pyx" },
     { file = "tools/native/repeat/**/*.cpp" },
@@ -109,13 +113,7 @@ include-package-data = true
 include = ["app", "app.*", "config"]
 
 [tool.setuptools.package-data]
-"app.web" = [
-    "templates/*.html",
-    "static/*.css",
-    "static/*.js",
-    "static/js/*.js",
-    "static/js/*.txt",
-]
+"app.web" = ["ui/*", "ui/**/*"]
 "config" = ["*.yaml", "*.txt"]
 
 [tool.setuptools.data-files]
@@ -169,7 +167,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["tests/*", "app/web/templates/*", "app/web/static/*"]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 exclude_lines = [

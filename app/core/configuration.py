@@ -39,6 +39,7 @@ SECRETS = {
     "dingtalk_webhook",
     "dingtalk_secret",
     "wecom_webhook",
+    "lark_app_secret",
     "smtp_password",
     "database_url",
     "biliup_upload_cmd",
@@ -181,6 +182,7 @@ def save_configuration(change: ConfigurationChange) -> dict[str, JsonValue]:
             if change.revision is not None and change.revision != revision:
                 raise ConfigurationConflict("配置已在其他页面修改，请重新加载后合并草稿。")
             stored = {key: row.value for key, row in rows.items() if key != _REVISION}
+            previous = dict(stored)
             changes = {
                 key: value
                 for key, value in change.values.items()
@@ -208,6 +210,12 @@ def save_configuration(change: ConfigurationChange) -> dict[str, JsonValue]:
                     "配置校验失败（类型、范围或关联约束）：" + json.dumps(errors, ensure_ascii=False)
                 ) from None
             validated = core.model_dump() | runtime.model_dump()
+            from app.notify.email_verification import SMTP_KEYS, invalidate_verification
+
+            if requested & SMTP_KEYS:
+                old_core, _ = _validated(previous)
+                if any(getattr(old_core, key) != getattr(core, key) for key in SMTP_KEYS):
+                    invalidate_verification(db)
             for key in set(changes) | set(change.clear):
                 row = rows.get(key) or AppSetting(key=key, value="")
                 row.value = _encode(validated[key])
@@ -234,7 +242,7 @@ def _group(key: str) -> str:
         "highlights": ("highlight_", "hotspot_", "threshold_", "near_live_", "background_asr_"),
         "review": ("review_", "reviewer_"),
         "output": ("clip_",),
-        "notifications": ("notify_", "smtp_", "dingtalk_", "wecom_", "disk_alert_"),
+        "notifications": ("notify_", "smtp_", "dingtalk_", "wecom_", "lark_", "disk_alert_"),
         "publishing": ("upload", "auto_upload", "auto_publish", "biliup_", "title_max_", "desc_max_"),
         "storage": ("storage_", "database_", "min_free_", "raw_retention", "low_disk", "critical_disk"),
         "recording": (

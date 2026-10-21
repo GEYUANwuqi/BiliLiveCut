@@ -5,10 +5,10 @@
 把高光候选生成为可投稿的 MP4：
 
 ```powershell
-python -m app.cli produce <candidate_id>     # 切片 + 文案一步到位
+blc produce <candidate_id>     # 切片 + 文案一步到位
 
 # 全自动链路
-python -m app.cli record <db_id> --pipeline --produce
+blc record <db_id> --pipeline --produce
 ```
 
 **后处理选项**（在“设置中心 → 全部参数 → 成片与编码”配置）：响度标准化 `CLIP_LOUDNORM`、去首尾静默 `CLIP_REMOVE_SILENCE`、烧录字幕 `CLIP_SUBTITLE`、烧录弹幕 `CLIP_DANMAKU`、最大时长 `CLIP_MAX_DURATION_S`、画质 `CLIP_VIDEO_CRF`。主成片、审片预览和派生版本都会重建音视频起始时间戳，首个真实画面从 MP4 的 `0s` 开始，不需要在剪辑软件里手工抽掉黑帧。

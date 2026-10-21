@@ -2,6 +2,38 @@
 
 在 Web 左侧“设置中心”搜索中文名称或配置键，可以查看当前有效值、来源和生效时间。通过 `.env` 修改配置时，使用 `.env.example` 中对应的变量名。运行中的字段以设置中心显示为准。
 
+设置首页按「采集与运行」「分析与成片」「账号与外部服务」「提醒与维护」组织入口，可以搜索功能名称并直接进入对应分类。全部参数按用途分组展示；跨分类搜索时可展开高级设置查找完整参数。
+
+## 飞书 / Lark 运行提醒
+
+进入「设置中心 → 提醒与通知 → 飞书 / Lark 应用机器人」，配置 App ID、App Secret、服务区域和接收对象。通知直接调用 OpenAPI，不建立 WebSocket 连接，也不需要事件订阅。
+
+1. 在飞书开放平台创建企业自建应用，开启机器人能力。
+2. 添加 `im:message:send_as_bot`（以应用身份发消息）权限，按租户要求完成审批，并发布应用版本；目标用户需在应用可用范围内。
+3. 向群聊发送时，将机器人加入群聊，选择 `chat_id` 并填写对应的 `oc_…` ID。向个人发送时，选择与实际 ID 对应的 `open_id`、`union_id`、`user_id` 或 `email`。这些 ID 不能混用。
+4. 国内飞书选择 `feishu`，国际版选择 `lark`；应用凭据与接收对象应属于同一服务区域。
+5. 保存后点击「测试发送飞书消息」，确认目标用户或群聊收到消息，再开启「启用运行提醒」并选择提醒内容。
+
+保存配置不会自动发送消息。测试发送由管理员显式触发，不依赖运行提醒总开关；飞书通道不需要邮件验证码。App Secret 不会在页面回显，留空保留已有密钥。访问令牌仅在内存中缓存，临近过期重新获取；配置变更后使用新凭据。
+
+支持成片完成、投稿完成、磁盘告警、任务失败及登录态/WS 异常提醒。连接异常提醒在后台投递，同房间同原因遵循 `notify_connection_cooldown_s` 冷却间隔；飞书发送失败不会阻止录制。若测试失败，检查应用发布、权限审批、机器人群成员身份及接收 ID 类型。
+
+环境变量对应 `LARK_APP_ID`、`LARK_APP_SECRET`、`LARK_DOMAIN`、`LARK_RECEIVE_ID_TYPE`、`LARK_RECEIVE_ID`。只发送通知无需安装飞书 SDK。
+
+接口参考：[获取应用 tenant access token](https://open.feishu.cn/document/server-docs/authentication-management/access-token/tenant_access_token_internal)、[发送消息与接收对象限制](https://open.feishu.cn/document/server-docs/im-v1/message/create)。
+
+## 邮件提醒与邮箱验证
+
+进入「设置中心 → 提醒与通知」，配置 SMTP 服务、端口、连接方式、账号/授权码、发件邮箱和一个目标邮箱。支持 SSL/TLS、STARTTLS 和明文 SMTP；明文用于可信内网中继，无认证中继可留空用户名。
+
+保存配置不会发送邮件。点击「发送验证码」，到目标邮箱读取六位验证码并提交验证；验证码十分钟内有效，最多尝试五次，重发间隔一分钟，每小时最多发送五次。验证成功后开启「启用运行提醒」并选择提醒内容。只填写环境变量或直接开启通知，也不能绕过收件验证。
+
+修改目标邮箱、发件人或 SMTP 配置会撤销验证，需重新验证。凭据留空保留原值；提醒开关变化不会撤销验证。运行邮件后台发送，失败信息可在该页面查看；「已交给邮件服务器」不代表邮件一定到达收件箱，请同时检查垃圾邮件。
+
+连接提醒包含平台明确拒绝 Cookie、连续登录失败以及 WS 连续三次连接失败；普通网络异常不会被直接标记成 Cookie 过期。同房间同类连接提醒默认间隔 1800 秒，防止重试期间反复发送。通知不替代网页中的运行状态或连接日志；服务退出时尚未开始的运行邮件会被取消。
+
+## 参数参考
+
 下表列出配置的默认值、取值范围和生效时间，敏感字段不显示实际内容。当前配置可能受到 `.env` 或 Web 设置覆盖，因此不一定等于表中默认值。
 
 ASR 设备值只选择推理设备，不安装 GPU 依赖；CPU 版 Torch 无法因填写 `cuda` 而使用 GPU。Portable 的 `--torch-runtime` 为独立安装操作，选择保存在 `config/torch-runtime.json`，不增加业务注册表字段。安装、离线 wheel 和实际设备诊断见[CUDA 使用说明](../features/asr.md#cuda-安装与实际设备确认)。
@@ -27,12 +59,12 @@ Web 中保存的业务设置优先于环境或项目默认值。保存前会校�
 | `preferred_stream_protocol` | 同画质首选直播流协议 | 录制 / 全局 | hls | 文本；['hls', 'flv'] | 下次录制 |
 | `stream_quality` | 直播流画质上限编号 | 录制 / 全局 | 10000 | 整数；1～不限 | 下次录制 |
 | `reconnect_max_backoff_s` | 重连最长退避 | 录制 / 全局 | 30 | 整数；1～不限 | 下次录制 |
-| `live_poll_interval_s` | 直播状态检查间隔 | 录制 / 全局 | 15 | 整数；5～不限 | 下次调度检查 |
+| `live_poll_interval_s` | 守候刷新与兼容轮询间隔 | 录制 / 全局 | 15 | 整数；5～不限 | 下次调度检查 |
 | `room_metadata_refresh_interval_s` | 直播标题刷新间隔 | 录制 / 全局 | 30 | 整数；5～3600 | 下次录制 |
 | `room_metadata_refresh_timeout_s` | 标题查询超时 | 录制 / 全局 | 3.0 | 数值；0.1～30.0 | 下次录制 |
 | `recording_reconnect_max_attempts` | 断流最大重试次数（0 不限制） | 录制 / 全局 | 20 | 整数；0～10000 | 下次录制 |
 | `recording_reconnect_max_elapsed_s` | 断流重试最长时间（0 不限制） | 录制 / 全局 | 180 | 整数；0～86400 | 下次录制 |
-| `live_offline_confirm_count` | 下播连续确认次数 | 录制 / 全局 | 3 | 整数；1～100 | 下次调度检查 |
+| `live_offline_confirm_count` | 下播连续确认次数（查询型来源） | 录制 / 全局 | 3 | 整数；1～100 | 下次调度检查 |
 | `live_session_end_delay_s` | 下播收尾延迟 | 录制 / 全局 | 60 | 整数；0～3600 | 下次调度检查 |
 | `recording_max_duration_s` | 单场录制时长上限 | 录制 / 全局 | 43200 | 整数；300～604800 | 下次调度检查 |
 | `collect_danmaku` | 采集弹幕 | 录制 / 全局 | True | 开关 | 下次录制 |
@@ -159,12 +191,20 @@ Web 中保存的业务设置优先于环境或项目默认值。保存前会校�
 | `dingtalk_webhook` | 钉钉 Webhook | 通知 / 全局 | 不回显 | 文本 | 下次任务 |
 | `dingtalk_secret` | 钉钉签名密钥 | 通知 / 全局 | 不回显 | 文本 | 下次任务 |
 | `wecom_webhook` | 企业微信 Webhook | 通知 / 全局 | 不回显 | 文本 | 下次任务 |
+| `lark_app_id` | 飞书应用 App ID | 通知 / 全局 |  | 文本 | 下次发送 |
+| `lark_app_secret` | 飞书应用 App Secret | 通知 / 全局 | 不回显 | 文本 | 下次发送 |
+| `lark_domain` | 飞书服务区域 | 通知 / 全局 | feishu | feishu / lark | 下次发送 |
+| `lark_receive_id` | 飞书接收对象 ID | 通知 / 全局 |  | 文本 | 下次发送 |
+| `lark_receive_id_type` | 飞书接收对象类型 | 通知 / 全局 | chat_id | chat_id / open_id / union_id / user_id / email | 下次发送 |
 | `smtp_host` | SMTP 服务器 | 通知 / 全局 |  | 文本 | 下次任务 |
 | `smtp_port` | SMTP 端口 | 通知 / 全局 | 465 | 整数；1～65535 | 下次任务 |
 | `smtp_user` | SMTP 用户名 | 通知 / 全局 |  | 文本 | 下次任务 |
 | `smtp_password` | SMTP 密码 | 通知 / 全局 | 不回显 | 文本 | 下次任务 |
 | `smtp_from` | 邮件发件人 | 通知 / 全局 |  | 文本 | 下次任务 |
-| `smtp_to` | 邮件收件人（逗号分隔） | 通知 / 全局 |  | 文本 | 下次任务 |
+| `smtp_to` | 提醒目标邮箱（需验证） | 通知 / 全局 |  | 单个邮箱 | 验证后发送 |
+| `smtp_security` | SMTP 连接方式 | 通知 / 全局 | ssl | ssl / starttls / plain | 下次发送 |
+| `notify_on_connection` | 登录态与 WS 连接异常提醒 | 通知 / 全局 | True | 开关 | 下次提醒 |
+| `notify_connection_cooldown_s` | 同类连接提醒间隔 | 通知 / 全局 | 1800 | 秒；60～86400 | 下次提醒 |
 | `notify_on_clip` | 成片完成通知 | 通知 / 全局 | True | 开关 | 下次任务 |
 | `notify_on_upload` | 投稿完成通知 | 通知 / 全局 | False | 开关 | 下次任务 |
 | `notify_on_disk_alert` | 磁盘不足通知 | 通知 / 全局 | True | 开关 | 下次任务 |

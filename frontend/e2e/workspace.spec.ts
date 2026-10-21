@@ -65,6 +65,237 @@ async function mock(page: Page) {
 }
 test.beforeEach(async ({ page }) => mock(page));
 
+test("settings groups are searchable and open the selected parameter category", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  for (const name of [
+    "采集与运行",
+    "分析与成片",
+    "账号与外部服务",
+    "提醒与维护",
+  ]) {
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+  }
+  await page.getByLabel("搜索设置功能").fill("邮箱");
+  await expect(page.getByRole("link", { name: /提醒与通知/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /直播录制与弹幕/ })).toHaveCount(
+    0,
+  );
+  await page.getByLabel("搜索设置功能").fill("");
+  await page.getByRole("link", { name: /直播录制与弹幕/ }).click();
+  await expect(page).toHaveURL(/group=recording/);
+  await expect(page.getByLabel("分段时长", { exact: false })).toBeVisible();
+});
+
+test("email must be saved and verified before notifications are enabled", async ({
+  page,
+}) => {
+  let sent = 0;
+  let verified = false;
+  let saved = false;
+  await page.route("**/api/settings/configuration", async (route) => {
+    if (route.request().method() === "PATCH") {
+      saved = true;
+      verified = false;
+      await route.fulfill({ json: { revision: 2 } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        revision: saved ? 2 : 1,
+        fields: [
+          {
+            key: "smtp_to",
+            value: saved ? "changed@example.invalid" : "owner@example.invalid",
+          },
+          { key: "smtp_host", value: "smtp.example.invalid" },
+          { key: "smtp_port", value: 465 },
+          { key: "smtp_security", value: "ssl" },
+          { key: "smtp_user", value: "sender@example.invalid" },
+          { key: "notify_enabled", value: false },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/settings/notifications/email**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/verification-code")) {
+      sent++;
+    }
+    if (path.endsWith("/verify")) {
+      expect(route.request().postDataJSON()).toEqual({
+        challenge_id: "test-challenge-id",
+        code: "123456",
+      });
+      verified = true;
+    }
+    await route.fulfill({
+      json: {
+        recipient: saved ? "changed@example.invalid" : "owner@example.invalid",
+        verified,
+        can_notify: false,
+        challenge_id: sent && !verified ? "test-challenge-id" : null,
+        attempts_remaining: 5,
+      },
+    });
+  });
+  await page.goto("/settings/notifications");
+  await expect(page.getByText("邮箱未验证", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "验证邮箱", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("目标邮箱", { exact: true })
+    .fill("changed@example.invalid");
+  await expect(
+    page.getByRole("button", { name: "发送验证码", exact: true }),
+  ).toBeDisabled();
+  expect(sent).toBe(0);
+  await page.getByRole("button", { name: "保存设置", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "发送验证码", exact: true }),
+  ).toBeEnabled();
+  expect(sent).toBe(0);
+  await page.getByRole("button", { name: "发送验证码", exact: true }).click();
+  await page.getByLabel("邮箱验证码", { exact: true }).fill("123456");
+  await page.getByRole("button", { name: "验证邮箱", exact: true }).click();
+  await expect(page.getByText("邮箱已验证", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("开启运行提醒后生效", { exact: true }),
+  ).toBeVisible();
+});
+
+test("room cards show event connection state and monitoring errors", async ({
+  page,
+}) => {
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({
+      json: {
+        rooms: [
+          {
+            id: 100,
+            uploader_name: "事件守候的主播",
+            auto_record: true,
+            monitor: {
+              detection_mode: "events",
+              connection_state: "failed",
+              error: "开播事件连接失败，正在重连；不会将断连视为下播",
+            },
+          },
+        ],
+        counts: {},
+      },
+    }),
+  );
+  await page.goto("/rooms");
+  await expect(page.getByText("开播事件 · 正在重连")).toBeVisible();
+  await expect(
+    page.getByText("开播事件连接失败，正在重连；不会将断连视为下播"),
+  ).toBeVisible();
+});
+
+test("room sampling rules retain defaults, preserve errors and only update the selected room", async ({
+  page,
+}) => {
+  const defaults = {
+    danmaku_rate: 0.3,
+    gift_rate: 0.8,
+    superchat_rate: 1,
+    interact_rate: 1,
+    high_density_enabled: true,
+    high_density_threshold: 1000,
+    high_density_rate: 0.1,
+  };
+  let saved = { ...defaults };
+  let attempts = 0;
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({
+      json: {
+        rooms: [
+          {
+            id: 3,
+            platform: "bilibili",
+            uploader_name: "正在录制的主播",
+            running: true,
+            room_config: { hotwords: ["词典"], danmaku_sampling: saved },
+          },
+          { id: 4, platform: "bilibili", uploader_name: "另一个主播" },
+        ],
+        counts: {},
+      },
+    }),
+  );
+  await page.route("**/api/rooms/3", async (route) => {
+    attempts++;
+    const body = route.request().postDataJSON();
+    expect(body).toEqual({
+      room_config: {
+        danmaku_sampling: {
+          ...defaults,
+          danmaku_rate: 0.29,
+          gift_rate: 0,
+          high_density_enabled: false,
+        },
+      },
+    });
+    if (attempts === 1) {
+      await route.fulfill({ status: 400, json: { detail: "保存暂时失败" } });
+      return;
+    }
+    saved = body.room_config.danmaku_sampling;
+    await route.fulfill({ json: { status: "updated" } });
+  });
+  await page.goto("/rooms");
+  const buttons = page.getByRole("button", { name: "弹幕保留", exact: true });
+  await buttons.nth(0).click();
+  const dialog = page.getByRole("dialog");
+  const ordinary = dialog
+    .getByLabel("普通弹幕保留率（%）", { exact: false })
+    .first();
+  const gift = dialog.getByLabel("礼物保留率（%）", { exact: false });
+  await expect(ordinary).toHaveValue("30");
+  await expect(gift).toHaveValue("80");
+  await expect(
+    dialog.getByLabel("SC 保留率（%）", { exact: false }),
+  ).toHaveValue("100");
+  await expect(
+    dialog.getByLabel("进场等互动保留率（%）", { exact: false }),
+  ).toHaveValue("100");
+  await expect(dialog.getByLabel("高密度阈值", { exact: false })).toHaveValue(
+    "1000",
+  );
+  await ordinary.fill("29");
+  await gift.fill("0");
+  await dialog.getByRole("switch", { name: "启用高密度规则" }).click();
+  await expect(
+    dialog.getByLabel("高密度阈值", { exact: false }),
+  ).toBeDisabled();
+  await dialog.getByRole("button", { name: "保存弹幕规则" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("保存暂时失败");
+  await expect(ordinary).toHaveValue("29");
+  await expect(gift).toHaveValue("0");
+  await dialog.getByRole("button", { name: "保存弹幕规则" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(attempts).toBe(2);
+  await buttons.nth(0).click();
+  await expect(ordinary).toHaveValue("29");
+  await dialog.getByRole("button", { name: "恢复默认值" }).click();
+  await expect(ordinary).toHaveValue("30");
+  expect(attempts).toBe(2);
+  await dialog.getByRole("button", { name: "放弃修改" }).click();
+  await expect(ordinary).toHaveValue("29");
+  await page.keyboard.press("Escape");
+  await buttons.nth(1).click();
+  await expect(ordinary).toHaveValue("30");
+  await expect(gift).toHaveValue("80");
+  await expect(
+    dialog.getByRole("switch", { name: "启用高密度规则" }),
+  ).toBeChecked();
+});
+
 for (const path of ["/rooms", "/"]) {
   test(`room deletion requires confirmation and refreshes the list on ${path}`, async ({
     page,
@@ -299,6 +530,36 @@ test("401 pauses reads and retains settings under the reauthentication dialog", 
   await expect(
     page.getByText("登录已失效", { exact: false }).first(),
   ).toBeVisible();
+});
+
+test.describe("session timezone", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("timeline list and detail show GMT+8 independently of browser timezone", async ({
+    page,
+  }) => {
+    const session = {
+      session_id: 1,
+      session_title: "时区测试场次",
+      started_at: "2026-10-20T14:39:08+00:00",
+      duration_s: 774,
+      status: "stopped",
+    };
+    await page.route("**/api/sessions/timeline?**", (route) =>
+      route.fulfill({ json: [session] }),
+    );
+    await page.route("**/api/sessions/1/timeline?**", (route) =>
+      route.fulfill({
+        json: { session, timezone: "GMT+8", counts: {}, points: [] },
+      }),
+    );
+    await page.goto("/sessions");
+    const expected = "2026/10/20 22:39:08 GMT+8 · 时长 12:54";
+    await expect(page.getByText(expected, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "查看场次时间线" }).click();
+    await expect(page).toHaveURL(/session=1/);
+    await expect(page.getByText(expected, { exact: true })).toBeVisible();
+  });
 });
 
 test("historical session selector sends the real session_id", async ({
@@ -635,4 +896,64 @@ test("running room settings omit locked flags while saving other changes", async
   await dialog.getByRole("switch", { name: "开播后自动录制" }).click();
   await dialog.getByRole("button", { name: "保存修改" }).click();
   await expect(dialog).toHaveCount(0);
+});
+
+test("Lark settings save without sending and only test on explicit action", async ({
+  page,
+}) => {
+  let saved = false;
+  let sent = 0;
+  await page.route("**/api/settings/configuration", async (route) => {
+    if (route.request().method() === "PATCH") {
+      expect(route.request().postDataJSON().values).toEqual({
+        lark_receive_id: "oc_changed",
+      });
+      saved = true;
+      await route.fulfill({ json: { revision: 2 } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        revision: saved ? 2 : 1,
+        fields: [
+          { key: "lark_app_id", value: "cli_test" },
+          {
+            key: "lark_app_secret",
+            value: null,
+            secret: true,
+            configured: true,
+          },
+          { key: "lark_domain", value: "feishu" },
+          { key: "lark_receive_id_type", value: "chat_id" },
+          {
+            key: "lark_receive_id",
+            value: saved ? "oc_changed" : "oc_initial",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/settings/notifications/email", (route) =>
+    route.fulfill({ json: { verified: false } }),
+  );
+  await page.route("**/api/settings/notifications/lark/test", (route) => {
+    sent++;
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.goto("/settings/notifications");
+  await expect(page.getByLabel("App Secret", { exact: true })).toHaveValue("");
+  await page.getByLabel("接收对象 ID", { exact: true }).fill("oc_changed");
+  const testButton = page.getByRole("button", {
+    name: "测试发送飞书消息",
+    exact: true,
+  });
+  await expect(testButton).toBeDisabled();
+  await page.getByRole("button", { name: "保存设置", exact: true }).click();
+  await expect(testButton).toBeEnabled();
+  expect(sent).toBe(0);
+  await testButton.click();
+  await expect(
+    page.getByText("飞书测试消息已发送", { exact: true }),
+  ).toBeVisible();
+  expect(sent).toBe(1);
 });

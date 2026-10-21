@@ -14,7 +14,7 @@ export const text = (value: unknown, fallback = "—") =>
       : String(value);
 export const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
-export const time = (value: unknown) => {
+export const time = (value: unknown, zone: "local" | "GMT+8" = "local") => {
   if (!value) return "—";
   const source = String(value);
   const date = new Date(
@@ -25,7 +25,8 @@ export const time = (value: unknown) => {
     : new Intl.DateTimeFormat("zh-CN", {
         dateStyle: "short",
         timeStyle: "medium",
-      }).format(date);
+        timeZone: zone === "GMT+8" ? "Asia/Shanghai" : undefined,
+      }).format(date) + (zone === "GMT+8" ? " GMT+8" : "");
 };
 export function duration(value: unknown) {
   const seconds = Math.max(0, Math.round(number(value)));

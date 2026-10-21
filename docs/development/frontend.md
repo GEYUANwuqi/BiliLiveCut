@@ -4,7 +4,7 @@
 
 ## 页面与后端边界
 
-浏览器只访问前端地址。前端服务提供 `/`、工作台路由和静态资源，并把 `/api`、`/auth`、`/review/api`、`/collection/api`、`/openapi.json` 反向代理到 FastAPI。FastAPI 不再返回业务 HTML，也不再挂载旧 `/static`。
+浏览器只访问前端地址。前端服务提供 `/`、工作台路由和静态资源，并把 `/api`、`/auth`、`/review/api`、`/collection/api`、`/openapi.json` 反向代理到 FastAPI。FastAPI 负责 API 与媒体响应。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -14,10 +14,8 @@
 | `frontend/src/lib/drafts.ts` | 当前浏览器内存中的编辑草稿 |
 | `frontend/public/media-auth.js` | 为同源媒体请求附加当前标签页的 Basic 凭据 |
 | `app/web/main.py`、`app/web/routers/` | 后端 API 与媒体 |
-| `app/web/frontend_server.py` | 源码及 Portable 使用的独立静态服务进程 |
+| `app/web/frontend_server.py` | 源码、wheel 及 Portable 使用的独立静态服务进程 |
 | `frontend/nginx.conf` | Docker 前端的静态服务与反向代理 |
-
-旧模板和原生脚本保留在源码中供迁移核对，运行入口不再使用它们。
 
 React 录播页面支持视频与弹幕多选，在请求前完成同名配对、歧义校验和自然排序。当前标签页保存每段声明和完成状态；失败或停止后继续同一队列，先核对服务端已上传状态，再上传剩余文件。相关行为由 `import-plan`、`import-controller` 单元测试和真实浏览器的批量导入测试共同覆盖。
 
@@ -33,10 +31,10 @@ uv sync --locked --no-dev --extra web --extra asr-whisper --extra llm
 
 如果终端激活了另一个工作树的虚拟环境，先执行 `deactivate`。不要使用 `--active` 指向旧环境。缺少 `Python.h` 或编译工具时，可以在安装命令前添加 `BLC_SKIP_C_EXTENSIONS=1`，使用 Python 实现运行；完整开发依赖及其他转写引擎见[开发环境](./environment.md)。
 
-`--no-sync` 只适用于已经安装好依赖的环境，不会补装 `click` 等缺失依赖。直接跳过首次安装时，还可能从终端 PATH 找到其他工作树的旧 `blc` 脚本。下面使用当前环境的 Python 模块入口启动后端：
+`--no-sync` 只适用于已经安装好依赖的环境，不会补装 `click` 等缺失依赖。先完成上述安装，确保当前工作树的 `.venv` 中已有 `blc` 入口，再启动后端：
 
 ```bash
-uv run --no-sync python -m app.cli backend --host 127.0.0.1 --port 8000 --reload
+uv run --no-sync blc backend --host 127.0.0.1 --port 8000 --reload
 ```
 
 另开终端，进入同一个工作树根目录：
@@ -63,7 +61,7 @@ npm run dev
 | `blc frontend` | 仅静态前端，代理到 `--backend` 指定的后端 | `127.0.0.1:8080` |
 | `blc start` | 同时启动已构建前端和私有后端，统一管理退出 | `127.0.0.1:8000`，或保存的启动端口 |
 
-`frontend`、`start` 要求 `frontend/dist/index.html` 存在，也可通过 `--frontend-dir` 或 `BLC_FRONTEND_DIR` 指定构建目录。它们不会自动调用 npm，不提供前端开发热更新。`serve`、`console` 分别作为 `backend`、`start` 的兼容别名。原有录制、转写、剪辑、上传、日程、配置和维护命令继续保留，使用 `blc --help` 或 `blc <命令> --help` 查看。
+源码运行 `frontend`、`start` 前需要生成 `frontend/dist/index.html`。wheel 使用随包的 `app/web/ui/`，Portable 使用 Payload 中的 `frontend/dist/`；也可通过 `--frontend-dir` 或 `BLC_FRONTEND_DIR` 显式指定目录。运行命令不调用 npm，不提供前端开发热更新。`serve`、`console` 分别作为 `backend`、`start` 的兼容别名。录制、转写、剪辑、上传、日程、配置和维护命令使用 `blc --help` 或 `blc <命令> --help` 查看。
 
 ```bash
 npm --prefix frontend run build
@@ -102,9 +100,22 @@ uv run --no-sync python scripts/export_openapi.py
 npm --prefix frontend run api:generate
 ```
 
-旧模板与原生脚本的检查入口仍为 `python scripts/check_frontend.py`，覆盖工作台、配置、录播批量导入与波形交互。波形检查使用独立 `.mjs` 入口，不依赖标准输入结束，pytest 保留 30 秒超时与阶段诊断。CI 的 Python 测试矩阵使用 Node.js 22。
-
 将 `frontend/openapi.json` 和生成的 `src/api/schema.d.ts` 一并更新。CI 使用 `--check` 检查规范是否同步，再重新生成类型验证差异。导出脚本使用临时配置目录，不启动应用生命周期，也不会读取正在运行实例的数据库。
+
+## wheel 与源码包
+
+构建 wheel 的机器需要 Node.js 24、npm 及 Python 构建工具：
+
+```bash
+uv sync --locked
+uv run --no-sync python -m build
+```
+
+构建器在临时目录执行 `npm ci` 和 `npm run build`，将完整静态产物放入 wheel 的 `app/web/ui/`，不复用工作树的 `frontend/dist/`，也不改动开发环境的 `node_modules`。sdist 包含前端源码和锁文件；从 sdist 构建 wheel 时执行相同流程。缺少 npm 或前端构建失败时，wheel 构建直接失败。
+
+安装已构建的 wheel 后，使用 `blc start` 从任意运行目录启动，运行时不需要 Node.js。editable 安装（`uv sync`、`pip install -e`）不自动构建页面，仍按上文使用 Vite 或手动生成 `frontend/dist/`。
+
+Release 会在源码目录之外安装 wheel，再用真实 `blc start` 检查首页、脚本、样式、SPA 路由、API 代理及进程退出；验收运行时的 PATH 不提供 Node.js。
 
 ## 功能与验收范围
 

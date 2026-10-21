@@ -154,7 +154,9 @@ def test_readding_removed_room_restores_same_identity_without_automation(
         assert len(db.exec(select(LiveRoom)).all()) == 1
 
 
-async def test_monitor_and_automatic_start_ignore_removed_room(temp_db: None, monkeypatch: MonkeyPatch) -> None:
+async def test_monitor_and_automatic_start_ignore_removed_room(
+    temp_db: None, monkeypatch: MonkeyPatch, bili_live_feed
+) -> None:
     from unittest.mock import AsyncMock
 
     from app.pipeline.live_monitor import LiveMonitor
@@ -162,11 +164,12 @@ async def test_monitor_and_automatic_start_ignore_removed_room(temp_db: None, mo
 
     with get_session() as db:
         removed = LiveRoom(input_url="123", room_id=123, auto_record=True)
-        active = LiveRoom(input_url="456", room_id=456, auto_record=True)
+        active = LiveRoom(input_url="456", room_id=456, auto_record=True, authorized=True)
         db.add(removed)
         db.add(active)
         db.flush()
         removed_id, active_id = removed.id, active.id
+        bind_bilibili_room(db, active)
     manager = RecorderManager()
     await manager.remove_room(removed_id)
     # 模拟删除前已经排队的自动启动，以及另一写入者留下的旧开关。
@@ -178,8 +181,16 @@ async def test_monitor_and_automatic_start_ignore_removed_room(temp_db: None, mo
     monkeypatch.setattr(manager, "_start_locked", start)
     await manager.start(removed_id, automatic=True)
     start.assert_not_awaited()
+    from app.plugins.live_source import LiveStatus, RoomSnapshot
+
+    monkeypatch.setattr(
+        "app.sources.bilibili.source.BilibiliSource.get_room_info",
+        AsyncMock(return_value=RoomSnapshot(status=LiveStatus.OFFLINE)),
+    )
     monitor = LiveMonitor()
-    check = AsyncMock()
-    monkeypatch.setattr(monitor, "_check_room", check)
-    await monitor._check_all()
-    assert [call.args[0].id for call in check.await_args_list] == [active_id]
+    try:
+        await monitor._check_all()
+        await bili_live_feed.ready(monitor, active_id)
+        assert set(monitor._subscriptions) == {active_id}
+    finally:
+        await monitor.stop()

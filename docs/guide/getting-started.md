@@ -8,11 +8,13 @@ BiliLiveCut 的完整流程是：添加直播间 → 录制或导入视频 → �
 | --- | --- | --- |
 | Windows 桌面 | [Portable 使用说明](../../packaging/portable/USER_GUIDE_ZH.md) | Full 自带 Python 和 FFmpeg，模型另行准备 |
 | Linux 无头服务器 | [Linux 部署指南](linux-server.md) | Python、FFmpeg；原生扩展构建需要编译工具和 Python 开发头文件 |
-| Docker | [容器部署](../../packaging/docker/README.md) | Docker，持久化数据目录和模型空间 |
+| Docker | [容器部署](../../packaging/docker/README.md) | Docker，镜像与构建缓存空间，持久化数据目录和模型空间 |
 | Windows、macOS 或 Linux 源码运行 | [源码部署](source.md) | Python、FFmpeg；默认原生扩展安装需要编译工具和 Python 开发头文件 |
 | 修改代码或参与开发 | [开发环境](../development/environment.md) | uv 或 venv + pip、FFmpeg、编译工具；JavaScript 检查和文档站另需 Node.js |
 
-源码安装同时支持 uv 和传统 venv + pip。Web 控制台使用独立 React 前端：源码安装需要 Node.js 24 构建页面；Docker 和新构建的 Portable 自带静态产物，运行时不需要 Node.js。文档站使用独立的依赖与构建。
+源码安装同时支持 uv 和传统 venv + pip。Web 控制台使用独立 React 前端：源码安装需要 Node.js 24 构建页面；wheel、Docker 和 Portable 自带静态产物，运行时不需要 Node.js。文档站使用独立的依赖与构建。
+
+当前 Docker 部署会在本机构建包含本地 CPU 转写依赖的完整镜像，首次构建耗时和磁盘占用较大。选择前请阅读[构建成本与资源占用](../../packaging/docker/README.md#构建成本与资源占用)，为构建缓存、模型和录制数据分别预留空间。
 
 ## 第一次运行
 

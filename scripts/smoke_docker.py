@@ -192,6 +192,13 @@ def main() -> int:
             "\n".join(
                 [
                     "import os, sqlite3; from pathlib import Path",
+                    "import app, shutil; from app.commands.serve import _frontend_directory",
+                    "frontend = _frontend_directory(None)",
+                    "assert frontend == Path(app.__file__).parent / 'web' / 'ui'",
+                    "assert (frontend / 'index.html').is_file() and (frontend / 'media-auth.js').is_file()",
+                    "assert any(frontend.rglob('*.js')) and any(frontend.rglob('*.css'))",
+                    "assert not (frontend.parent / 'templates').exists() and not (frontend.parent / 'static').exists()",
+                    "assert shutil.which('node') is None and shutil.which('npm') is None",
                     "import torch, torchaudio; from funasr import AutoModel",
                     "from funasr.utils.load_utils import load_audio_text_image_video",
                     "import wave, av",

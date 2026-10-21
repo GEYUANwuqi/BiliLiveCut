@@ -12,7 +12,7 @@ include setup_c.py
 include tools/native/rust/THIRD_PARTY_NOTICES.md
 include packaging/docker/Dockerfile
 
-recursive-include app *.py *.html *.css *.js *.txt
+recursive-include app *.py
 recursive-include config *.yaml *.txt
 recursive-include docs *.md
 recursive-include docs/benchmarks *.json
@@ -42,7 +42,7 @@ prune docs/.vuepress/.cache
 prune docs/.vuepress/.temp
 prune docs/.vuepress/dist
 
-# Independent frontend source; build output and dependencies ship separately.
+# Ship frontend sources in sdist; wheel builds compile them into app/web/ui.
 recursive-include frontend *.json *.ts *.tsx *.css *.html *.js *.mjs *.svg *.md
 include frontend/Dockerfile
 include frontend/nginx.conf

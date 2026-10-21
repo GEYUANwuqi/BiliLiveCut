@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/StarGazerQQD/BiliLiveCut)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-00AEEC?logo=readthedocs&logoColor=white)](https://stargazerqqd.github.io/BiliLiveCut/)
 
-**当前版本：V0.1.19.3 Alpha** (`0.1.19.3-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
+**当前版本：V0.1.19.4 Alpha** (`0.1.19.4-alpha`) · [更新记录](https://stargazerqqd.github.io/BiliLiveCut/releases/current.html)
 
 面向 Bilibili 直播的自动切片工具：**录制 → 转写 → 识别高光 → 人工审核 → 生成切片与文案 → 可选上传**。通过 Web 控制台管理直播间、录制场次、转写、候选和成品。
 
@@ -56,10 +56,10 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[web,asr-all,llm]"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-python -m app.cli init
+blc init
 npm --prefix frontend ci
 npm --prefix frontend run build
-python -m app.cli start
+blc start
 ```
 
 默认访问 `http://127.0.0.1:8000`。Click 命令入口为 `blc`；`start` 启动独立静态前端与 FastAPI API 两个进程，只运行后端 API 使用 `blc backend`，只运行已构建的前端使用 `blc frontend --backend http://127.0.0.1:8000`（默认前端端口 8080）。前端开发和热更新见 [Web 页面开发](https://stargazerqqd.github.io/BiliLiveCut/development/frontend.html)。直播间、录制与大部分业务配置都可在 Web 页面管理；安装镜像、CLI 录制和排错见[使用指南](https://stargazerqqd.github.io/BiliLiveCut/features/)。Docker 部署见 [Docker 说明](https://stargazerqqd.github.io/BiliLiveCut/guide/docker.html)。

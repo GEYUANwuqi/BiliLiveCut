@@ -55,6 +55,7 @@ def _prepare_lifespan(
     monkeypatch.setattr(live_monitor, "live_monitor", service("live_monitor"))
     recorder = service("recorders")
     recorder.stop_all = recorder.stop
+    recorder.request_stop_all = lambda: None
     recorder.running_ids = lambda: []
     monkeypatch.setattr(rooms, "recorder_manager", recorder)
 
@@ -63,6 +64,99 @@ def _prepare_lifespan(
 
     monkeypatch.setattr(rooms, "auto_recover_interrupted_sessions", recover)
     return stopped
+
+
+async def test_lifespan_signals_recorders_before_waiting_for_live_monitor(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import live_monitor
+    from app.web import main
+    from app.web.services import rooms
+
+    _prepare_lifespan(monkeypatch)
+    signalled = Event()
+    monkeypatch.setattr(rooms.recorder_manager, "request_stop_all", signalled.set)
+
+    async def stop_monitor() -> None:
+        assert shutdown_event.is_set() and signalled.is_set()
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(live_monitor.live_monitor, "stop", stop_monitor)
+    async with main.lifespan(main.app):
+        assert not signalled.is_set()
+
+
+@pytest.mark.parametrize("stage", ["fetch", "record"])
+async def test_shutdown_during_recording_does_not_refetch_or_report_ffmpeg_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    from app.pipeline import storage_lifecycle
+    from app.plugins.live_source import SourceRoom, StreamSpec
+    from app.recording import recorder as module
+
+    recorder = module.Recorder(SourceRoom(platform="test", source_id="1", canonical_url="https://example.invalid/1"), 1)
+    fetched, recorded, exits = [], [], []
+
+    async def start_danmaku() -> None:
+        pass
+
+    async def fetch() -> StreamSpec:
+        fetched.append(1)
+        if stage == "fetch":
+            shutdown_event.set()
+        return StreamSpec(url="https://example.invalid/live", transport="hls", container="ts")
+
+    async def record(*args: object) -> int:
+        recorded.append(1)
+        shutdown_event.set()
+        return 255
+
+    monkeypatch.setattr(module, "session_raw_dir", lambda _: tmp_path)
+    monkeypatch.setattr(storage_lifecycle, "should_stop_recording", lambda: False)
+    monkeypatch.setattr(recorder, "_start_danmaku", start_danmaku)
+    monkeypatch.setattr(recorder, "_fetch_stream", fetch)
+    monkeypatch.setattr(recorder, "_record_once", record)
+    monkeypatch.setattr(recorder, "_update_session", lambda **kwargs: None)
+    monkeypatch.setattr(recorder, "_save_stream_selection", lambda stream: None)
+    monkeypatch.setattr(recorder, "_log_recording_exit", lambda *args: exits.append(args))
+    await asyncio.wait_for(recorder._run_session(), timeout=2)
+    assert fetched == [1] and recorded == ([1] if stage == "record" else [])
+    assert not exits and not recorder._last_exit_abnormal
+
+
+async def test_global_shutdown_interrupts_recorder_backoff() -> None:
+    from app.plugins.live_source import SourceRoom
+    from app.recording.recorder import Recorder
+
+    recorder = Recorder(SourceRoom(platform="test", source_id="1", canonical_url="https://example.invalid/1"), 1)
+    waiting = asyncio.create_task(recorder._sleep_or_stop(60))
+    await asyncio.sleep(0)
+    shutdown_event.set()
+    await asyncio.wait_for(waiting, timeout=1)
+    assert recorder._stop.is_set()
+
+
+async def test_shutdown_notifies_all_recorders_and_cleans_others_after_one_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.web.services.rooms import RecorderManager
+
+    manager = RecorderManager()
+    stopped: set[int] = set()
+    manager._recorders = {room: SimpleNamespace(stop=lambda room=room: stopped.add(room)) for room in (1, 2)}
+    manager._tasks = {1: None, 2: None}
+    cleaned = []
+
+    async def stop(room: int) -> None:
+        assert stopped == {1, 2}
+        cleaned.append(room)
+        if room == 1:
+            raise RuntimeError("one room failed")
+
+    monkeypatch.setattr(manager, "stop", stop)
+    with pytest.raises(ExceptionGroup, match="录制关闭期间"):
+        await manager.stop_all()
+    assert cleaned == [1, 2]
 
 
 @pytest.mark.parametrize(

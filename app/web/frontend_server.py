@@ -13,6 +13,10 @@ from pathlib import Path
 from socketserver import TCPServer
 from urllib.parse import unquote, urlsplit
 
+from loguru import logger
+
+from app.core.sanitize import sanitize_diagnostic
+
 _API_PREFIXES = ("/api", "/auth", "/review/api", "/collection/api")
 _STATIC_MIME = {
     ".js": "text/javascript; charset=utf-8",
@@ -35,7 +39,7 @@ _HOP_HEADERS = {
 }
 _UI_ROUTE = re.compile(
     r"/(?:rooms|recording|imports|schedules|transcripts|danmaku|sessions|topics|clips|uploads|trends|tasks|analytics|monitor|logs"
-    r"|settings(?:/(?:configuration|automation|llm|login|plugins|subtitles|intros))?"
+    r"|settings(?:/(?:configuration|automation|llm|login|plugins|subtitles|intros|notifications))?"
     r"|review(?:/(?:queue|[0-9]+))?|collection/[0-9]+|plugins/[^/]+/settings)?/?$"
 )
 
@@ -89,6 +93,15 @@ class FrontendHandler(BaseHTTPRequestHandler):
     do_PATCH = do_POST
     do_DELETE = do_POST
     do_OPTIONS = do_POST
+
+    def log_request(self, code="-", size="-") -> None:
+        """与后端使用同一日志格式，不记录查询参数及其可能携带的凭据。"""
+        path = sanitize_diagnostic(urlsplit(self.path).path)
+        logger.info('{}:{} - "{} {}" {}', self.client_address[0], self.client_address[1], self.command, path, code)
+
+    def log_message(self, format, *args) -> None:
+        """替换 http.server 默认 stderr 格式并脱敏错误诊断。"""
+        logger.warning("前端请求处理：{}", sanitize_diagnostic(format % args))
 
     def _dispatch(self) -> None:
         parsed = urlsplit(self.path)
@@ -267,7 +280,7 @@ def serve_frontend(directory: Path, backend: str, host: str = "127.0.0.1", port:
         raise FileNotFoundError(f"未找到前端构建产物: {directory}，请先执行 npm ci && npm run build")
     server = FrontendHTTPServer((host, port), partial(FrontendHandler, directory=directory, backend=backend))
     server.daemon_threads = True
-    print(f"前端服务 -> http://{host}:{port}，API -> {backend}", flush=True)
+    logger.info("前端服务 -> http://{}:{}，API -> {}", host, port, backend)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -278,6 +291,9 @@ def serve_frontend(directory: Path, backend: str, host: str = "127.0.0.1", port:
 
 def main() -> None:
     """通过 python -m app.web.frontend_server 启动静态服务。"""
+    from app.core.logging import setup_logging
+
+    setup_logging()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path("frontend/dist"))
     parser.add_argument("--backend", default="http://127.0.0.1:8000")

@@ -34,8 +34,13 @@ RUN tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
     && cp /tmp/ffmpeg.tar.xz /opt/ffmpeg/share/source/ffmpeg-9.0.2.tar.xz \
     && cp COPYING.GPLv3 LICENSE.md /opt/ffmpeg/share/source/
 
+FROM node:24-bookworm-slim AS node-tools
+
 FROM python-base AS builder
 COPY --from=uv /uv /bin/uv
+COPY --from=node-tools /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-tools /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential pkg-config cargo rustc \
        libass9 libfontconfig1 libfreetype6 libharfbuzz0b libfribidi0 \
@@ -58,6 +63,7 @@ RUN uv pip install --python /app/.venv/bin/python --require-hashes --no-deps \
 # 包括 setuptools data-files 与 C/Cython 构建源，不能只复制 app/config。
 COPY README.md LICENSE MANIFEST.in setup.py setup_c.py .env.example ./
 COPY app ./app
+COPY frontend ./frontend
 COPY config ./config
 COPY docs/development/live-source-plugins.md docs/development/douyin-plugin-handoff.md ./docs/development/
 COPY plugin ./plugin

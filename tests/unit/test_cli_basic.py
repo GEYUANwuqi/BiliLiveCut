@@ -41,7 +41,7 @@ def test_cli_module_entrypoint_dispatches_commands() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "BiliLiveCut 0.1.19.3-alpha" in result.stdout
+    assert "BiliLiveCut 0.1.19.4-alpha" in result.stdout
 
 
 def test_cli_help_preserves_dependency_hints_and_current_doctor_text() -> None:
@@ -182,6 +182,31 @@ def test_built_frontend_required_before_starting_processes(
     result = CliRunner().invoke(cli.app, [command, "--frontend-dir", str(tmp_path)])
     assert result.exit_code == 2, result.output
     assert "未找到前端构建" in result.output and "npm --prefix frontend run build" in result.output
+
+
+def test_installed_frontend_selection_keeps_explicit_directory_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.commands import serve
+
+    monkeypatch.delenv("BLC_SOURCE_DIR", raising=False)
+    monkeypatch.delenv("BLC_FRONTEND_DIR", raising=False)
+    monkeypatch.setattr(serve, "__file__", str(tmp_path / "app/commands/serve.py"))
+    packaged = tmp_path / "app/web/ui"
+    packaged.mkdir(parents=True)
+    (packaged / "index.html").write_text("wheel frontend")
+    assert serve._frontend_directory(None) == packaged
+    # 显式目录缺失时不能静默改用 wheel 自带资源。
+    with pytest.raises(click.BadParameter, match="未找到前端构建"):
+        serve._frontend_directory(str(tmp_path / "missing"))
+    portable = tmp_path / "portable/frontend/dist"
+    portable.mkdir(parents=True)
+    (portable / "index.html").write_text("portable frontend")
+    monkeypatch.setenv("BLC_SOURCE_DIR", str(tmp_path / "portable"))
+    assert serve._frontend_directory(None) == portable
+    monkeypatch.setenv("BLC_FRONTEND_DIR", str(packaged))
+    assert serve._frontend_directory(None) == packaged
 
 
 @pytest.mark.parametrize(
@@ -351,3 +376,109 @@ def test_record_rejects_produce_without_pipeline(
         assert exc.exit_code == 1
     else:  # pragma: no cover - 明确表达必须抛错
         raise AssertionError("--produce without --pipeline must fail")
+
+
+def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import signal
+    import time
+    import urllib.request
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from app.analysis.transcription import process_tree
+    from app.commands.serve import cmd_console
+
+    (tmp_path / "index.html").write_text("frontend")
+    processes = []
+    options = []
+    ownership = []
+    original_signals = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+
+    class Process:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.pid = len(processes) + 1
+            self.stopping = False
+            self.waits = 0
+            self.stdin = None
+
+        def poll(self):
+            if self.stopping:
+                self.waits += 1
+                if self.waits > 5:
+                    self.returncode = 0
+            return self.returncode
+
+        def send_signal(self, number):
+            assert number == signal.SIGINT
+            self.stopping = True
+
+        def terminate(self):
+            assert self.stdin is None, "Windows 后端须通过管道正常退出"
+            self.stopping = True
+
+        def kill(self):
+            pytest.fail("正常关闭不能由启动器提前强杀后端")
+
+        def wait(self, timeout=None):
+            assert timeout is None, "服务必须有机会完成各自配置的关闭宽限"
+            assert self.returncode == 0
+            return 0
+
+    def spawn(*args, **kwargs):
+        process = Process()
+        if kwargs.get("stdin") == subprocess.PIPE:
+            process.stdin = SimpleNamespace(close=lambda: setattr(process, "stopping", True))
+        processes.append(process)
+        options.append(kwargs)
+        return process
+
+    def sleep(seconds):
+        if seconds == 0.25:
+            raise KeyboardInterrupt
+
+    class SystemOwnership:
+        # 本测试控制外部进程与 Job 边界，真实进程树清理由集成测试验证。
+        def __init__(self, pid: int) -> None:
+            assert pid == processes[-1].pid
+            ownership.append("attach")
+
+        def resume_suspended(self) -> None:
+            assert options[-1]["creationflags"] & 0x00000004
+            ownership.append("resume")
+
+        def terminate(self) -> None:
+            ownership.append("terminate")
+
+    monkeypatch.setattr(process_tree, "ProcessTree", SystemOwnership)
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    monkeypatch.setattr(time, "sleep", sleep)
+    monkeypatch.setattr(
+        urllib.request,
+        "build_opener",
+        lambda *args: SimpleNamespace(open=lambda *args, **kwargs: nullcontext(SimpleNamespace(status=200))),
+    )
+    cmd_console(frontend_dir=str(tmp_path), port=8080)
+    assert len(processes) == 2
+    assert ownership == (["attach", "resume", "terminate"] if os.name == "nt" else [])
+    for kwargs in options:
+        if os.name == "nt":
+            assert kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            assert kwargs["start_new_session"] is True
+    assert all(signal.getsignal(number) == handler for number, handler in original_signals.items())
+
+
+def test_windows_console_stops_without_console_signals() -> None:
+    from types import SimpleNamespace
+
+    from app.commands.serve import _request_console_stop
+
+    stopped = []
+    backend = SimpleNamespace(poll=lambda: None, stdin=SimpleNamespace(close=lambda: stopped.append("backend-eof")))
+    frontend = SimpleNamespace(poll=lambda: None, terminate=lambda: stopped.append("frontend"))
+    _request_console_stop([backend, frontend], windows=True)
+    assert stopped == ["backend-eof", "frontend"]

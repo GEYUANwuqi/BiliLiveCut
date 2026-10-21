@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import runpy
+import shutil
 import tomllib
 from pathlib import Path
+
+import pytest
+import setuptools
+from setuptools import Distribution
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -16,7 +22,7 @@ def test_web_extra_contains_all_import_time_dependencies() -> None:
     """Installing ``.[web]`` must be sufficient to import the FastAPI app."""
     web = _pyproject()["project"]["optional-dependencies"]["web"]
     names = {requirement.split(">=", 1)[0].lower() for requirement in web}
-    assert {"fastapi", "uvicorn[standard]", "jinja2", "python-multipart"} <= names
+    assert {"fastapi", "uvicorn[standard]", "python-multipart"} <= names
 
 
 def test_dev_extra_executes_optional_image_paths() -> None:
@@ -30,13 +36,7 @@ def test_wheel_declares_web_assets_as_package_data() -> None:
     """Web and scoring assets are mandatory runtime wheel content."""
     setuptools = _pyproject()["tool"]["setuptools"]
     patterns = set(setuptools["package-data"]["app.web"])
-    assert {
-        "templates/*.html",
-        "static/*.css",
-        "static/*.js",
-        "static/js/*.js",
-        "static/js/*.txt",
-    } <= patterns
+    assert {"ui/*", "ui/**/*"} <= patterns
     assert "config" in setuptools["packages"]["find"]["include"]
     assert {"*.yaml", "*.txt"} <= set(setuptools["package-data"]["config"])
 
@@ -45,7 +45,7 @@ def test_sdist_manifest_contains_runtime_and_audit_inputs() -> None:
     """The source archive must contain Web assets, config, tests and release tooling."""
     manifest = (REPO_ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     for rule in (
-        "recursive-include app *.py *.html *.css *.js *.txt",
+        "recursive-include app *.py",
         "recursive-include config *.yaml *.txt",
         "include LICENSE",
         "recursive-include packaging *.py *.json *.yaml *.ini *.lock *.in *.spec *.md *.example",
@@ -96,3 +96,25 @@ def test_project_and_third_party_license_boundaries() -> None:
         assert "Copyright (c) 2026 StarGazerQQD" in content
         assert "项目代码采用" in content
     assert "项目许可证不改变任何第三方条款" in portable_readme
+
+
+@pytest.mark.parametrize("editable", [False, True])
+def test_frontend_build_requires_node_only_for_distributable_wheels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    editable: bool,
+) -> None:
+    captured: dict = {}
+    monkeypatch.setenv("BLC_SKIP_C_EXTENSIONS", "1")
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: captured.update(kwargs))
+    runpy.run_path(str(REPO_ROOT / "setup.py"))
+    command = captured["cmdclass"]["build_py"](Distribution({"packages": []}))
+    command.ensure_finalized()
+    command.build_lib = str(tmp_path / "build")
+    command.editable_mode = editable
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    if editable:
+        command.run()
+    else:
+        with pytest.raises(RuntimeError, match="Node.js 24"):
+            command.run()

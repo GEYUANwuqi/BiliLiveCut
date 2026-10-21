@@ -29,6 +29,72 @@ def _stop_console(process: subprocess.Popen) -> None:
         process.send_signal(signal.SIGTERM)
 
 
+@pytest.mark.parametrize("close_during_startup", [False, True])
+def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(tmp_path: Path, close_during_startup: bool) -> None:
+    """无控制台的宿主关闭管道后，真实后端必须执行正常 lifespan 清理。"""
+    root = Path(__file__).resolve().parents[2]
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(root),
+        "PYTHONIOENCODING": "utf-8",
+        "BLC_APP_ROOT": str(tmp_path),
+        "STORAGE_ROOT": str(tmp_path / "storage"),
+        "DATABASE_URL": f"sqlite:///{tmp_path / 'test.db'}",
+        "ADMIN_PASSWORD": "",
+        "DOCKER_AUTH_ENABLED": "false",
+        "BILIBILI_COOKIE": "",
+        "ASR_NO_MODEL_DOWNLOAD": "1",
+        "TREND_ENABLED": "false",
+        "TREND_SCHEDULE_ENABLED": "false",
+        "_BLC_PARENT_STDIN": "1",
+    }
+    opener = build_opener(ProxyHandler({}))
+    with (tmp_path / "backend.log").open("w+", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import faulthandler, runpy; "
+                "faulthandler.dump_traceback_later(20, repeat=True); "
+                "runpy.run_module('app.cli', run_name='__main__', alter_sys=True)",
+                "backend",
+                "--port",
+                str(port),
+            ],
+            cwd=tmp_path,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=log,
+            stderr=log,
+        )
+        try:
+            if close_during_startup:
+                process.stdin.close()
+            deadline = time.monotonic() + 30
+            while not close_during_startup:
+                try:
+                    with opener.open(f"http://127.0.0.1:{port}/api/dashboard", timeout=1) as response:
+                        assert response.status == 200
+                        break
+                except (OSError, URLError):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        log.seek(0)
+                        pytest.fail(log.read())
+                    time.sleep(0.1)
+            process.stdin.close()
+            assert process.wait(timeout=25) == 0
+            log.seek(0)
+            assert "Web 服务资源已关闭" in log.read()
+        finally:
+            if process.poll() is None:
+                process.stdin.close()
+                process.terminate()
+                process.wait(timeout=5)
+
+
 @pytest.mark.parametrize("command", ["start", "console"])
 def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Path, command: str):
     root = Path(__file__).resolve().parents[2]
@@ -79,7 +145,7 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
                 assert b'"rooms":[]' in response.read()
             with opener.open(f"http://127.0.0.1:{port}/api/settings", timeout=3) as response:
                 assert json.loads(response.read())["current_web_port"] == port
-            children = psutil.Process(process.pid).children()
+            children = psutil.Process(process.pid).children(recursive=True)
             _stop_console(process)
             exit_code = process.wait(timeout=25)
             # Windows 的 TerminateProcess 退出码由调用方决定；监督器须保留失败语义。

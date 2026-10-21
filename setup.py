@@ -1,10 +1,53 @@
 """BiliLiveCut 构建配置 — 含 C 加速模块编译 (V0.1.13.2)."""
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext
+from setuptools.command.build_py import build_py
+
+
+class FrontendBuildPy(build_py):
+    """普通 wheel 从锁定源码构建 UI；editable 安装保留独立开发流程。"""
+
+    def run(self) -> None:
+        """只在隔离目录安装 npm 依赖，避免污染源码及复用陈旧 dist。"""
+        if self.editable_mode:
+            super().run()
+            return
+        web_output = Path(self.build_lib) / "app" / "web"
+        if web_output.resolve() == Path(__file__).resolve().parent / "app" / "web":
+            raise RuntimeError("wheel 构建目录不能覆盖源码目录")
+        if web_output.exists():
+            shutil.rmtree(web_output)
+        super().run()
+        npm = shutil.which("npm")
+        if npm is None:
+            raise RuntimeError("构建 wheel 需要 Node.js 24 与 npm；安装和运行已构建的 wheel 不需要 Node.js")
+        frontend = Path(__file__).resolve().parent / "frontend"
+        if not (frontend / "package-lock.json").is_file():
+            raise RuntimeError("源码包缺少 frontend/package-lock.json，无法构建完整 wheel")
+        with tempfile.TemporaryDirectory(prefix="blc-wheel-frontend-") as temporary:
+            staging = Path(temporary) / "frontend"
+            shutil.copytree(
+                frontend,
+                staging,
+                ignore=shutil.ignore_patterns("node_modules", "dist", "test-results", "playwright-report"),
+            )
+            subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=staging, check=True, timeout=300)
+            subprocess.run([npm, "run", "build"], cwd=staging, check=True, timeout=180)
+            output = staging / "dist"
+            if not (output / "index.html").is_file() or not any(output.rglob("*.js")):
+                raise RuntimeError("前端构建未生成完整的 index.html 与 JavaScript 资源")
+            destination = Path(self.build_lib) / "app" / "web" / "ui"
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(output, destination)
 
 
 class NativeBuildExt(build_ext):
@@ -85,6 +128,6 @@ if not _skip_extensions:
 setup(
     packages=find_packages(include=["app", "app.*", "config"]),
     ext_modules=_extensions,
-    cmdclass={"build_ext": NativeBuildExt},
+    cmdclass={"build_ext": NativeBuildExt, "build_py": FrontendBuildPy},
     include_package_data=True,
 )

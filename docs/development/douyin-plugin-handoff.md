@@ -84,9 +84,9 @@ python -m pip check
 在 Web 插件页刷新、启用并填写设置后，可以按 URL 添加直播间，或显式选择抖音平台。CLI 共用已保存的启用状态和设置，需要使用相同工作目录、数据库及 `PLUGIN_DIR`：
 
 ```text
-python -m app.cli add-room <房间ID> --platform douyin --authorize
-python -m app.cli check <房间ID> --platform douyin
-python -m app.cli record <宿主房间主键> --pipeline
+blc add-room <房间ID> --platform douyin --authorize
+blc check <房间ID> --platform douyin
+blc record <宿主房间主键> --pipeline
 ```
 
 宿主没有独立的 CLI 插件启用命令，首次启用和设置在 Web 插件中心完成。

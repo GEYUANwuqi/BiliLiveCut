@@ -750,6 +750,7 @@ async def test_retry_exhaustion_waits_for_a_real_offline_transition(
     temp_db: None,
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    bili_live_feed,
 ) -> None:
     """取流预算耗尽后不得立即拉起，只有确认离线后才允许下一次开播。"""
     from types import SimpleNamespace
@@ -810,16 +811,21 @@ async def test_retry_exhaustion_waits_for_a_real_offline_transition(
     monitor._stop = asyncio.Event()  # noqa: SLF001
     monkeypatch.setattr(monitor, "_start_recording", fake_start)
 
-    await monitor._check_all()  # noqa: SLF001
-    assert starts == []
-    live_state["value"] = 0
-    await monitor._check_all()  # noqa: SLF001
-    assert starts == []
-    with get_session() as db:
-        room = db.get(LiveRoom, room_id)
-        assert room is not None
-        assert load_room_config(room)["recording_wait_for_next_live"] is False
+    from app.plugins.live_source import LiveStatus
 
-    live_state["value"] = 1
-    await monitor._check_all()  # noqa: SLF001
-    assert starts == [room_id]
+    try:
+        await monitor._check_all()
+        await bili_live_feed.ready(monitor, room_id)
+        assert starts == []
+        live_state["value"] = 0
+        await bili_live_feed.send(LiveStatus.OFFLINE)
+        assert starts == []
+        with get_session() as db:
+            room = db.get(LiveRoom, room_id)
+            assert room is not None
+            assert load_room_config(room)["recording_wait_for_next_live"] is False
+        live_state["value"] = 1
+        await bili_live_feed.send(LiveStatus.LIVE)
+        assert starts == [room_id]
+    finally:
+        await monitor.stop()

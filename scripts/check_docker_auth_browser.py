@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,7 +21,9 @@ def check_browser(
 ) -> str:
     """通过用户界面验收真实会话认证，不注入 Basic 凭据或打印密码。"""
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, channel=channel, executable_path=executable_path)
+        browser = playwright.chromium.launch(
+            headless=True, channel=channel, executable_path=executable_path or os.environ.get("BLC_CHROMIUM_PATH")
+        )
         try:
             context = browser.new_context()
             page = context.new_page()
@@ -33,6 +36,10 @@ def check_browser(
             page.get_by_label("一次性初始化码").fill(code)
             page.get_by_label("设置管理员密码", exact=True).fill(password)
             page.get_by_role("button", name="初始化并登录").click()
+            intro = page.get_by_role("dialog", name="初次见面", exact=True)
+            expect(intro).to_be_visible()
+            expect(page.get_by_role("heading", name="工作台概览", exact=True)).to_have_count(0)
+            intro.get_by_role("button", name="稍后再说", exact=True).click()
             expect(page.get_by_role("heading", name="工作台概览", exact=True)).to_be_visible()
 
             page.goto(url + "/settings/configuration")

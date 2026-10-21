@@ -243,7 +243,7 @@ def verify_source_origin(
         "app/analysis/transcription/pipeline.py",
         "app/web/login_handler.py",
         "app/web/main.py",
-        "app/web/static/js/review.js",
+        "frontend/src/pages/review.tsx",
         "app/pipeline/workers/analyze.py",
         "app/pipeline/workers/render.py",
         "app/pipeline/workers/publish.py",

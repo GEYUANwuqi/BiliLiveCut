@@ -1,4 +1,4 @@
-# BiliLiveCut CI (V0.1.19.3 Alpha)
+# BiliLiveCut CI (V0.1.19.4 Alpha)
 # 触发: push/PR 到 main → lint → audit + test → portable → coverage summary
 #
 # Job 结构:
@@ -119,7 +119,7 @@ jobs:
       - name: Set up Node.js for frontend tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install FFmpeg (Ubuntu)
         if: runner.os == 'Linux'
@@ -274,7 +274,7 @@ jobs:
       - name: Set up Node.js for frontend tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install FFmpeg with subtitle and text filters
         shell: bash

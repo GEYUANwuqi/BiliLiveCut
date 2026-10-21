@@ -135,10 +135,8 @@ async def dispatch(
     csrf_check: Callable[[Request], bool],
     reviewer_allowed: Callable[[str], bool],
 ) -> Response:
-    """将 Docker 的管理页面、媒体与接口统一放在会话或 Basic 认证之后。"""
+    """将 Docker 的管理接口与媒体统一放在会话或 Basic 认证之后。"""
     path = request.url.path
-    if path.startswith("/static/"):
-        return await call_next(request)
     try:
         session = await run_in_threadpool(
             store.session, request.cookies.get(COOKIE_NAME, ""), touch=not path.startswith("/auth/")

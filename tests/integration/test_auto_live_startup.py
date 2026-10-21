@@ -10,7 +10,7 @@ import httpx
 import pytest
 from sqlmodel import select
 
-from app.plugins.live_source import SourceRoom
+from app.plugins.live_source import LiveStatus, SourceRoom
 from tests.source_fixtures import bind_bilibili_room
 
 if TYPE_CHECKING:
@@ -29,6 +29,7 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
     already_live: bool,
     auto_record: bool,
     auto_analyze: bool,
+    bili_live_feed,
 ) -> None:
     """Exercise real startup and queue advancement with controlled external boundaries."""
     from app.db.entities import LiveRoom, RawSegment, RecordingSession, SegmentTask, TaskStatus
@@ -127,14 +128,17 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
     monitor = module.LiveMonitor()
     monitor._stop = asyncio.Event()
     try:
-        if not already_live:
-            await monitor._check_all()
-            assert not recorders and not manager.is_running(db_id)
-        live_status = 1
         await monitor._check_all()
         if auto_record:
+            await bili_live_feed.ready(monitor, db_id)
+        if not already_live:
+            assert not recorders and not manager.is_running(db_id)
+        live_status = 1
+        if auto_record:
+            await bili_live_feed.send(LiveStatus.LIVE)
             await asyncio.wait_for(emitted.wait(), timeout=3)
             assert manager.is_running(db_id)
+            await bili_live_feed.send(LiveStatus.LIVE)
         await monitor._check_all()
         assert len(recorders) == int(auto_record)
         advance_recorded()
@@ -152,8 +156,9 @@ async def test_live_detection_starts_recording_and_respects_analysis_switch(
         print(
             f"already_live={already_live} auto_record={auto_record} auto_analyze={auto_analyze}: "
             f"sessions={len(sessions)}, segments={len(segments)}, analysis_tasks={len(tasks)}; "
-            "repeated polling and segment events do not duplicate work"
+            "repeated live notifications and segment events do not duplicate work"
         )
     finally:
+        await monitor.stop()
         finish.set()
         await asyncio.gather(*list(manager._tasks.values()))

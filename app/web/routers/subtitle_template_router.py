@@ -298,7 +298,7 @@ def delete_template(template_id: int, request: Request) -> dict[str, str]:
 
 @router.post("/import/ass")
 async def import_ass_file(
-    file: UploadFile = File(..., max_size=1_048_576),  # 1MB  # noqa: B008 E501
+    file: UploadFile = File(...),  # noqa: B008
 ) -> dict[str, object]:
     """导入 ASS 文件,提取其样式配置并创建模板。
 

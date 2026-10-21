@@ -1,18 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
-  Settings2,
   Trash2,
   FlaskConical,
   QrCode,
   ShieldCheck,
-  Puzzle,
-  Captions,
-  Film,
-  Radio,
   ArrowRight,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, send, useAction, useApi, type Row } from "@/api/client";
@@ -39,69 +35,97 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { download } from "./library";
 import { Evidence } from "./review";
+import { Input } from "@/components/ui/input";
+import { settingsCatalog } from "@/features/settings-catalog";
 
 export function SettingsPage() {
   const auth = useAuth();
-  const items = [
-    [
-      "/settings/configuration",
-      "全部参数",
-      "按分类查找运行参数，区分常用与高级设置。",
-      Settings2,
-    ],
-    [
-      "/settings/automation",
-      "房间与运行设置",
-      "自动化规则、端口及房间独立参数。",
-      Radio,
-    ],
-    [
-      "/settings/login",
-      "Bilibili 账号",
-      "网页扫码、浏览器登录与 Cookie 管理。",
-      QrCode,
-    ],
-    [
-      "/settings/llm",
-      "大模型服务",
-      "配置多个服务与失败回退，测试连接。",
-      FlaskConical,
-    ],
-    ["/settings/plugins", "插件中心", "发现、启停插件并配置扩展能力。", Puzzle],
-    [
-      "/settings/subtitles",
-      "字幕模板",
-      "管理 ASS 样式，导入与导出字幕模板。",
-      Captions,
-    ],
-    ["/settings/intros", "片头与片尾", "管理文字、时长、字体和背景。", Film],
-  ] as const;
+  const [search, setSearch] = useState("");
+  const sections = settingsCatalog
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) =>
+        `${item.label} ${item.description} ${section.title}`
+          .toLowerCase()
+          .includes(search.trim().toLowerCase()),
+      ),
+    }))
+    .filter((section) => section.items.length);
   return (
     <Page
       eyebrow="PREFERENCES"
       title="设置中心"
-      description="按用途组织配置。保存前可核对变更，未提交的编辑会保留在当前工作台。"
+      description="按使用场景选择设置，或搜索你想调整的功能。每个分类都直达对应参数。"
       actions={<PasswordButton />}
     >
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {items.map(([to, name, description, Icon]) => (
-          <Link
-            to={to}
-            key={to}
-            className="group rounded-2xl border bg-card p-6 transition hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
-          >
-            <div className="mb-6 flex items-center justify-between">
-              <span className="grid size-11 place-items-center rounded-xl bg-primary/8 text-primary">
-                <Icon className="size-5" />
-              </span>
-              <ArrowRight className="size-4 text-muted-foreground transition group-hover:translate-x-1 group-hover:text-primary" />
-            </div>
-            <h2 className="font-semibold">{name}</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {description}
-            </p>
-          </Link>
-        ))}
+      <div className="relative max-w-2xl">
+        <Search className="absolute top-3 left-3 size-4 text-muted-foreground" />
+        <Input
+          aria-label="搜索设置功能"
+          className="h-11 bg-card pl-10"
+          placeholder="想调整什么？例如：邮箱、重连、字幕、模型…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+      <div className="grid items-start gap-8 xl:grid-cols-[190px_1fr]">
+        <nav
+          aria-label="设置分类"
+          className="flex flex-wrap gap-2 xl:sticky xl:top-6 xl:flex-col"
+        >
+          {sections.map((section) => (
+            <a
+              href={`#settings-${section.title}`}
+              key={section.title}
+              className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              {section.title}
+              <span className="ml-2 text-xs">{section.items.length}</span>
+            </a>
+          ))}
+        </nav>
+        <div className="space-y-9">
+          {sections.map((section, index) => (
+            <section
+              id={`settings-${section.title}`}
+              key={section.title}
+              className="scroll-mt-6 space-y-4"
+            >
+              <div>
+                <p className="text-[10px] font-medium tracking-widest text-primary">
+                  0{index + 1}
+                </p>
+                <h2 className="mt-1 text-lg font-semibold">{section.title}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {section.description}
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {section.items.map((item) => (
+                  <Link
+                    to={item.to}
+                    key={item.to}
+                    className="group flex items-start justify-between gap-4 rounded-xl border bg-card p-5 transition hover:border-primary/40 hover:bg-primary/3"
+                  >
+                    <div>
+                      <h3 className="font-medium">{item.label}</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        {item.description}
+                      </p>
+                    </div>
+                    <ArrowRight className="mt-1 size-4 shrink-0 text-muted-foreground transition group-hover:translate-x-1 group-hover:text-primary" />
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ))}
+          {!sections.length && (
+            <Empty
+              title="没有匹配的设置"
+              description="换个关键词，或清空搜索查看全部分类。"
+            />
+          )}
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">
         当前访问方式：
@@ -240,13 +264,40 @@ function normalizedProviders(values: Row[]) {
     ...serializeFields(value, providerFields),
   }));
 }
-export function LlmPage() {
+function SetupPanel({
+  description,
+  actions,
+  children,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-5">
+      <p className="text-sm leading-7 text-muted-foreground">{description}</p>
+      <div className="flex flex-wrap gap-2">{actions}</div>
+      {children}
+    </div>
+  );
+}
+
+export function LlmPage({
+  embedded = false,
+  onBusy,
+}: { embedded?: boolean; onBusy?: (busy: boolean) => void } = {}) {
   const query = useApi("/api/llm-providers", false);
   const draft = useDraft<Row[] | null>("llm-providers", null);
   const cache = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<Row[]>([]);
+  useEffect(() => {
+    onBusy?.(busy);
+    return () => onBusy?.(false);
+  }, [busy, onBusy]);
+  const Frame = embedded ? SetupPanel : Page;
   const providers: Row[] =
     draft.value ??
     rows(obj(query.data).providers).map((entry) => ({
@@ -280,7 +331,7 @@ export function LlmPage() {
     }
   }
   return (
-    <Page
+    <Frame
       title="大模型服务"
       description="按优先级调用可用服务；密钥留空时保留原值。测试只验证草稿，不会保存配置。"
       actions={
@@ -326,14 +377,22 @@ export function LlmPage() {
                   </Button>
                 </div>
                 <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-                  {providerFields.map((field) => (
-                    <FormField
-                      key={field.name}
-                      field={field}
-                      value={provider[field.name]}
-                      onChange={(next) => update(index, next, field.name)}
-                    />
-                  ))}
+                  {providerFields
+                    .filter(
+                      (field) =>
+                        !embedded ||
+                        ["name", "base_url", "model", "api_key"].includes(
+                          field.name,
+                        ),
+                    )
+                    .map((field) => (
+                      <FormField
+                        key={field.name}
+                        field={field}
+                        value={provider[field.name]}
+                        onChange={(next) => update(index, next, field.name)}
+                      />
+                    ))}
                 </fieldset>
               </CardContent>
             </Card>
@@ -398,7 +457,7 @@ export function LlmPage() {
           </CardContent>
         </Card>
       )}
-    </Page>
+    </Frame>
   );
 }
 
@@ -414,7 +473,9 @@ const qrLabels: Record<string, string> = {
   cancelled: "扫码已取消",
   error: "登录失败",
 };
-export function BilibiliLoginPage() {
+export function BilibiliLoginPage({
+  embedded = false,
+}: { embedded?: boolean } = {}) {
   const cookie = useApi("/api/cookie-status", 10000);
   const current = useApi<Row>("/api/login/qrcode", false);
   const [task, setTask] = useState<Row | null>(null);
@@ -464,8 +525,9 @@ export function BilibiliLoginPage() {
     }
   }, [browserPoll.data, cache]);
   const info = obj(cookie.data);
+  const Frame = embedded ? SetupPanel : Page;
   return (
-    <Page
+    <Frame
       title="Bilibili 账号"
       description="推荐直接在网页扫码，服务器无需桌面。登录凭据只在后端保存。"
       actions={<Refresh refresh={cookie.refetch} />}
@@ -484,61 +546,73 @@ export function BilibiliLoginPage() {
                   ? `已保存登录凭据 · UID: ${text(info.uid, "待校验")}`
                   : text(info.hint, "尚未保存登录凭据")}
               </p>
-              <ConfirmButton
-                destructive
-                title="清除登录凭据？"
-                description="后续取流与投稿将使用未登录状态。"
-                onConfirm={() =>
-                  action.mutateAsync({ path: "/api/login/clear" })
-                }
-              >
-                清除 Cookie
-              </ConfirmButton>
-              <div className="space-y-4 border-t pt-5">
-                <h3 className="text-sm font-medium">其他登录方式</h3>
-                <Button
-                  variant="outline"
-                  disabled={action.isPending || browser !== null}
-                  onClick={() =>
-                    void action
-                      .mutateAsync({ path: "/api/login" })
-                      .then((result) => setBrowser(Number(obj(result).task_id)))
-                      .catch(() => {})
-                  }
-                >
-                  在服务器打开浏览器登录
-                </Button>
-                {browserOutcome && (
-                  <p role="status" className="text-sm text-muted-foreground">
-                    {browserOutcome}
-                  </p>
-                )}
-                {browser !== null && (
-                  <p role="status" className="text-sm text-muted-foreground">
-                    {text(
-                      browserPoll.data?.error || browserPoll.data?.status,
-                      "等待浏览器启动",
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setBrowser(null)}
-                    >
-                      停止查看
-                    </Button>
-                  </p>
-                )}
-                <p className="text-xs leading-6 text-muted-foreground">
-                  浏览器方式需要服务器具备桌面环境。手动 Cookie 可在
-                  <Link
-                    to="/settings/configuration?q=bilibili_cookie"
-                    className="text-primary underline"
+              {!embedded && (
+                <>
+                  <ConfirmButton
+                    destructive
+                    title="清除登录凭据？"
+                    description="后续取流与投稿将使用未登录状态。"
+                    onConfirm={() =>
+                      action.mutateAsync({ path: "/api/login/clear" })
+                    }
                   >
-                    全部参数
-                  </Link>
-                  中配置。
-                </p>
-              </div>
+                    清除 Cookie
+                  </ConfirmButton>
+                  <div className="space-y-4 border-t pt-5">
+                    <h3 className="text-sm font-medium">其他登录方式</h3>
+                    <Button
+                      variant="outline"
+                      disabled={action.isPending || browser !== null}
+                      onClick={() =>
+                        void action
+                          .mutateAsync({ path: "/api/login" })
+                          .then((result) =>
+                            setBrowser(Number(obj(result).task_id)),
+                          )
+                          .catch(() => {})
+                      }
+                    >
+                      在服务器打开浏览器登录
+                    </Button>
+                    {browserOutcome && (
+                      <p
+                        role="status"
+                        className="text-sm text-muted-foreground"
+                      >
+                        {browserOutcome}
+                      </p>
+                    )}
+                    {browser !== null && (
+                      <p
+                        role="status"
+                        className="text-sm text-muted-foreground"
+                      >
+                        {text(
+                          browserPoll.data?.error || browserPoll.data?.status,
+                          "等待浏览器启动",
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setBrowser(null)}
+                        >
+                          停止查看
+                        </Button>
+                      </p>
+                    )}
+                    <p className="text-xs leading-6 text-muted-foreground">
+                      浏览器方式需要服务器具备桌面环境。手动 Cookie 可在
+                      <Link
+                        to="/settings/configuration?q=bilibili_cookie"
+                        className="text-primary underline"
+                      >
+                        全部参数
+                      </Link>
+                      中配置。
+                    </p>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -614,7 +688,7 @@ export function BilibiliLoginPage() {
           </Card>
         </div>
       </QueryState>
-    </Page>
+    </Frame>
   );
 }
 

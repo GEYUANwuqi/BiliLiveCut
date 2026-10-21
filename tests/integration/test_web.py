@@ -453,12 +453,12 @@ def test_llm_connectivity_rejects_empty_response(temp_db: None, monkeypatch: Mon
     assert "未返回可用正文" in response.json()["results"][0]["detail"]
 
 
-def test_backend_does_not_mount_legacy_static_assets(temp_db: None) -> None:
-    """独立部署时旧静态路径不能意外返回旧工作台。"""
+def test_backend_does_not_serve_frontend_routes_or_assets(temp_db: None) -> None:
+    """页面与静态文件由独立前端服务提供。"""
     from app.web.main import app
 
     with TestClient(app) as client:
-        for path in ("/static/app.js", "/static/style.css", "/static/js/review.js"):
+        for path in ("/rooms", "/assets/index.js", "/media-auth.js"):
             assert client.get(path).status_code == 404
 
 
