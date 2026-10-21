@@ -24,8 +24,8 @@ from typing import Any
 
 from blc_portable.project_license import PROJECT_LICENSE_ID, project_license_sha256
 
-SOURCE_COMMIT_SHORT = "5fee1d4"
-SOURCE_COMMIT_FULL = "5fee1d4f83613745957f0c043784f452f4321ddf"
+SOURCE_COMMIT_SHORT = "9e68a0d"
+SOURCE_COMMIT_FULL = "9e68a0da5c35c08ef947ad9f2482b5b3694d3de0"
 RELEASE_VERSION = "0.1.19.3-alpha"
 MANIFEST_FORMAT_VERSION = 7
 _MANIFEST_FIELDS = {
