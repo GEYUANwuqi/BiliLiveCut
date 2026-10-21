@@ -5,6 +5,22 @@ export default defineConfig({
   timeout: 60000,
   use: {
     baseURL: "http://127.0.0.1:5199",
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: "http://127.0.0.1:5199",
+          localStorage: [
+            {
+              name: "blc:onboarding:v1:local:%E6%9C%AC%E6%9C%BA%E7%AE%A1%E7%90%86%E5%91%98",
+              value: "done",
+            },
+            { name: "blc:onboarding:v1:basic:admin", value: "done" },
+            { name: "blc:onboarding:v1:session:admin", value: "done" },
+          ],
+        },
+      ],
+    },
     trace: "retain-on-failure",
     launchOptions: { executablePath: process.env.BLC_CHROMIUM_PATH },
   },

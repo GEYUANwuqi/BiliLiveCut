@@ -7,6 +7,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { bootAuth, login, useAuth } from "@/api/auth";
+import { useQueryClient } from "@tanstack/react-query";
+import { clearDrafts } from "@/lib/drafts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -108,10 +110,21 @@ function LoginForm() {
 
 export function SessionBoundary({ children }: { children: ReactNode }) {
   const auth = useAuth();
+  const cache = useQueryClient();
   const [entered, setEntered] = useState(false);
   useEffect(() => {
     void bootAuth();
   }, []);
+  useEffect(() => {
+    const identity = (event: Event) => {
+      if ((event as CustomEvent<{ clear: boolean }>).detail.clear) {
+        cache.clear();
+        clearDrafts();
+      }
+    };
+    window.addEventListener("blc:identity", identity);
+    return () => window.removeEventListener("blc:identity", identity);
+  }, [cache]);
   useEffect(() => {
     if (auth.authenticated) setEntered(true);
     else document.querySelectorAll("video").forEach((video) => video.pause());

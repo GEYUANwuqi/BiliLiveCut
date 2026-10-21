@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionBoundary } from "@/components/session";
+import { OnboardingProvider } from "@/components/onboarding";
 import { Shell } from "@/components/shell";
 import { useAuth } from "@/api/auth";
 import { Empty } from "@/components/workbench";
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const Overview = lazy(() => import("./pages/overview")),
   Rooms = lazy(() => import("./pages/rooms")),
   Imports = lazy(() => import("./pages/imports")),
+  Notifications = lazy(() => import("./pages/notifications")),
   Configuration = lazy(() => import("./pages/configuration"));
 const library = (
   key:
@@ -137,6 +139,7 @@ const pages: [string, ReactNode][] = [
   ["/monitor", <Monitor key="/monitor" />],
   ["/logs", <Logs key="/logs" />],
   ["/settings", <Settings key="/settings" />],
+  ["/settings/notifications", <Notifications key="/settings/notifications" />],
   ["/settings/configuration", <Configuration key="/settings/configuration" />],
   ["/settings/automation", <Automation key="/settings/automation" />],
   ["/settings/llm", <Llm key="/settings/llm" />],
@@ -150,7 +153,9 @@ const router = createBrowserRouter([
   {
     element: (
       <SessionBoundary>
-        <Shell />
+        <OnboardingProvider>
+          <Shell />
+        </OnboardingProvider>
       </SessionBoundary>
     ),
     errorElement: <RouteError />,

@@ -81,7 +81,8 @@ export function SessionsPage() {
                         )}
                       </h2>
                       <p className="text-xs text-muted-foreground">
-                        {time(entry.started_at)} · {duration(entry.duration_s)}
+                        {time(entry.started_at, "GMT+8")} · 时长{" "}
+                        {duration(entry.duration_s)}
                       </p>
                       <div className="flex gap-2">
                         <Badge variant="secondary">
@@ -128,7 +129,8 @@ export function SessionsPage() {
                       )}
                     </h2>
                     <p className="mt-2 text-xs text-muted-foreground">
-                      {time(info.started_at)} · {duration(info.duration_s)}
+                      {time(info.started_at, "GMT+8")} · 时长{" "}
+                      {duration(info.duration_s)}
                     </p>
                   </div>
                   <Status value={info.processing_state || info.status} />

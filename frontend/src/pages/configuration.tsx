@@ -32,6 +32,7 @@ import {
 import { useDraft } from "@/lib/drafts";
 import { obj, rows, text } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { settingsTopic } from "@/features/settings-catalog";
 
 export const settingGroups: Record<string, string> = {
   recording: "录制与自动化",
@@ -43,7 +44,7 @@ export const settingGroups: Record<string, string> = {
   output: "成片与编码",
   storage: "存储与清理",
   publishing: "上传与发布",
-  notifications: "通知",
+  notifications: "提醒与通知",
   system: "账号与系统",
 };
 const common = new Set(
@@ -66,9 +67,16 @@ export default function ConfigurationPage() {
   const query = useApi("/api/settings/configuration", false);
   const cache = useQueryClient();
   const draft = useDraft<Row>("configuration", {});
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [advanced, setAdvanced] = useState(!!params.get("q"));
-  const [group, setGroup] = useState("all");
+  const group = params.get("group") || "all";
+  function setGroup(value: string) {
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("group", value);
+      return next;
+    });
+  }
   const previousGroup = useRef(group);
   const [search, setSearch] = useState(params.get("q") || "");
   const [saving, setSaving] = useState(false);
@@ -81,12 +89,32 @@ export default function ConfigurationPage() {
   );
   const visible = eligible.filter(
     (field) =>
-      (group === "all" || field.group === group) &&
+      (group === "all" || !!search.trim() || field.group === group) &&
       [field.label, field.key, field.env, field.description]
         .join(" ")
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
+  const sections = Array.from(
+    new Set(
+      visible.map(
+        (field) =>
+          `${field.group}:${settingsTopic(String(field.key), String(field.group))}`,
+      ),
+    ),
+  ).map((id) => {
+    const [category, topic] = id.split(":");
+    return {
+      id,
+      category,
+      topic,
+      fields: visible.filter(
+        (field) =>
+          field.group === category &&
+          settingsTopic(String(field.key), category) === topic,
+      ),
+    };
+  });
   useLayoutEffect(() => {
     if (previousGroup.current === group) return;
     previousGroup.current = group;
@@ -168,6 +196,7 @@ export default function ConfigurationPage() {
           ["/settings/automation", "房间自动化与端口"],
           ["/settings/llm", "大模型服务商"],
           ["/settings/login", "账号登录"],
+          ["/settings/notifications", "提醒与通知"],
           ["/settings/plugins", "插件"],
           ["/settings/subtitles", "字幕模板"],
           ["/settings/intros", "片头片尾"],
@@ -292,143 +321,166 @@ export default function ConfigurationPage() {
                 )}
               </div>
             )}
-            <fieldset disabled={saving} className="space-y-4">
-              {visible.map((field) => {
-                const key = String(field.key);
-                const entry = changes[key];
-                const value =
-                  entry?.action === "value" ? entry.value : field.value;
-                const spec = fieldSpec(
-                  key,
-                  { ...field, title: field.label },
-                  field.type === "integer" || field.type === "number",
-                );
-                spec.label = text(field.label);
-                spec.description = undefined;
-                if (field.secret) {
-                  spec.type = "password";
-                  spec.placeholder = field.configured
-                    ? "已设置；留空保持原值"
-                    : "未设置";
-                }
-                return (
-                  <Card
-                    key={key}
-                    className={cn(
-                      "gap-0 border-border/80 py-0 shadow-none",
-                      entry && "border-primary/40",
-                    )}
-                  >
-                    <CardContent className="space-y-3 p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                            {text(field.label)}
-                            {Boolean(field.secret) && (
-                              <Badge variant="outline" className="text-[10px]">
-                                凭据
-                              </Badge>
-                            )}
-                            {entry && (
-                              <span className="text-[10px] text-primary">
-                                {entry.action === "reset"
-                                  ? "将恢复默认"
-                                  : entry.action === "clear"
-                                    ? "将清空"
-                                    : "未保存"}
-                              </span>
-                            )}
-                          </h3>
-                          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                            {text(field.env || field.key)}
-                          </p>
-                        </div>
-                        <Badge
-                          variant="secondary"
-                          className="text-[10px] font-normal"
-                        >
-                          {effects[String(field.effect)] || text(field.effect)}
-                        </Badge>
-                      </div>
-                      <p className="text-xs leading-6 text-muted-foreground">
-                        {text(field.description, "")}
+            <fieldset disabled={saving} className="space-y-8">
+              {sections.map((section) => (
+                <section key={section.id} className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                    <div>
+                      <p className="text-xs text-primary">
+                        {settingGroups[section.category] || section.category}
                       </p>
-                      {field.editable === false ? (
-                        <div className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">
-                          {text(field.reason, "仅可通过部署配置修改")} ·
-                          当前值：
-                          {field.secret
-                            ? field.configured
-                              ? "已设置"
-                              : "未设置"
-                            : text(field.value)}
-                        </div>
-                      ) : field.schema ? (
-                        <SchemaFields
-                          schema={obj(field.schema)}
-                          value={value}
-                          onChange={(next) =>
-                            change(key, { action: "value", value: next })
-                          }
-                        />
-                      ) : (
-                        <FormField
-                          field={spec}
-                          value={
-                            field.secret
-                              ? entry?.action === "value"
-                                ? entry.value
-                                : ""
-                              : value
-                          }
-                          onChange={(next) =>
-                            change(key, { action: "value", value: next })
-                          }
-                          disabled={saving}
-                        />
-                      )}
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-[10px] text-muted-foreground">
-                        <span>
-                          当前来源：
-                          {field.source === "web"
-                            ? "网页配置"
-                            : field.source === "environment"
-                              ? "部署环境"
-                              : "项目默认"}
-                          {field.overridden ? " · 已覆盖部署值" : ""}
-                        </span>
-                        {field.editable !== false && (
-                          <div className="flex gap-1">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-[10px]"
-                              onClick={() => change(key, { action: "reset" })}
-                            >
-                              <RotateCcw className="size-2.5" />
-                              恢复部署默认
-                            </Button>
-                            {Boolean(field.secret) && (
-                              <ConfirmButton
-                                title="明确清空凭据？"
-                                description="清空后会阻止回退到部署环境中的凭据，对应功能可能停止工作。"
-                                confirm="将凭据标记为清空"
-                                onConfirm={async () =>
-                                  change(key, { action: "clear" })
-                                }
-                                destructive
+                      <h2 className="mt-1 font-semibold">{section.topic}</h2>
+                    </div>
+                    <Badge variant="secondary">
+                      {section.fields.length} 项
+                    </Badge>
+                  </div>
+                  <div className="space-y-4">
+                    {section.fields.map((field) => {
+                      const key = String(field.key);
+                      const entry = changes[key];
+                      const value =
+                        entry?.action === "value" ? entry.value : field.value;
+                      const spec = fieldSpec(
+                        key,
+                        { ...field, title: field.label },
+                        field.type === "integer" || field.type === "number",
+                      );
+                      spec.label = text(field.label);
+                      spec.description = undefined;
+                      if (field.secret) {
+                        spec.type = "password";
+                        spec.placeholder = field.configured
+                          ? "已设置；留空保持原值"
+                          : "未设置";
+                      }
+                      return (
+                        <Card
+                          key={key}
+                          className={cn(
+                            "gap-0 border-border/80 py-0 shadow-none",
+                            entry && "border-primary/40",
+                          )}
+                        >
+                          <CardContent className="space-y-3 p-5">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                                  {text(field.label)}
+                                  {Boolean(field.secret) && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px]"
+                                    >
+                                      凭据
+                                    </Badge>
+                                  )}
+                                  {entry && (
+                                    <span className="text-[10px] text-primary">
+                                      {entry.action === "reset"
+                                        ? "将恢复默认"
+                                        : entry.action === "clear"
+                                          ? "将清空"
+                                          : "未保存"}
+                                    </span>
+                                  )}
+                                </h3>
+                                <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                                  {text(field.env || field.key)}
+                                </p>
+                              </div>
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] font-normal"
                               >
-                                清空凭据
-                              </ConfirmButton>
+                                {effects[String(field.effect)] ||
+                                  text(field.effect)}
+                              </Badge>
+                            </div>
+                            <p className="text-xs leading-6 text-muted-foreground">
+                              {text(field.description, "")}
+                            </p>
+                            {field.editable === false ? (
+                              <div className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+                                {text(field.reason, "仅可通过部署配置修改")} ·
+                                当前值：
+                                {field.secret
+                                  ? field.configured
+                                    ? "已设置"
+                                    : "未设置"
+                                  : text(field.value)}
+                              </div>
+                            ) : field.schema ? (
+                              <SchemaFields
+                                schema={obj(field.schema)}
+                                value={value}
+                                onChange={(next) =>
+                                  change(key, { action: "value", value: next })
+                                }
+                              />
+                            ) : (
+                              <FormField
+                                field={spec}
+                                value={
+                                  field.secret
+                                    ? entry?.action === "value"
+                                      ? entry.value
+                                      : ""
+                                    : value
+                                }
+                                onChange={(next) =>
+                                  change(key, { action: "value", value: next })
+                                }
+                                disabled={saving}
+                              />
                             )}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-[10px] text-muted-foreground">
+                              <span>
+                                当前来源：
+                                {field.source === "web"
+                                  ? "网页配置"
+                                  : field.source === "environment"
+                                    ? "部署环境"
+                                    : "项目默认"}
+                                {field.overridden ? " · 已覆盖部署值" : ""}
+                              </span>
+                              {field.editable !== false && (
+                                <div className="flex gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 text-[10px]"
+                                    onClick={() =>
+                                      change(key, { action: "reset" })
+                                    }
+                                  >
+                                    <RotateCcw className="size-2.5" />
+                                    恢复部署默认
+                                  </Button>
+                                  {Boolean(field.secret) && (
+                                    <ConfirmButton
+                                      title="明确清空凭据？"
+                                      description="清空后会阻止回退到部署环境中的凭据，对应功能可能停止工作。"
+                                      confirm="将凭据标记为清空"
+                                      onConfirm={async () =>
+                                        change(key, { action: "clear" })
+                                      }
+                                      destructive
+                                    >
+                                      清空凭据
+                                    </ConfirmButton>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </fieldset>
             {!visible.length && (
               <div className="rounded-xl border border-dashed p-12 text-center text-sm text-muted-foreground">
