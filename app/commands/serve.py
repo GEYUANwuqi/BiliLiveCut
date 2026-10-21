@@ -21,7 +21,7 @@ console = Console()
 
 
 def _wait_parent_pipe() -> None:
-    """只读取原始管道，避免阻塞读取长期占有 Windows CRT 的 stdin 锁。"""
+    """等待父进程退出，避免同步管道读取阻塞 Windows 原生库初始化。"""
     import sys
 
     descriptor = sys.stdin.fileno()
@@ -30,16 +30,24 @@ def _wait_parent_pipe() -> None:
         return
     import ctypes
     import msvcrt
+    import time
     from ctypes import wintypes
 
-    read = ctypes.WinDLL("kernel32", use_last_error=True).ReadFile
-    read.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
-    read.restype = wintypes.BOOL
-    buffer, count = ctypes.create_string_buffer(1), wintypes.DWORD()
-    if not read(msvcrt.get_osfhandle(descriptor), buffer, 1, ctypes.byref(count), None):
-        error = ctypes.get_last_error()
-        if error != 109:  # ERROR_BROKEN_PIPE：父进程已关闭写端。
+    peek = ctypes.WinDLL("kernel32", use_last_error=True).PeekNamedPipe
+    pointer = ctypes.POINTER(wintypes.DWORD)
+    peek.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, pointer, pointer, pointer]
+    peek.restype = wintypes.BOOL
+    handle, available = msvcrt.get_osfhandle(descriptor), wintypes.DWORD()
+    # 数值库 DLL 初始化也会探测 stdin；不能用挂起的 ReadFile 占住同步管道。
+    while True:
+        if not peek(handle, None, 0, None, ctypes.byref(available), None):
+            error = ctypes.get_last_error()
+            if error == 109:  # ERROR_BROKEN_PIPE：父进程已关闭写端。
+                return
             raise ctypes.WinError(error)
+        if available.value:
+            return
+        time.sleep(0.1)
 
 
 def _serve_with_parent_pipe(uvicorn, **options: object) -> None:

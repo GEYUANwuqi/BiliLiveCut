@@ -54,7 +54,16 @@ def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(tmp_path: Pa
     opener = build_opener(ProxyHandler({}))
     with (tmp_path / "backend.log").open("w+", encoding="utf-8") as log:
         process = subprocess.Popen(
-            [sys.executable, "-m", "app.cli", "backend", "--port", str(port)],
+            [
+                sys.executable,
+                "-c",
+                "import faulthandler, runpy; "
+                "faulthandler.dump_traceback_later(20, repeat=True); "
+                "runpy.run_module('app.cli', run_name='__main__', alter_sys=True)",
+                "backend",
+                "--port",
+                str(port),
+            ],
             cwd=tmp_path,
             env=env,
             stdin=subprocess.PIPE,
