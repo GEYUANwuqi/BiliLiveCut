@@ -164,7 +164,7 @@ def test_active_collectors_refresh_only_their_room_and_archive_every_message(
     with get_session() as db:
         rows = db.exec(select(Danmaku).where(Danmaku.session_id == session_id)).all()
         assert [row.msg_type for row in rows] == ["danmaku", "gift", "superchat", "interact"]
-    raw = [json.loads(line) for line in archive_path(session_id).read_text().splitlines()]
+    raw = [json.loads(line) for line in archive_path(session_id).read_text(encoding="utf-8").splitlines()]
     assert [record["payload"] for record in raw if record["kind"] == "raw"] == messages * 3 + control
     assert session_sampling_policy(other_session_id).gift_rate == 0.8
 

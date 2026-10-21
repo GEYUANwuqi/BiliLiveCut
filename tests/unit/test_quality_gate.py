@@ -80,7 +80,9 @@ def test_local_gate_rejects_real_pytest_skip(tmp_path: Path, monkeypatch: pytest
     (tmp_path / "tests/test_skipped.py").write_text(
         "import pytest\ndef test_missing_dependency():\n    pytest.skip('missing dependency')\n", encoding="utf-8"
     )
-    (tmp_path / "conftest.py").write_text((ci_gate.REPO_ROOT / "conftest.py").read_text(), encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(
+        (ci_gate.REPO_ROOT / "conftest.py").read_text(encoding="utf-8"), encoding="utf-8"
+    )
     monkeypatch.setattr(ci_gate, "REPO_ROOT", tmp_path)
     assert ci_gate._pytest("tests/") is False
 

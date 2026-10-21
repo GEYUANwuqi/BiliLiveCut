@@ -33,6 +33,41 @@ class Assets(HTMLParser):
             self.paths.add(path)
 
 
+def _stop_console(process: subprocess.Popen, descendants: list[psutil.Process]) -> None:
+    """保留监督器执行正常关闭；断言失败也须回收本次验收创建的进程。"""
+    owned = {child.pid: child for child in descendants}
+    try:
+        if process.poll() is None:
+            children = psutil.Process(process.pid).children(recursive=True)
+            owned.update((child.pid, child) for child in children)
+            if os.name == "nt":
+                # blc.exe 和 venv Python 可能还有包装层，终止最内层前端才能让监督器收尾。
+                frontends = []
+                for child in children:
+                    try:
+                        if child.cmdline()[1:4] == ["-m", "app.cli", "frontend"]:
+                            frontends.append(child)
+                    except psutil.NoSuchProcess:
+                        continue
+                assert frontends, "未找到 wheel 启动器监管的前端进程"
+                frontends[-1].terminate()
+            else:
+                process.send_signal(signal.SIGTERM)
+            process.wait(timeout=35)
+        _, alive = psutil.wait_procs(list(owned.values()), timeout=5)
+        assert not alive, f"wheel 启动器遗留子进程: {alive}"
+    finally:
+        for child in reversed(list(owned.values())):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        psutil.wait_procs(list(owned.values()), timeout=5)
+
+
 def main() -> None:
     """从临时运行目录启动真实 blc start，校验页面、资源、代理与正常退出。"""
     import app
@@ -108,27 +143,10 @@ def main() -> None:
                 with opener.open(f"http://127.0.0.1:{port}/api/dashboard", timeout=5) as response:
                     assert json.load(response)["rooms"] == []
             finally:
-                if process.poll() is None:
-                    if os.name == "nt":
-                        children = psutil.Process(process.pid).children()
-                        if children:
-                            children[-1].terminate()
-                    else:
-                        process.send_signal(signal.SIGTERM)
-                    try:
-                        process.wait(timeout=35)
-                    except subprocess.TimeoutExpired:
-                        for child in psutil.Process(process.pid).children(recursive=True):
-                            try:
-                                child.kill()
-                            except psutil.NoSuchProcess:
-                                pass
-                        process.kill()
-                        process.wait(timeout=5)
-                        raise
-                _, alive = psutil.wait_procs(descendants, timeout=5)
-                assert not alive, f"wheel 启动器遗留子进程: {alive}"
+                _stop_console(process, descendants)
             assert process.returncode == 0 or os.name == "nt", process.returncode
+            log.seek(0)
+            assert "Web 服务资源已关闭" in log.read(), "wheel 后端没有执行正常生命周期清理"
     print(f"wheel frontend smoke OK: {len(assets.paths)} entry assets, SPA, API proxy, no Node.js at runtime")
 
 
