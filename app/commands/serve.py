@@ -20,9 +20,30 @@ from config.launcher_settings import (
 console = Console()
 
 
+def _wait_parent_pipe() -> None:
+    """只读取原始管道，避免阻塞读取长期占有 Windows CRT 的 stdin 锁。"""
+    import sys
+
+    descriptor = sys.stdin.fileno()
+    if os.name != "nt":
+        os.read(descriptor, 1)
+        return
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    read = ctypes.WinDLL("kernel32", use_last_error=True).ReadFile
+    read.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    read.restype = wintypes.BOOL
+    buffer, count = ctypes.create_string_buffer(1), wintypes.DWORD()
+    if not read(msvcrt.get_osfhandle(descriptor), buffer, 1, ctypes.byref(count), None):
+        error = ctypes.get_last_error()
+        if error != 109:  # ERROR_BROKEN_PIPE：父进程已关闭写端。
+            raise ctypes.WinError(error)
+
+
 def _serve_with_parent_pipe(uvicorn, **options: object) -> None:
     """受监管后端通过父进程管道正常退出，兼容没有控制台的 Windows 服务。"""
-    import sys
     import threading
 
     stop_requested = threading.Event()
@@ -36,7 +57,7 @@ def _serve_with_parent_pipe(uvicorn, **options: object) -> None:
 
     def watch_parent() -> None:
         try:
-            sys.stdin.read(1)
+            _wait_parent_pipe()
         except (OSError, ValueError):
             pass
         stop_requested.set()
