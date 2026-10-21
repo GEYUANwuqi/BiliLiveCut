@@ -88,6 +88,22 @@ async def aclose(self) -> None: ...
 同步 SDK 应使用 `asyncio.to_thread` 或受控执行器，同时设置 SDK 自身 I/O 超时；线程取消不会中止底层阻塞调用。
 插件内部不得自行启动无限重试或第二套录制、调度流程。
 
+## 可选开下播事件
+
+来源可额外实现 `LiveEventSource`，宿主自动识别，基础来源契约版本仍为 `1`。未实现的来源继续使用独立的平台状态查询任务。
+
+```python
+from app.plugins.live_source import SourceRoom, LiveStateSink, DanmakuStateSink
+
+async def collect_live_events(
+    self, room: SourceRoom, emit: LiveStateSink, state: DanmakuStateSink
+) -> None: ...
+```
+
+`emit` 接收经过校验的 `RoomSnapshot`，只报告平台明确的 LIVE、OFFLINE 或 UNKNOWN 状态。连接建立后向 `state` 报告 `DanmakuStatus.AVAILABLE`，断线或重连时报告 CONNECTING、FAILED；连接状态复用同一状态枚举，但不是录制期间的弹幕采集证据。
+
+宿主在每次连通后通过既有请求预算补查一次房间状态，并忽略被新推送超越的迟到快照。明确下播通知触发延迟复核，不能把连接关闭转换成 OFFLINE。订阅属于宿主长任务租约，取消后方法须关闭连接；停用来源会先排空监听，再关闭来源对象。事件监听与 `collect_danmaku` 独立，不能因为用户关闭弹幕保存而丢失开下播通知，也不能自行创建录制会话或写入弹幕数据库。
+
 ## 可选弹幕契约
 
 完整可选签名和回调类型如下，来源对象实现该方法后宿主自动识别能力：
@@ -136,10 +152,10 @@ Web 的添加直播间表单列出已启用来源，可以自动按域名识别�
 CLI 同样初始化已启用插件、调用来源、等待清理后退出：
 
 ```text
-python -m app.cli add-room https://live.bilibili.com/123 --authorize
-python -m app.cli add-room ROOM_STRING --platform myplatform --authorize
-python -m app.cli check ROOM_STRING --platform myplatform
-python -m app.cli list-rooms
+blc add-room https://live.bilibili.com/123 --authorize
+blc add-room ROOM_STRING --platform myplatform --authorize
+blc check ROOM_STRING --platform myplatform
+blc list-rooms
 ```
 
 `check` 只显示状态、传输/容器/编码/清晰度，不输出播放地址或请求头。
@@ -178,11 +194,11 @@ python -m pytest tests/integration/test_source_rooms.py tests/integration/test_w
 ## 统一录制、监控与场次证据
 
 手动录制、开播监控、预约和中断恢复均调用同一个来源注册器和 Recorder，
-不再要求 `LiveRoom.room_id` 是整数或非空。CLI 使用 `python -m app.cli record DB_ID --pipeline`；
+不再要求 `LiveRoom.room_id` 是整数或非空。CLI 使用 `blc record DB_ID --pipeline`；
 来源插件的初始化、录制和关闭在同一事件循环完成，取消也会进入片段和连接收尾。
 开录前与录制中按既有设置刷新标题；场次标题快照、观测变化和结束冻结沿用现有机制。
 未知状态及查询失败不会计入下播确认，也不会解除“等待下一次开播”；延迟停录会再次查询明确下播，
-并在房间控制锁内核对原录制任务，不能停止后来新开的场次。每个平台的监控任务独立轮询。
+并在房间控制锁内核对原录制任务，不能停止后来新开的场次。支持事件的来源使用房间订阅，其余来源按平台独立查询。
 
 Recorder 持有来源直到末片入库、弹幕关闭和结束回调完成。停用先阻止新请求，发停止信号，
 最多等待 30 秒，再强停 FFmpeg 等待 5 秒，必要时取消任务并再等待 5 秒；仍未收尾就拒绝卸载来源。

@@ -52,12 +52,14 @@ config:
 
 ## 源码快速启动
 
-在全新的项目目录中，准备 Python 3.12、FFmpeg 和编译工具。将 `.env.example` 复制为 `.env`，已存在时保留原文件，按需编辑后执行：
+在全新的项目目录中，准备 Python 3.12、Node.js 24、FFmpeg 和编译工具。将 `.env.example` 复制为 `.env`，已存在时保留原文件，按需编辑后执行：
 
 ```bash
 uv sync --locked --no-dev --extra web
 uv run --no-sync blc init
-uv run --no-sync blc serve
+npm --prefix frontend ci
+npm --prefix frontend run build
+uv run --no-sync blc start
 ```
 
 打开 `http://127.0.0.1:8000`，添加直播间或导入已有视频。完整安装步骤及 venv + pip 方式见[源码部署](guide/source.md)。

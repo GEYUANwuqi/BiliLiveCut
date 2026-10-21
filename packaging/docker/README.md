@@ -1,12 +1,48 @@
 # BiliLiveCut Docker 部署
 
-本目录提供 BiliLiveCut `v0.1.19.3-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；后端容器以 UID/GID 1000 的 `appuser` 运行单实例 API 服务，内含 FFmpeg、中文字体、C/Cython/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
+本目录提供 BiliLiveCut `v0.1.19.3-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；后端容器以 UID/GID 1000 的 `appuser` 运行单实例 API 服务，内含 FFmpeg、中文字体、C/Cython/C++/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
 
 ## 前后端服务
 
 Compose 同时构建后端 `app` 和前端 `frontend`。浏览器访问宿主机 `8000`，由 Nginx 提供 React 静态页面，并同源代理 API 和媒体到仅在容器网络暴露的 `app:8000`。前端镜像在构建阶段使用 Node.js 24，运行阶段只有 Nginx；后端保持 FastAPI，不返回业务页面。
 
 不要额外发布后端 8000 端口。`FORWARDED_ALLOW_IPS=*` 仅用于这个封闭的后端网络，让认证与限流取得前端传递的真实来源；后端单独对外发布时必须收紧可信代理配置。自配 HTTPS 入口时，应让后端接收到正确的 Host、Origin 与协议，保持认证 Cookie 和 CSRF 校验一致。
+
+## 构建成本与资源占用
+
+当前 Compose 会在本机构建完整的 CPU 后端和独立前端。后端需要编译 FFmpeg、PyAV 和原生扩展，并安装 PyTorch、FunASR、faster-whisper 等本地转写依赖；前端需要安装 npm 依赖并构建页面。首次部署需要持续联网，系统包、Python 包、Rust crates 和 npm 包的下载速度都会影响耗时。
+
+以下为本地验收得到的量级参考。实际耗时与占用取决于服务器配置、网络速度、缓存命中情况和工作负载，不作为最低配置或性能保证。
+
+| 项目 | 大致开销 |
+| --- | --- |
+| 首次完整构建 | 可按数十分钟量级安排等待；网络较慢或 CPU 较弱时可能更久，后端构建通常比前端更耗时 |
+| 使用缓存重建 | 复用未变化的构建层可以缩短等待；更新依赖后仍可能需要数分钟或更久 |
+| 镜像大小 | 后端约 3 GB、前端约百 MB，未包含 ASR 模型 |
+| 构建缓存 | 十余 GB 量级，多次构建和更新依赖后可能继续增长 |
+| 构建阶段资源 | 音视频库和原生扩展编译会产生较高 CPU 负载；本地验收观察到 GB 级内存占用 |
+| 双端空闲运行 | 容器内存合计约百 MB，CPU 负载较低；Docker 服务另占数百 MB 内存 |
+
+空闲占用来自没有录制任务、没有加载 ASR 模型的环境。功能验收包含转写依赖导入、音视频处理和网页登录，未测量实际模型推理的资源需求。真实录制、转写和渲染时，CPU、内存及磁盘需求会随并发房间数、模型、视频参数和保留时长变化，应按自己的工作量再测量。
+
+较大的依赖主要包括 PyTorch、本地转写引擎及其配套库、Playwright 内部驱动、FFmpeg 和中文字体。编译器、Rust 工具链等只留在构建阶段，生成的中间层和下载缓存仍会占用宿主磁盘。部署时应为镜像和构建缓存预留十余 GB 或更多空间，模型与录制数据另计；镜像与缓存存在共享层，各项逻辑大小不宜直接相加。
+
+### 查看占用与清理构建缓存
+
+在仓库根目录查看本次部署的运行占用和 Docker 磁盘统计：
+
+```bash
+docker compose -f packaging/docker/compose.yaml stats --no-stream
+docker system df
+```
+
+保留缓存可以复用未变化的构建层；依赖锁、构建文件或源代码变化仍可能使后续步骤重新执行。磁盘紧张时，可以交互式清理当前 builder 不再使用的构建缓存：
+
+```bash
+docker builder prune
+```
+
+该命令作用于当前 builder，可能同时清理其他项目的闲置构建缓存；不会清理应用的 `storage/`。清理后，下次构建可能需要重新下载依赖和编译。模型缓存与录制数据位于下文的持久化目录，应按业务需要单独管理。
 
 ## 首次启动
 
@@ -81,7 +117,7 @@ docker compose -f packaging/docker/compose.yaml run --rm --user root --cap-add C
   --entrypoint chown app -R 1000:1000 /data
 ```
 
-Web 服务在容器内监听 `0.0.0.0:8000`，Compose 将宿主 8000 端口映射到它。只需要本机或 SSH 隧道访问时，可将端口映射改为 `127.0.0.1:8000:8000`。
+前端容器监听 `8080`，Compose 将宿主 `8000` 映射到前端。FastAPI 在后端容器监听 `8000`，只通过 Docker 内网供前端访问。只需要本机或 SSH 隧道访问时，将前端端口映射改为 `127.0.0.1:8000:8080`。
 
 ## 启动、查看和停止
 
@@ -123,7 +159,7 @@ Web、录制及 Bilibili 扫码登录不需要桌面。在“账号登录”页�
 
 ## 构建和依赖更新
 
-构建阶段通过固定 uv 版本，以 `uv.lock` 安装运行 extras，复制完整 setuptools 数据文件和 C/Cython/Rust 构建源，并进行非 editable 安装。运行阶段只复制环境，不携带编译器、uv 或仓库源码。Rust 仅在构建阶段安装工具链，以 `cargo build --release --locked` 校验现有 Cargo.lock，最终镜像只复制编译后的扩展，随包许可证位于 `/usr/share/doc/bili-live-cut-rust/THIRD_PARTY_NOTICES.md`。传统 pip 源码安装流程不变。
+构建阶段通过固定 uv 版本，以 `uv.lock` 安装运行 extras，复制完整 setuptools 数据文件和 C/Cython/Rust 构建源，并使用构建阶段的 Node.js 24 在非 editable 安装时生成随包前端资源。运行阶段只复制环境，不携带 Node.js、编译器、uv 或仓库源码；对外页面仍由独立前端容器提供。Rust 仅在构建阶段安装工具链，以 `cargo build --release --locked` 校验现有 Cargo.lock，最终镜像只复制编译后的扩展，随包许可证位于 `/usr/share/doc/bili-live-cut-rust/THIRD_PARTY_NOTICES.md`。传统 pip 源码安装流程不变。
 
 基础系统使用 Debian 13（Trixie）的 Python 3.12 镜像。构建阶段的系统 pip 通过 `requirements-system.lock` 固定版本和哈希；运行阶段移除 pip 及 ensurepip 自带的旧引导 wheel，应用虚拟环境不受影响。容器依赖通过修改锁文件并重建镜像更新，不支持在运行容器内临时执行 pip 或 apt 安装。账号创建完成后，精确移除 apt、libapt-pkg7.0、sqv、mount、passwd、adduser、libsemanage2、libsemanage-common、libsepol2；不自动移除依赖，不强制删除 Debian 必需或受保护包。保留 dpkg 清单供漏洞扫描，也保留证书、时区、现有 UID/GID 1000 账号及媒体和 Python 运行库。容器挂载由宿主 Docker 管理，无需镜像内 mount 命令；后台密码由应用认证库管理，不依赖系统 passwd。派生镜像如需另建系统账号或安装系统包，应在运行镜像裁剪前的构建阶段完成。验收分别检查应用与系统 Python，要求安装工具已移除；系统环境若出现额外第三方包，仍必须逐个审计。
 
