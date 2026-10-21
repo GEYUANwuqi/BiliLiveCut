@@ -68,7 +68,6 @@
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
-            "max_size": 1048576,
             "title": "File",
             "type": "string"
           }
