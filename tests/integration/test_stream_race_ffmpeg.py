@@ -205,3 +205,111 @@ async def test_real_ffmpeg_keeps_winning_http_connection_and_writes_playable_seg
         check=True,
     )
     assert "mpeg2video" in probe.stdout
+
+
+@pytest.mark.parametrize("parallel", [1, 2], ids=["serial", "race"])
+async def test_shutdown_flushes_final_segment_without_reconnecting(
+    temp_db: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parallel: int
+) -> None:
+    from sqlmodel import select
+
+    from app.db.entities import LiveRoom, RawSegment
+    from app.db.session import get_session
+    from app.pipeline import storage_lifecycle
+    from app.pipeline.lifecycle import shutdown_event
+    from app.recording import recorder as module
+
+    binary = shutil.which(settings.ffmpeg_path)
+    assert binary is not None
+    with get_session() as db:
+        room = LiveRoom(input_url="https://example.invalid/1", room_id=1, authorized=True)
+        db.add(room)
+        db.flush()
+        room_id = room.id
+    recorder = Recorder(
+        SourceRoom(platform="external", source_id="1", canonical_url="https://example.invalid/1"), room_id
+    )
+    recorder._session_id = recorder._create_session()
+    fetches = []
+    processes = []
+    spawn = asyncio.create_subprocess_exec
+
+    async def capture_spawn(*args, **kwargs):
+        process = await spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    async def no_danmaku():
+        pass
+
+    async def fetch():
+        fetches.append(1)
+        recorder._stream_candidates = [
+            StreamSpec(url=f"https://example.invalid/{i}", transport="hls", container="ts") for i in range(parallel)
+        ]
+        return recorder._stream_candidates[0]
+
+    def command(stream, out_dir, prefix, segment_list):
+        return [
+            binary,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=160x90:rate=10",
+            "-c:v",
+            "mpeg2video",
+            "-g",
+            "10",
+            "-f",
+            "segment",
+            "-segment_time",
+            "60",
+            "-reset_timestamps",
+            "1",
+            "-segment_list",
+            str(segment_list),
+            "-segment_list_type",
+            "csv",
+            str(out_dir / f"{prefix}%05d.ts"),
+        ]
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", capture_spawn)
+    monkeypatch.setattr(module, "session_raw_dir", lambda _: tmp_path)
+    monkeypatch.setattr(storage_lifecycle, "should_stop_recording", lambda: False)
+    monkeypatch.setattr(settings, "recording_stream_race_parallel", parallel)
+    monkeypatch.setattr(recorder, "_start_danmaku", no_danmaku)
+    monkeypatch.setattr(recorder, "_fetch_stream", fetch)
+    monkeypatch.setattr(recorder, "_build_ffmpeg_cmd", command)
+    recording = asyncio.create_task(recorder._run_session())
+    try:
+        async with asyncio.timeout(15):
+            while recorder._active_process is None:
+                assert not recording.done(), "录制在关闭前意外退出"
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(2)
+            # 模拟 lifespan 已发出关闭信号、但监控器仍在异步退出的窗口。
+            shutdown_event.set()
+            await recording
+        with get_session() as db:
+            segments = db.exec(select(RawSegment).where(RawSegment.session_id == recorder.session_id)).all()
+        assert len(segments) == 1
+        assert 0 < segments[0].duration_s < 60 and segments[0].size_bytes > 0
+        assert Path(segments[0].file_path).is_file()
+        assert fetches == [1] and not recorder._last_exit_abnormal
+        assert all(process.returncode is not None for process in processes)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", segments[0].file_path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        assert "video" in probe.stdout
+    finally:
+        recorder.stop()
+        if not recording.done():
+            await asyncio.wait_for(recording, 12)

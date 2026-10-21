@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import math
+import os
 import random
 import re
 import time
@@ -166,8 +167,16 @@ class Recorder:
 
     def stop(self) -> None:
         """请求停止录制(优雅退出当前循环)。"""
-        self._update_session(status=SessionStatus.STOPPING)
         self._stop.set()
+        self._update_session(status=SessionStatus.STOPPING)
+
+    def _stopping(self) -> bool:
+        """应用关闭与房间停止共用停止闸门，关闭期间不能重新取流。"""
+        from app.pipeline.lifecycle import shutdown_event
+
+        if shutdown_event.is_set():
+            self._stop.set()
+        return self._stop.is_set()
 
     def force_stop(self) -> None:
         """立即终止当前 FFmpeg,随后仍由主循环执行数据库和回调收尾。"""
@@ -230,7 +239,7 @@ class Recorder:
 
         if not self._metadata_prepared:
             await refresh_room_metadata(self.db_room_id)
-        if self._stop.is_set():
+        if self._stopping():
             return
         self._session_id = self._create_session()
         begin_session_metadata(self._session_id)
@@ -275,9 +284,9 @@ class Recorder:
 
         from app.recording.metadata import refresh_room_metadata
 
-        while not self._stop.is_set():
+        while not self._stopping():
             await self._sleep_or_stop(settings.room_metadata_refresh_interval_s)
-            if not self._stop.is_set():
+            if not self._stopping():
                 try:
                     await refresh_room_metadata(self.db_room_id)
                 except SQLAlchemyError:
@@ -303,7 +312,7 @@ class Recorder:
         # 会话期间并行采集弹幕(用于弹幕热度与高光评分的弹幕维度)。
         await self._start_danmaku()
 
-        while not self._stop.is_set():
+        while not self._stopping():
             # V0.1.13: Disk protection — safely stop recording if disk critical
             from app.pipeline.storage_lifecycle import should_stop_recording
 
@@ -317,8 +326,10 @@ class Recorder:
             if self._retry_exhausted(reconnect_budget):
                 break
 
+            if self._stopping():
+                break
             stream = await self._fetch_stream()
-            if self._stop.is_set():
+            if self._stopping():
                 break
             if stream is None:
                 # 未开播、已下播或暂时无法取流：计入连续失败预算。
@@ -363,7 +374,7 @@ class Recorder:
             )
             exit_code = await self._record_once(stream, out_dir)
             stream = self._selected_stream or stream
-            if self._stop.is_set():
+            if self._stopping():
                 break
             self._last_exit_abnormal = exit_code != 0
             error_type = (
@@ -650,6 +661,11 @@ class Recorder:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                **(
+                    {"creationflags": 0x00000200}  # CREATE_NEW_PROCESS_GROUP
+                    if os.name == "nt"
+                    else {"start_new_session": True}
+                ),
             )
         except OSError as exc:
             category = {
@@ -707,7 +723,7 @@ class Recorder:
                     self._recording_error = "录制辅助任务失败 stage=disk"
                     raise
             attempt = await selection
-            if self._stop.is_set():
+            if self._stopping():
                 return -1
             if attempt is None:
                 resource_errno = next(
@@ -725,7 +741,7 @@ class Recorder:
                     )
                     disk_guard.cancel()
                     await asyncio.gather(disk_guard, return_exceptions=True)
-                    if self._stop.is_set():
+                    if self._stopping():
                         return -1
                     self._selected_stream = self._stream_candidates[0]
                     return await self._record_single(self._selected_stream, out_dir)
@@ -867,7 +883,7 @@ class Recorder:
         """在 FFmpeg 运行期间持续检查空间，通过现有停止信号优雅收尾。"""
         from app.pipeline.storage_lifecycle import should_stop_recording
 
-        while not self._stop.is_set():
+        while not self._stopping():
             if await asyncio.to_thread(should_stop_recording):
                 self._recording_action_required = True
                 self._recording_error = "磁盘空间不足，请清理存储后手动恢复录制"
@@ -1117,7 +1133,11 @@ class Recorder:
         :param proc: FFmpeg 子进程。
         """
         try:
-            await self._stop.wait()
+            while not self._stopping():
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=0.2)
+                except TimeoutError:
+                    pass
             if proc.returncode is None:
                 logger.info("收到停止信号,正在终止 FFmpeg ...")
                 if proc.stdin is not None:
@@ -1142,10 +1162,12 @@ class Recorder:
 
         :param seconds: 休眠时长(秒)。
         """
-        try:
-            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except TimeoutError:
-            pass
+        deadline = time.monotonic() + seconds
+        while not self._stopping() and (remaining := deadline - time.monotonic()) > 0:
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=min(remaining, 0.2))
+            except TimeoutError:
+                pass
 
     def _create_session(self) -> int:
         """创建一条录制会话记录并返回其 id。

@@ -307,6 +307,10 @@ class RecorderManager:
         :raises ValueError: 房间不存在或未授权时。
         :raises SourceUnavailable: 对应来源未注册或正在停用时。
         """
+        from app.pipeline.lifecycle import shutdown_event
+
+        if shutdown_event.is_set():
+            raise RuntimeError("服务正在关闭，不能启动录制")
         pipeline_enabled = settings_store.recording_pipeline_enabled() if pipeline is None else pipeline
         if self.is_running(db_id):
             logger.info("房间 {} 已在录制,忽略重复启动。", db_id)
@@ -325,6 +329,9 @@ class RecorderManager:
                 raise SourceUnavailable("来源不可用，请安装并启用对应直播源插件")
 
         await refresh_room_metadata(db_id)
+
+        if shutdown_event.is_set():
+            raise RuntimeError("服务正在关闭，不能启动录制")
 
         with get_session() as db:
             if db.get_bind().dialect.name == "sqlite":
@@ -555,10 +562,21 @@ class RecorderManager:
             "cancelled_tasks": cancelled_tasks,
         }
 
+    def request_stop_all(self) -> None:
+        """先通知所有房间停止，再等待任何一个房间收尾。"""
+        for db_id, recorder in list(self._recorders.items()):
+            try:
+                recorder.stop()
+            except Exception as exc:  # 单房间失败不能阻止其他房间收到停止请求。
+                logger.opt(exception=exc).error("请求停止录制失败 db_id={}", db_id)
+
     async def stop_all(self) -> None:
         """停止所有录制任务(应用关闭时调用)。"""
-        for db_id in list(self._tasks):
-            await self.stop(db_id)
+        self.request_stop_all()
+        results = await asyncio.gather(*(self.stop(db_id) for db_id in list(self._tasks)), return_exceptions=True)
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            raise ExceptionGroup("录制关闭期间发现异常", errors)
 
     def mark_highlight(
         self,

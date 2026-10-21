@@ -169,12 +169,23 @@ def cmd_console(
         api_port = probe.getsockname()[1]
     child_env = {**os.environ, "BLC_FRONTEND_PORT": str(actual_port)}
     processes: list[subprocess.Popen] = []
-    shutdown_signals = [signal.SIGTERM]
+    shutdown_signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
         shutdown_signals.append(signal.SIGBREAK)
     previous_signals = {number: signal.getsignal(number) for number in shutdown_signals}
+    closing = False
+    force_exit = False
+    process_options = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    )
 
     def terminate(_number, _frame):
+        nonlocal force_exit
+        if closing:
+            force_exit = True
+            return
+        if _number == signal.SIGINT:
+            raise KeyboardInterrupt
         raise SystemExit(0)
 
     for number in shutdown_signals:
@@ -184,6 +195,7 @@ def cmd_console(
             subprocess.Popen(
                 [sys.executable, "-m", "app.cli", "backend", "--host", "127.0.0.1", "--port", str(api_port)],
                 env=child_env,
+                **process_options,
             )
         )
         from urllib.error import URLError
@@ -218,7 +230,8 @@ def cmd_console(
                     host,
                     "--port",
                     str(actual_port),
-                ]
+                ],
+                **process_options,
             )
         )
         console.print(f"[green]工作台启动中[/green] -> http://{host}:{actual_port}")
@@ -230,17 +243,47 @@ def cmd_console(
     except KeyboardInterrupt:
         pass
     finally:
-        for number, previous in previous_signals.items():
-            signal.signal(number, previous)
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-        for process in processes:
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        closing = True
+        try:
+            console.print("[yellow]正在停止录制并释放后台资源，再次按 Ctrl+C 可强制退出。[/yellow]")
+            for process in processes:
+                if process.poll() is None:
+                    try:
+                        if os.name == "nt":
+                            process.send_signal(signal.CTRL_BREAK_EVENT)
+                        else:
+                            process.send_signal(signal.SIGINT)
+                    except ProcessLookupError:
+                        pass
+            # 各服务自行管理关闭期限，不能在 Worker 宽限期结束前强杀 API。
+            while any(process.poll() is None for process in processes):
+                if force_exit:
+                    import psutil
+
+                    console.print("[yellow]强制终止前后端及其子进程。[/yellow]")
+                    for process in processes:
+                        if process.poll() is not None:
+                            continue
+                        try:
+                            parent = psutil.Process(process.pid)
+                            descendants = parent.children(recursive=True)
+                        except psutil.NoSuchProcess:
+                            continue
+                        for owned in [*reversed(descendants), parent]:
+                            try:
+                                # 资源追踪器须在管道关闭后自行清理命名信号量。
+                                if any("multiprocessing.resource_tracker" in arg for arg in owned.cmdline()):
+                                    continue
+                                owned.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                    break
+                time.sleep(0.1)
+            for process in processes:
                 process.wait()
+        finally:
+            for number, previous in previous_signals.items():
+                signal.signal(number, previous)
 
 
 SERVE_COMMANDS = [

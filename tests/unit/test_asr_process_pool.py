@@ -34,6 +34,8 @@ def sdk_process(connection: Connection) -> None:
             request = json.loads(connection.recv_bytes())
         except EOFError:
             return
+        if request.get("operation") == "shutdown":
+            return
         context = request["context"]
         mode = context.get("mode", "success")
         pid_file = context.get("pid_file")
@@ -72,6 +74,32 @@ def request(**context: object) -> dict[str, object]:
 
 def no_cancel() -> None:
     pass
+
+
+def semaphore_process(connection: Connection) -> None:
+    """模拟模型库持有的命名信号量，正常退出必须执行 multiprocessing finalizer。"""
+    import multiprocessing
+
+    resource = multiprocessing.get_context("spawn").Semaphore()
+    resource.acquire()
+    sdk_process(connection)
+
+
+def test_idle_shutdown_releases_named_semaphore_without_resource_tracker_warning(tmp_path: Path) -> None:
+    script = """
+from app.analysis.transcription.process_pool import ASRProcessPool
+from tests.unit.test_asr_process_pool import semaphore_process, request, no_cancel
+pool = ASRProcessPool(semaphore_process)
+pool.execute(request(), timeout_s=15, check_cancelled=no_cancel)
+process = pool._slots[0].process
+pool.shutdown(0)
+assert process.exitcode == 0, process.exitcode
+print('SEMAPHORE_RELEASED')
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "SEMAPHORE_RELEASED" in result.stdout
+    assert "resource_tracker" not in result.stderr
 
 
 def sdk_never_reads(connection: Connection) -> None:
@@ -546,5 +574,7 @@ def test_real_child_returns_silence_with_cpu_vad_without_model_download(
         assert result.result_type == "no_speech"
         assert result.metadata["audio_evidence"]["duration_s"] == 8.336
         assert result.metadata["audio_evidence"]["sample_count"] == 133376
+        process = pool._slots[0].process
     finally:
         pool.shutdown(0)
+    assert process.exitcode == 0

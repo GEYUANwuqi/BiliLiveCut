@@ -175,6 +175,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         finally:
             # 先通知计算及媒体调用，再串行停止生产者、作业、Worker 和采样。
             shutdown_event.set()
+            rooms_service.recorder_manager.request_stop_all()
     logger.info("Web 服务资源已关闭；操作系统进程退出由服务器调用方确认。")
 
 

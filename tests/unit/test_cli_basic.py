@@ -351,3 +351,72 @@ def test_record_rejects_produce_without_pipeline(
         assert exc.exit_code == 1
     else:  # pragma: no cover - 明确表达必须抛错
         raise AssertionError("--produce without --pipeline must fail")
+
+
+def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import signal
+    import time
+    import urllib.request
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from app.commands.serve import cmd_console
+
+    (tmp_path / "index.html").write_text("frontend")
+    processes = []
+    options = []
+    original_signals = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+
+    class Process:
+        returncode = None
+
+        def __init__(self):
+            self.stopping = False
+            self.waits = 0
+
+        def poll(self):
+            if self.stopping:
+                self.waits += 1
+                if self.waits > 5:
+                    self.returncode = 0
+            return self.returncode
+
+        def send_signal(self, number):
+            assert number == (signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+            self.stopping = True
+
+        def kill(self):
+            pytest.fail("正常关闭不能由启动器提前强杀后端")
+
+        def wait(self, timeout=None):
+            assert timeout is None, "服务必须有机会完成各自配置的关闭宽限"
+            assert self.returncode == 0
+            return 0
+
+    def spawn(*args, **kwargs):
+        process = Process()
+        processes.append(process)
+        options.append(kwargs)
+        return process
+
+    def sleep(seconds):
+        if seconds == 0.25:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    monkeypatch.setattr(time, "sleep", sleep)
+    monkeypatch.setattr(
+        urllib.request,
+        "build_opener",
+        lambda *args: SimpleNamespace(open=lambda *args, **kwargs: nullcontext(SimpleNamespace(status=200))),
+    )
+    cmd_console(frontend_dir=str(tmp_path), port=8080)
+    assert len(processes) == 2
+    for kwargs in options:
+        if os.name == "nt":
+            assert kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            assert kwargs["start_new_session"] is True
+    assert all(signal.getsignal(number) == handler for number, handler in original_signals.items())

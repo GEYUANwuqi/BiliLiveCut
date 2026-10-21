@@ -99,6 +99,7 @@ def test_frontend_starts_without_reverse_dns(tmp_path: Path, monkeypatch: pytest
 def test_spa_and_assets_have_separate_cache_and_fallback_rules(gateway):
     port, _ = gateway
     assert request(port, "/settings/configuration")[2] == b"<main>react app</main>"
+    assert request(port, "/settings/notifications")[2] == b"<main>react app</main>"
     assert request(port, "/review/123")[0] == 200
     assert request(port, "/collection/1")[0] == 200
     assert request(port, "/assets/missing.js")[0] == 404
@@ -106,6 +107,36 @@ def test_spa_and_assets_have_separate_cache_and_fallback_rules(gateway):
     assert request(port, "/%2e%2e/secret")[0] == 404
     assert request(port, "/")[1]["Cache-Control"] == "no-store"
     assert "immutable" in request(port, "/assets/main.js")[1]["Cache-Control"]
+
+
+def test_frontend_access_uses_application_logger_without_query_credentials(gateway, monkeypatch):
+    from app.web import frontend_server
+
+    messages = []
+    monkeypatch.setattr(frontend_server.logger, "info", lambda fmt, *args: messages.append(fmt.format(*args)))
+    port, _ = gateway
+    assert request(port, "/api/notifications?token=must-not-log")[0] == 200
+    assert len(messages) == 1
+    assert '"GET /api/notifications" 200' in messages[0]
+    assert "must-not-log" not in messages[0]
+
+
+def test_backend_proxy_access_is_suppressed_but_business_logs_remain(monkeypatch):
+    import logging
+
+    from app.core import logging as application_logging
+
+    messages = []
+    monkeypatch.setenv("BLC_FRONTEND_PORT", "8000")
+    handler = application_logging._ApplicationLogHandler()
+    sink = application_logging.logger.add(lambda message: messages.append(message.record["message"]))
+    try:
+        handler.emit(logging.LogRecord("uvicorn.access", logging.INFO, "", 1, "%s", ("proxy access",), None))
+        assert messages == []
+        handler.emit(logging.LogRecord("app.recording", logging.INFO, "", 1, "business message", (), None))
+        assert messages == ["business message"]
+    finally:
+        application_logging.logger.remove(sink)
 
 
 def test_proxy_preserves_media_range_auth_csrf_and_cookies(gateway):

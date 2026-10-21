@@ -122,6 +122,9 @@ def _asr_child(connection: Connection) -> None:
             request = _receive(connection)
         except EOFError:
             return
+        if request.get("operation") == "shutdown":
+            model_pool.cleanup_idle(force=True)
+            return
         emit = _request_emitter(connection, request["request_id"])
 
         def progress(stage: str, details: dict[str, object], emit: Callable[..., None] = emit) -> None:
@@ -277,6 +280,14 @@ class ASRProcessPool:
         slot.connection.close()
         if slot in self._slots:
             self._slots.remove(slot)
+
+    def _retire(self, slot: _Slot) -> None:
+        """空闲槽先正常退出，让模型库的 multiprocessing finalizer 释放信号量。"""
+        if slot.ready and slot.process.is_alive():
+            slot.outgoing.put({"operation": "shutdown"})
+            slot.process.join(3)
+        # SDK 卸载卡住或仍有后代时，仍由原有进程树监管兜底。
+        self._kill(slot)
 
     def _check(self, deadline: float, checker: Callable[[], None], stage: str) -> None:
         checker()
@@ -463,7 +474,7 @@ class ASRProcessPool:
                 if time.monotonic() > deadline + 12:
                     raise RuntimeError("ASR 监管线程未在终止宽限内归还进程槽")
             for slot in list(self._slots):
-                self._kill(slot)
+                self._retire(slot)
 
     def cleanup_idle(self) -> None:
         """回收闲置过期槽，正在推理的进程不受影响。"""
@@ -499,7 +510,7 @@ class ASRProcessPool:
                     or len(self._slots) > config.asr_task_max_concurrency
                     or (expired and not any(getattr(config, f"asr_{role}_keep_loaded") for role in _roles(config)))
                 ):
-                    self._kill(slot)
+                    self._retire(slot)
 
     def has_active_task(self, task_id: int, lease_token: str) -> bool:
         """核对原任务是否仍占用进程、IPC 或标准化操作，不能提前结算取消。"""

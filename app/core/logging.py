@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import traceback
 from typing import TYPE_CHECKING
@@ -32,6 +33,9 @@ class _ApplicationLogHandler(logging.Handler):
     """将流水线使用的标准 logging 接入同一文件和数据库诊断通道。"""
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.name == "uvicorn.access" and os.environ.get("BLC_FRONTEND_PORT"):
+            # 双端启动由入口代理记录真实客户地址，避免内部转发重复记录。
+            return
         if record.name == "uvicorn.access" and isinstance(record.args, tuple) and len(record.args) == 5:
             client, method, path, protocol, status = record.args
             record.args = (client, method, str(path).split("?", 1)[0], protocol, status)
