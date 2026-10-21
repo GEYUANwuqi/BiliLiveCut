@@ -53,7 +53,10 @@ def test_plain_smtp_uses_real_loopback_transport():
         finally:
             server.shutdown()
             thread.join(5)
-    assert recipients == ["rcpt TO:<owner@invalid.test>"]
+    assert len(recipients) == 1
+    command, address = recipients[0].split(":", 1)
+    assert command.casefold() == "rcpt to"
+    assert address == "<owner@invalid.test>"
     assert str(messages[0]["Subject"]) == "邮箱验证"
     assert "验证码：123456" in messages[0].get_content()
 
