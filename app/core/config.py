@@ -71,7 +71,11 @@ class Settings(BaseSettings):
     preferred_stream_protocol: Literal["hls", "flv"] = "hls"
     stream_quality: int = Field(default=10000, ge=1)
     reconnect_max_backoff_s: int = Field(default=30, ge=1)
-    live_poll_interval_s: int = Field(default=15, ge=5)
+    live_poll_interval_s: int = Field(
+        default=15,
+        ge=5,
+        description="本地守候配置刷新间隔，同时用于没有推送能力的来源状态查询；Bilibili 开播由事件驱动。",
+    )
     room_metadata_refresh_interval_s: int = Field(default=30, ge=5, le=3600)
     room_metadata_refresh_timeout_s: float = Field(default=3.0, ge=0.1, le=30.0)
     # 连续无法恢复录制的最大失败次数；0=单项关闭，两项均0仍以20次保护。
@@ -82,10 +86,18 @@ class Settings(BaseSettings):
     recording_stream_race_parallel: int = Field(default=4, ge=1, le=16)
     recording_stream_race_timeout_s: float = Field(default=30.0, ge=3.0, le=120.0)
     # 自动监控连续离线确认、延迟收尾和单场录制时长保护。
-    live_offline_confirm_count: int = Field(default=3, ge=1, le=100)
+    live_offline_confirm_count: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        description="仅供没有推送能力的来源连续确认下播；明确下播事件直接进入延迟收尾和状态复核。",
+    )
     live_session_end_delay_s: int = Field(default=60, ge=0, le=3600)
     recording_max_duration_s: int = Field(default=43200, ge=300, le=604800)
-    collect_danmaku: bool = True  # 录制期间是否同时采集弹幕
+    collect_danmaku: bool = Field(
+        default=True,
+        description="录制期间是否采集并保存弹幕；关闭后，自动录制仍使用独立连接监听开下播事件。",
+    )
     # 单场录制使用登录 Cookie 获取弹幕 token 的最大失败次数（首次计入）；0=始终匿名。
     danmaku_login_retry_max_attempts: int = Field(default=5, ge=0, le=100)
     # 登录访问失败后，保持匿名采集并按此间隔后台重试登录链路。
@@ -305,13 +317,22 @@ class Settings(BaseSettings):
     # 企业微信机器人 Webhook。
     wecom_webhook: str = ""  # 企业微信机器人 Webhook 地址
 
+    lark_app_id: str = Field(default="", max_length=128, pattern=r"^[^\s\x00-\x1f]*$")
+    lark_app_secret: str = Field(default="", repr=False, max_length=1024, pattern=r"^[^\s\x00-\x1f]*$")
+    lark_domain: Literal["feishu", "lark"] = "feishu"
+    lark_receive_id: str = Field(default="", max_length=320, pattern=r"^[^\s\x00-\x1f]*$")
+    lark_receive_id_type: Literal["chat_id", "open_id", "union_id", "user_id", "email"] = "chat_id"
+
     # 邮件通知(SMTP)。
-    smtp_host: str = ""  # SMTP 服务器
+    smtp_host: str = Field(default="", max_length=255, pattern=r"^[^\s/@\x00-\x1f]*$")
     smtp_port: int = Field(default=465, ge=1, le=65535)  # SMTP 端口(默认 SSL 465)
-    smtp_user: str = ""  # SMTP 用户名
-    smtp_password: str = Field(default="", repr=False)  # SMTP 密码 (repr=False 防止日志泄露)
-    smtp_from: str = ""  # 发件人地址
-    smtp_to: str = ""  # 收件人地址(多个用逗号分隔)
+    smtp_security: Literal["ssl", "starttls", "plain"] = Field(default="ssl", description="SMTP 连接加密方式。")
+    smtp_user: str = Field(default="", max_length=320, pattern=r"^[^\x00-\x1f]*$")
+    smtp_password: str = Field(default="", repr=False, max_length=4096)
+    smtp_from: str = ""  # 发件人地址，留空使用 SMTP 用户名。
+    smtp_to: str = Field(default="", description="接收提醒的单个邮箱，必须通过验证码验证。")
+    notify_on_connection: bool = Field(default=True, description="Cookie 失效或 WS 连续连接失败时提醒。")
+    notify_connection_cooldown_s: int = Field(default=1800, ge=60, le=86400, description="同房间同类连接提醒间隔。")
 
     # 通知规则。
     notify_on_clip: bool = True  # 切片完成时通知
@@ -319,6 +340,14 @@ class Settings(BaseSettings):
     notify_on_disk_alert: bool = True  # 磁盘不足时通知
     notify_on_error: bool = True  # 任务永久失败时通知
     disk_alert_threshold_gb: int = 10  # 磁盘告警阈值(GB)
+
+    @field_validator("smtp_from", "smtp_to")
+    @classmethod
+    def validate_mailbox(cls, value: str) -> str:
+        """配置只支持一个已验证收件人，拒绝邮件头和多地址。"""
+        from app.core.email_address import mailbox
+
+        return mailbox(value)
 
     @field_validator("asr_remote_base_url")
     @classmethod
