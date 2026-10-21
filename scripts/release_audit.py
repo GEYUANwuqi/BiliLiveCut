@@ -338,8 +338,7 @@ def check_distribution_config(audit: AuditResult) -> None:
     release_gate_path = REPO_ROOT / "scripts" / "release_gate.py"
     ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
     release_path = REPO_ROOT / ".github" / "workflows" / "release.yml"
-    frontend_check_path = REPO_ROOT / "scripts" / "check_frontend_interactions.mjs"
-    frontend_runner_path = REPO_ROOT / "scripts" / "check_frontend.py"
+    frontend_runner_path = REPO_ROOT / "scripts" / "check_react_frontend.py"
     hook_config_path = REPO_ROOT / ".pre-commit-config.yaml"
     portable_spec_path = REPO_ROOT / "packaging" / "portable" / "specs" / "portable_launcher.spec"
 
@@ -387,8 +386,9 @@ def check_distribution_config(audit: AuditResult) -> None:
     audit.check("web extra 包含 python-multipart", "python-multipart" in web)
     audit.check("dev extra 覆盖 Pillow", "pillow" in dev)
     audit.check(
-        "wheel 包含 Web templates/static",
-        {"templates/*.html", "static/*.js", "static/js/*.js", "static/*.css"} <= package_data,
+        "wheel 包含构建后的 React 前端",
+        {"ui/*", "ui/**/*"} <= package_data
+        and '"build_py": FrontendBuildPy' in (REPO_ROOT / "setup.py").read_text(encoding="utf-8"),
     )
     audit.check(
         "wheel 包含评分配置和关键词表",
@@ -399,7 +399,7 @@ def check_distribution_config(audit: AuditResult) -> None:
     manifest = manifest_path.read_text(encoding="utf-8") if manifest_path.is_file() else ""
     audit.check("sdist 包含项目 LICENSE", "include LICENSE" in manifest)
     audit.check(
-        "sdist 包含前端交互检查脚本",
+        "sdist 包含构建与发布检查脚本",
         "recursive-include scripts *.py *.json *.mjs *.sh *.bat" in manifest,
     )
     audit.check("sdist 包含 Dockerfile", "include packaging/docker/Dockerfile" in manifest)
@@ -427,32 +427,23 @@ def check_distribution_config(audit: AuditResult) -> None:
         "Portable Lite 内嵌项目 LICENSE",
         '(str(_project_license), ".")' in portable_spec,
     )
-    frontend_check = frontend_check_path.read_text(encoding="utf-8") if frontend_check_path.is_file() else ""
     audit.check(
-        "CI 执行前端模块与交互检查",
+        "CI 执行 React 类型、代码与单元检查",
         "python -m pre_commit run --all-files --show-diff-on-failure" in ci
         and hook_config_path.is_file()
-        and "entry: python scripts/check_frontend.py" in hook_config_path.read_text(encoding="utf-8")
+        and "entry: python scripts/check_react_frontend.py" in hook_config_path.read_text(encoding="utf-8")
         and frontend_runner_path.is_file()
         and all(
-            suite in frontend_runner_path.read_text(encoding="utf-8")
-            for suite in (
-                "scripts/check_frontend_interactions.mjs",
-                "scripts/check_configuration_interactions.mjs",
-                "scripts/check_recording_import_interactions.mjs",
-            )
+            token in frontend_runner_path.read_text(encoding="utf-8") for token in ('"typecheck"', '"lint"', '"test"')
         ),
     )
+    browser_workflow = (REPO_ROOT / ".github/workflows/frontend.yml").read_text(encoding="utf-8")
+    browser_config = (REPO_ROOT / "frontend/playwright.config.ts").read_text(encoding="utf-8")
     audit.check(
-        "前端交互检查覆盖模块、场次时间线与标签切换",
-        all(
-            token in frontend_check
-            for token in (
-                "frontend module graph, timeline scroll retention, session timeline expansion/reanalysis",
-                'await import(`${pathToFileURL(join(copiedStatic, "app.js"))',
-                'await candidatesTab.emit("click")',
-            )
-        ),
+        "CI 包含桌面与手机浏览器验收",
+        "npm run test:e2e" in browser_workflow
+        and 'name: "desktop"' in browser_config
+        and 'name: "mobile"' in browser_config,
     )
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")

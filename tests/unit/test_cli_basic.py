@@ -184,6 +184,31 @@ def test_built_frontend_required_before_starting_processes(
     assert "未找到前端构建" in result.output and "npm --prefix frontend run build" in result.output
 
 
+def test_installed_frontend_selection_keeps_explicit_directory_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.commands import serve
+
+    monkeypatch.delenv("BLC_SOURCE_DIR", raising=False)
+    monkeypatch.delenv("BLC_FRONTEND_DIR", raising=False)
+    monkeypatch.setattr(serve, "__file__", str(tmp_path / "app/commands/serve.py"))
+    packaged = tmp_path / "app/web/ui"
+    packaged.mkdir(parents=True)
+    (packaged / "index.html").write_text("wheel frontend")
+    assert serve._frontend_directory(None) == packaged
+    # 显式目录缺失时不能静默改用 wheel 自带资源。
+    with pytest.raises(click.BadParameter, match="未找到前端构建"):
+        serve._frontend_directory(str(tmp_path / "missing"))
+    portable = tmp_path / "portable/frontend/dist"
+    portable.mkdir(parents=True)
+    (portable / "index.html").write_text("portable frontend")
+    monkeypatch.setenv("BLC_SOURCE_DIR", str(tmp_path / "portable"))
+    assert serve._frontend_directory(None) == portable
+    monkeypatch.setenv("BLC_FRONTEND_DIR", str(packaged))
+    assert serve._frontend_directory(None) == packaged
+
+
 @pytest.mark.parametrize(
     "backend",
     [

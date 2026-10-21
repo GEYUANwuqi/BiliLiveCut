@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts import check_frontend, ci_gate
+from scripts import ci_gate
 
 
 def test_hook_tool_versions_match_development_and_ci() -> None:
@@ -48,13 +48,20 @@ def test_react_hooks_prepare_locked_dependencies_before_clean_checkout_checks(
         assert not step.get("continue-on-error", False)
 
 
-@pytest.mark.parametrize("workflow_name,job_name", [("ci.yml", "portable-test"), ("release.yml", "build-payload")])
-def test_payload_frontend_build_prepares_compatible_node(workflow_name: str, job_name: str) -> None:
+@pytest.mark.parametrize(
+    "workflow_name,job_name",
+    [("ci.yml", "portable-test"), ("release.yml", "build-payload"), ("release.yml", "build-sdist")],
+)
+def test_frontend_distribution_jobs_prepare_compatible_node(workflow_name: str, job_name: str) -> None:
     workflow = yaml.safe_load((ci_gate.REPO_ROOT / ".github/workflows" / workflow_name).read_text(encoding="utf-8"))
     steps = workflow["jobs"][job_name]["steps"]
-    build = next(i for i, step in enumerate(steps) if "python build_payload.py" in step.get("run", ""))
+    build = next(
+        i
+        for i, step in enumerate(steps)
+        if any(command in step.get("run", "") for command in ("python build_payload.py", "python -m build --wheel"))
+    )
     setups = [step for step in steps[:build] if step.get("uses", "").startswith("actions/setup-node@")]
-    assert setups, f"{workflow_name}/{job_name}: Payload includes a frontend build and requires Node"
+    assert setups, f"{workflow_name}/{job_name}: Distribution includes a frontend build and requires Node"
     assert str(setups[-1]["with"]["node-version"]) == "24"
     assert not setups[-1].get("if")
     assert not setups[-1].get("continue-on-error", False)
@@ -101,48 +108,6 @@ def test_partial_gate_does_not_report_full_ci_pass(
     output = capsys.readouterr().out
     assert "full CI gate not evaluated" in output
     assert "ALL CHECKS PASSED" not in output
-
-
-@pytest.fixture
-def frontend_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    monkeypatch.setattr(check_frontend, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(check_frontend, "INTERACTION_SUITES", ())
-    assert shutil.which("node") is not None, "Node.js is required for frontend gate tests"
-    return tmp_path
-
-
-@pytest.mark.parametrize("inline", [False, True], ids=["javascript-file", "inline-template"])
-def test_frontend_gate_rejects_actual_javascript_syntax_error(frontend_repository: Path, inline: bool) -> None:
-    if inline:
-        path = frontend_repository / "app/web/templates/broken.html"
-        source = "<script>const value = ;</script>"
-    else:
-        path = frontend_repository / "broken script 文件.js"
-        source = "const value = ;"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
-    subprocess.run(["git", "add", "--", str(path)], cwd=frontend_repository, check=True)
-    assert check_frontend.main() == 1
-
-
-def test_frontend_gate_propagates_interaction_failure(
-    frontend_repository: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (frontend_repository / "failure.mjs").write_text("process.exit(7);", encoding="utf-8")
-    (frontend_repository / "next.mjs").write_text(
-        "import fs from 'node:fs'; fs.writeFileSync('next-ran', 'yes');", encoding="utf-8"
-    )
-    subprocess.run(["git", "add", "--", "failure.mjs", "next.mjs"], cwd=frontend_repository, check=True)
-    monkeypatch.setattr(check_frontend, "INTERACTION_SUITES", ("failure.mjs", "next.mjs"))
-    assert check_frontend.main() == 1
-    assert (frontend_repository / "next-ran").read_text() == "yes"
-
-
-def test_frontend_gate_requires_node(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(check_frontend.shutil, "which", lambda name: None)
-    assert check_frontend.main() == 1
-    assert "Node.js is required" in capsys.readouterr().out
 
 
 def test_shared_hooks_are_immutable_and_do_not_modify_sources() -> None:

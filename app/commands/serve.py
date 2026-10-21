@@ -95,9 +95,20 @@ def cmd_serve(
 
 # 注册列表
 def _frontend_directory(frontend_dir: str | None) -> Path:
-    """定位源码或 Portable 携带的前端构建，不自动构建或启动开发服务器。"""
-    root = Path(os.environ.get("BLC_SOURCE_DIR", Path(__file__).resolve().parents[2]))
-    directory = Path(frontend_dir or os.environ.get("BLC_FRONTEND_DIR", str(root / "frontend" / "dist"))).resolve()
+    """定位显式目录、Portable、wheel 或源码构建，不在运行时调用 npm。"""
+    override = frontend_dir if frontend_dir is not None else os.environ.get("BLC_FRONTEND_DIR")
+    if override is not None:
+        directory = Path(override)
+    elif source_dir := os.environ.get("BLC_SOURCE_DIR"):
+        directory = Path(source_dir) / "frontend" / "dist"
+    else:
+        packaged = Path(__file__).resolve().parents[1] / "web" / "ui"
+        directory = (
+            packaged
+            if (packaged / "index.html").is_file()
+            else Path(__file__).resolve().parents[2] / "frontend" / "dist"
+        )
+    directory = directory.resolve()
     if not (directory / "index.html").is_file():
         raise click.BadParameter(
             f"未找到前端构建: {directory}。请先执行 npm --prefix frontend ci 和 npm --prefix frontend run build。",

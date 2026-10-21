@@ -44,15 +44,9 @@ repos:
         language: python
         pass_filenames: false
         always_run: true
-      - id: frontend-checks
-        name: Check JavaScript syntax and frontend interactions
-        entry: python scripts/check_frontend.py
-        language: python
-        pass_filenames: false
-        files: ^(app/web/|scripts/check_(frontend|configuration_interactions|recording_import_interactions|waveform_interactions)|\.pre-commit-config\.yaml$)
       - id: react-frontend
         name: Check React types, lint and unit tests
         entry: python scripts/check_react_frontend.py
         language: python
         pass_filenames: false
-        files: ^(frontend/|scripts/check_react_frontend\.py$)
+        files: ^(frontend/|app/web/|scripts/check_react_frontend\.py$|\.pre-commit-config\.yaml$)

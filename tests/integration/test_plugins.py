@@ -83,12 +83,3 @@ def test_plugin_center_api_and_settings_page(
         disabled = client.patch("/api/plugins/web-demo", json={"enabled": False})
         assert disabled.status_code == 200
         assert disabled.json()["loaded"] is False
-
-
-def test_plugin_frontend_modules_are_served(temp_db: None) -> None:
-    from app.web.main import app
-
-    with TestClient(app) as client:
-        for path in ("/static/js/plugins.js", "/static/js/plugin_settings.js"):
-            response = client.get(path)
-            assert response.status_code == 404
