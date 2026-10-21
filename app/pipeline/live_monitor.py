@@ -1,16 +1,9 @@
-"""P3 开播自动录制监控器。
-
-后台 asyncio 任务,定期检测配置房间的开播状态:
-- 检测到开播时自动创建 Session 并启动录制;
-- 检测到下播后延迟一段时间结束 Session;
-- 短暂断流不立即拆分为两场直播;
-- 防止同一房间重复启动录制;
-- 最大录制时长保护。
-"""
+"""开播事件驱动的自动录制；不提供推送能力的来源保留状态查询兼容。"""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from loguru import logger
@@ -21,9 +14,32 @@ from app.core.config import settings
 from app.core.sanitize import safe_exception_summary
 from app.db.entities import LiveRoom
 from app.db.session import get_session
-from app.plugins.live_source import LiveStatus, SourceError, SourceRoom
+from app.plugins.live_source import (
+    DanmakuStatus,
+    LiveEventSource,
+    LiveStatus,
+    RoomSnapshot,
+    SourceError,
+    SourceRoom,
+    SourceTemporaryError,
+)
 from app.sources.registry import source_registry
-from app.sources.rooms import registered_rooms, room_source
+from app.sources.rooms import registered_rooms, room_is_removed, room_source
+
+
+@dataclass
+class _Subscription:
+    """监控器拥有房间连接、补查任务及状态应用顺序。"""
+
+    identity: SourceRoom
+    task: asyncio.Task[None] | None = None
+    snapshot_task: asyncio.Task[None] | None = None
+    reconcile_task: asyncio.Task[None] | None = None
+    last_snapshot: RoomSnapshot | None = None
+    recording_token: object | None = None
+    state: DanmakuStatus = DanmakuStatus.CONNECTING
+    revision: int = 0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class LiveMonitor:
@@ -45,6 +61,8 @@ class LiveMonitor:
         self._reconnect_totals: dict[int, int] = {}
         self._pending_stops: dict[int, asyncio.Task[None]] = {}
         self._platform_checks: dict[str, asyncio.Task[None]] = {}
+        self._subscriptions: dict[int, _Subscription] = {}
+        self._duration_tokens: dict[int, object] = {}
 
     async def start(self) -> None:
         """启动后台监控循环。"""
@@ -64,6 +82,7 @@ class LiveMonitor:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        await asyncio.gather(*(self._stop_subscription(db_id) for db_id in list(self._subscriptions)))
         pending = [*self._pending_stops.values(), *self._platform_checks.values()]
         self._platform_checks.clear()
         self._pending_stops.clear()
@@ -71,13 +90,16 @@ class LiveMonitor:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        self._started_at.clear()
+        self._duration_tokens.clear()
         logger.info("直播状态监控已停止。")
 
     def status(self) -> dict:
         """返回监控器状态,供运维面板消费。"""
         return {
             "running": self._task is not None and not self._task.done(),
-            "watching_rooms": len(self._offline_counts),
+            "watching_rooms": len(set(self._offline_counts) | set(self._subscriptions)),
+            "event_connections": {str(key): entry.state for key, entry in self._subscriptions.items()},
             "offline_counts": dict(self._offline_counts),
             "pending_stops": sorted(self._pending_stops),
             "last_check": {str(k): v for k, v in self._last_check_at.items()},
@@ -101,11 +123,14 @@ class LiveMonitor:
         else:
             state = "waiting_live"
         checked = self._last_check_at.get(room.id)
+        subscription = self._subscriptions.get(room.id)
         return {
             "state": state,
             "last_checked_at": datetime.fromtimestamp(checked, UTC).isoformat() if checked else None,
             "error": self._errors.get(room.id),
             "service_running": self._task is not None and not self._task.done(),
+            "detection_mode": "events" if source_registry.supports_live_events(room.platform) else "polling",
+            "connection_state": subscription.state if subscription else None,
         }
 
     def get_reconnect_total(self, db_id: int) -> int:
@@ -113,7 +138,7 @@ class LiveMonitor:
         return self._reconnect_totals.get(db_id, 0)
 
     async def _run(self) -> None:
-        """主监控循环。"""
+        """刷新本地配置和时长保护；事件来源不在这里请求平台状态。"""
         while not self._stop.is_set():
             try:
                 await self._check_all(wait=False)
@@ -122,14 +147,49 @@ class LiveMonitor:
             await self._sleep_or_stop(settings.live_poll_interval_s)
 
     async def _check_all(self, *, wait: bool = True) -> None:
-        """对所有启用了 auto_record 的房间检查开播状态。"""
+        """同步房间订阅；仅向没有推送能力的兼容来源查询状态。"""
+        if self._stop is None:
+            self._stop = asyncio.Event()
         with get_session() as db:
             rooms = [room for room in registered_rooms(db) if room.auto_record]
-        # 每个平台独立排队；一个来源的请求预算不会阻塞另一来源开始检测。
         groups: dict[str, list[LiveRoom]] = {}
+        watched: set[int] = set()
         for room in rooms:
-            if room.platform != "local":
+            if room.platform == "local" or room.id is None:
+                continue
+            if source_registry.supports_live_events(room.platform):
+                config = load_room_config(room)
+                if config.get("recording_paused") or config.get("recording_auto_restart_suppressed"):
+                    continue
+                if settings.require_authorization and not room.authorized:
+                    self._errors[room.id] = "直播间尚未确认授权"
+                    continue
+                try:
+                    identity = room_source(room)
+                except SourceError as exc:
+                    self._errors[room.id] = f"开播事件订阅失败：{exc.code}"
+                    continue
+                watched.add(room.id)
+                current = self._subscriptions.get(room.id)
+                if current is not None and current.identity != identity:
+                    await self._stop_subscription(room.id)
+                    current = None
+                if current is None:
+                    entry = _Subscription(identity)
+                    self._subscriptions[room.id] = entry
+                    entry.task = asyncio.create_task(self._watch_room(room.id, entry))
+                else:
+                    self._reconcile_recording_end(room.id, current)
+            else:
                 groups.setdefault(room.platform, []).append(room)
+        for db_id in set(self._subscriptions) - watched:
+            await self._stop_subscription(db_id)
+            self._cancel_pending_stop(db_id)
+        for platform in set(self._platform_checks) - groups.keys():
+            task = self._platform_checks.pop(platform)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await self._enforce_duration()
 
         async def check_platform(items: list[LiveRoom]) -> None:
             for room in items:
@@ -152,10 +212,147 @@ class LiveMonitor:
         if wait:
             await asyncio.gather(*self._platform_checks.values())
 
-    async def _check_room(self, room: LiveRoom) -> None:
-        """只把明确下播作为停止证据；未知和查询失败均保留当前录制。"""
+    async def _stop_subscription(self, db_id: int) -> None:
+        entry = self._subscriptions.pop(db_id, None)
+        if entry is None:
+            return
+        tasks = [task for task in (entry.task, entry.snapshot_task, entry.reconcile_task) if task is not None]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _watch_room(self, db_id: int, entry: _Subscription) -> None:
+        """持有来源租约；停用插件、移除房间和关闭服务均等待连接收尾。"""
+        delay = 1.0
+
+        async def stop() -> None:
+            await self._stop_subscription(db_id)
+
+        async def emit(snapshot: RoomSnapshot) -> None:
+            if not isinstance(snapshot, RoomSnapshot):
+                raise ValueError("开下播事件必须是 RoomSnapshot")
+            snapshot = RoomSnapshot.model_validate(snapshot.model_dump())
+            entry.revision += 1
+            async with entry.lock:
+                if self._subscriptions.get(db_id) is entry:
+                    await self._apply_event(db_id, entry, snapshot)
+
+        async def state(value: DanmakuStatus) -> None:
+            if self._subscriptions.get(db_id) is not entry:
+                return
+            previous = entry.state
+            entry.state = DanmakuStatus(value)
+            if value == DanmakuStatus.AVAILABLE and previous != value:
+                self._errors.pop(db_id, None)
+                entry.snapshot_task = asyncio.create_task(self._initial_snapshot(db_id, entry, entry.revision))
+                entry.snapshot_task.add_done_callback(lambda task: self._observe_snapshot(db_id, entry, task))
+            elif value != DanmakuStatus.AVAILABLE:
+                entry.revision += 1
+                if entry.snapshot_task is not None:
+                    entry.snapshot_task.cancel()
+                    await asyncio.gather(entry.snapshot_task, return_exceptions=True)
+                    entry.snapshot_task = None
+                if value == DanmakuStatus.FAILED:
+                    self._errors[db_id] = "开播事件连接失败，正在重连；不会将断连视为下播"
+
+        try:
+            while self._subscriptions.get(db_id) is entry and not self._stop.is_set():
+                try:
+                    async with source_registry.use(entry.identity.platform, stop) as source:
+                        if not isinstance(source, LiveEventSource):
+                            raise SourceTemporaryError("来源不再提供开下播事件")
+                        await source.collect_live_events(entry.identity, emit, state)
+                    raise SourceTemporaryError("开下播事件连接提前结束")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # 事件来源边界；不得因单个房间故障停止其它房间。
+                    await state(DanmakuStatus.FAILED)
+                    logger.warning("开播事件监听异常 db_id={}: {}", db_id, safe_exception_summary(exc))
+                await self._sleep_or_stop(delay)
+                delay = min(delay * 2, settings.reconnect_max_backoff_s)
+        finally:
+            if entry.snapshot_task is not None:
+                entry.snapshot_task.cancel()
+                await asyncio.gather(entry.snapshot_task, return_exceptions=True)
+
+    async def _initial_snapshot(self, db_id: int, entry: _Subscription, revision: int) -> None:
+        """每次连通仅补查一次；较新的推送优先，防止迟到快照覆盖真实事件。"""
+        try:
+            snapshot = await source_registry.get_room_info(entry.identity)
+        except SourceError as exc:
+            if self._subscriptions.get(db_id) is entry and entry.revision == revision:
+                self._errors[db_id] = f"开播事件连通后的状态补查失败：{exc.code}"
+            return
+        async with entry.lock:
+            if self._subscriptions.get(db_id) is entry and entry.revision == revision:
+                await self._apply_event(db_id, entry, snapshot)
+
+    def _observe_snapshot(self, db_id: int, entry: _Subscription, task: asyncio.Task[None]) -> None:
+        """业务应用错误也必须可见，不能留下无人读取的后台异常。"""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None and self._subscriptions.get(db_id) is entry:
+            self._errors[db_id] = "开播状态补查处理失败，请查看服务日志"
+            logger.opt(exception=error).error("开播状态补查处理失败 db_id={}", db_id)
+
+    async def _apply_event(self, db_id: int, entry: _Subscription, snapshot: RoomSnapshot) -> None:
         from app.web.services.rooms import recorder_manager
 
+        entry.last_snapshot = snapshot
+        with get_session() as db:
+            room = db.get(LiveRoom, db_id)
+        if room is not None:
+            await self._apply_snapshot(room, entry.identity, snapshot, event_driven=True)
+        entry.recording_token = recorder_manager.recording_token(db_id)
+
+    def _reconcile_recording_end(self, db_id: int, entry: _Subscription) -> None:
+        """录制收尾后重新应用最后的有效推送，避免收尾期间的开播通知丢失。"""
+        from app.web.services.rooms import recorder_manager
+
+        token = recorder_manager.recording_token(db_id)
+        previous = entry.recording_token
+        entry.recording_token = token
+        if previous is None or token is not None or entry.state != DanmakuStatus.AVAILABLE:
+            return
+        if entry.reconcile_task is not None and not entry.reconcile_task.done():
+            return
+        revision = entry.revision
+
+        async def apply() -> None:
+            async with entry.lock:
+                if (
+                    self._subscriptions.get(db_id) is entry
+                    and entry.revision == revision
+                    and entry.last_snapshot is not None
+                    and entry.last_snapshot.status == LiveStatus.LIVE
+                ):
+                    await self._apply_event(db_id, entry, entry.last_snapshot)
+
+        entry.reconcile_task = asyncio.create_task(apply())
+        entry.reconcile_task.add_done_callback(lambda task: self._observe_snapshot(db_id, entry, task))
+
+    async def _enforce_duration(self) -> None:
+        """时长保护依据本地计时，不依赖平台消息频率或 HTTP 状态轮询。"""
+        from app.web.services.rooms import recorder_manager
+
+        for db_id, started_at in list(self._started_at.items()):
+            token = recorder_manager.recording_token(db_id)
+            if not recorder_manager.is_running(db_id):
+                self._started_at.pop(db_id, None)
+                self._duration_tokens.pop(db_id, None)
+            elif self._duration_tokens.get(db_id, token) is not token:
+                self._started_at.pop(db_id, None)
+                self._duration_tokens.pop(db_id, None)
+            elif asyncio.get_running_loop().time() - started_at > settings.recording_max_duration_s:
+                if token is not None and await recorder_manager.stop_if_current(db_id, token):
+                    recorder_manager._set_recording_flags(db_id, wait_for_next_live=True)
+                    self._started_at.pop(db_id, None)
+                    self._duration_tokens.pop(db_id, None)
+
+    async def _check_room(self, room: LiveRoom) -> None:
+        """只把明确下播作为停止证据；未知和查询失败均保留当前录制。"""
         db_id = room.id
         if db_id is None:
             return
@@ -174,6 +371,25 @@ class LiveMonitor:
             self._offline_counts.pop(db_id, None)
             logger.warning("开播检测失败 db_id={} code={}", db_id, exc.code)
             return
+        await self._apply_snapshot(room, identity, latest)
+
+    async def _apply_snapshot(
+        self, room: LiveRoom, identity: SourceRoom, latest: RoomSnapshot, *, event_driven: bool = False
+    ) -> None:
+        """推送与兼容查询共用录制闸门，状态通知本身不绕过授权或人工暂停。"""
+        from app.web.services.rooms import recorder_manager
+
+        db_id = room.id
+        with get_session() as db:
+            room = db.get(LiveRoom, db_id)
+            if room is None or room_is_removed(db, db_id) or not room.auto_record:
+                return
+        config = load_room_config(room)
+        if config.get("recording_paused") or config.get("recording_auto_restart_suppressed"):
+            return
+        if settings.require_authorization and not room.authorized:
+            self._errors[db_id] = "直播间尚未确认授权"
+            return
         if latest.status == LiveStatus.UNKNOWN:
             self._errors[db_id] = "直播源返回未知状态，保留当前录制"
             self._cancel_pending_stop(db_id)
@@ -191,18 +407,12 @@ class LiveMonitor:
         if is_live:
             self._cancel_pending_stop(db_id)
             self._offline_counts[db_id] = 0
-            if not is_recording:
+            if not is_recording and db_id not in self._starting:
                 await self._start_recording(db_id, room.auto_analyze, room.auto_render)
-            elif db_id in self._started_at:
-                elapsed = asyncio.get_running_loop().time() - self._started_at[db_id]
-                if elapsed > settings.recording_max_duration_s:
-                    await recorder_manager.stop(db_id)
-                    recorder_manager._set_recording_flags(db_id, wait_for_next_live=True)
-                    self._started_at.pop(db_id, None)
         elif is_recording:
             count = self._offline_counts.get(db_id, 0) + 1
             self._offline_counts[db_id] = count
-            if count >= settings.live_offline_confirm_count and db_id not in self._pending_stops:
+            if (event_driven or count >= settings.live_offline_confirm_count) and db_id not in self._pending_stops:
                 self._schedule_delayed_stop(db_id, identity)
         else:
             self._cancel_pending_stop(db_id)
@@ -252,6 +462,7 @@ class LiveMonitor:
         if await recorder_manager.stop_if_current(db_id, token):
             self._offline_counts.pop(db_id, None)
             self._started_at.pop(db_id, None)
+            self._duration_tokens.pop(db_id, None)
 
     async def _start_recording(self, db_id: int, auto_analyze: bool, auto_render: bool) -> None:
         """启动录制。
@@ -271,7 +482,10 @@ class LiveMonitor:
                 produce=auto_render,
                 automatic=True,
             )
-            self._started_at[db_id] = asyncio.get_event_loop().time()
+            if not recorder_manager.is_running(db_id):
+                return
+            self._started_at[db_id] = asyncio.get_running_loop().time()
+            self._duration_tokens[db_id] = recorder_manager.recording_token(db_id)
             # 从 RecordingSession 获取重连次数。
             from app.db.entities import RecordingSession
 

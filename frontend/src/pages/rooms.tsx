@@ -35,6 +35,7 @@ import {
   type FieldSpec,
 } from "@/components/workbench";
 import { number, obj, rows, text, title } from "@/lib/data";
+import { RoomDanmakuSettings } from "@/components/room-danmaku-settings";
 
 export function AddRoom() {
   const query = useQueryClient();
@@ -140,6 +141,16 @@ export function RoomCard({
     : room.source_available === false
       ? "unavailable"
       : room.recording_state || "idle";
+  const eventState =
+    monitor.state === "manual_paused"
+      ? "已暂停"
+      : monitor.service_running === false
+        ? "服务未运行"
+        : monitor.connection_state === "available"
+          ? "监听中"
+          : monitor.connection_state === "failed"
+            ? "正在重连"
+            : "等待连接";
   return (
     <Card className="room-card gap-0 overflow-hidden py-0 shadow-none">
       <CardContent className="p-5">
@@ -183,9 +194,16 @@ export function RoomCard({
             </span>
           ))}
         </div>
-        {Boolean(monitor.message || room.source_error) && (
+        {!running &&
+          !!room.auto_record &&
+          monitor.detection_mode === "events" && (
+            <p className="mb-3 text-xs text-muted-foreground">
+              开播事件 · {eventState}
+            </p>
+          )}
+        {Boolean(monitor.message || monitor.error || room.source_error) && (
           <p className="mb-4 text-xs leading-5 text-amber-700 dark:text-amber-400">
-            {text(monitor.message || room.source_error)}
+            {text(monitor.message || monitor.error || room.source_error)}
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2 border-t pt-4">
@@ -307,6 +325,9 @@ export function RoomCard({
           )}
           {!compact && (
             <>
+              {(room.platform || "bilibili") === "bilibili" && (
+                <RoomDanmakuSettings room={room} />
+              )}
               <FormDialog
                 id={`room-${id}`}
                 title="直播间设置"
@@ -391,7 +412,7 @@ export function RoomCard({
                 }}
                 onSubmit={async (body) => {
                   await send(`/api/rooms/${id}`, "PATCH", {
-                    room_config: { ...config, ...body },
+                    room_config: body,
                   });
                   invalidate();
                 }}

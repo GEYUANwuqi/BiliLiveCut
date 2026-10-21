@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.plugins.live_source import (
     DanmakuSource,
+    LiveEventSource,
     LiveSource,
     RoomSnapshot,
     SourceDescriptor,
@@ -75,6 +76,11 @@ class SourceRegistry:
         entry = self._entries.get(platform)
         return entry is not None and not entry.draining
 
+    def supports_live_events(self, platform: str) -> bool:
+        """仅使用来源显式提供的事件能力，旧插件仍可查询状态。"""
+        entry = self._entries.get(platform)
+        return entry is not None and not entry.draining and isinstance(entry.source, LiveEventSource)
+
     def register_many(self, owner: str, sources: Sequence[LiveSource]) -> None:
         """原子注册一组来源；失败不留下部分注册，资源仍由调用方关闭。"""
         if owner == "builtin" or not sources:
@@ -91,6 +97,8 @@ class SourceRegistry:
                 raise SourceInvalidInput("直播源必须实现异步方法；阻塞 SDK 请在插件内隔离")
             if isinstance(source, DanmakuSource) and not inspect.iscoroutinefunction(source.collect_danmaku):
                 raise SourceInvalidInput("可选弹幕采集也必须是异步方法；阻塞 SDK 请在插件内隔离")
+            if isinstance(source, LiveEventSource) and not inspect.iscoroutinefunction(source.collect_live_events):
+                raise SourceInvalidInput("开下播事件监听必须是异步方法；阻塞 SDK 请在插件内隔离")
             descriptor = source.descriptor
             if descriptor.platform in platforms or domains.intersection(descriptor.domains):
                 raise SourceInvalidInput(f"平台或域名已注册: {descriptor.platform}")

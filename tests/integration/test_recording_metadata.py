@@ -258,7 +258,7 @@ async def test_cancelled_start_releases_lock_without_creating_session(
         assert db.get(LiveRoom, 1).title == "标题 A"
 
 
-async def test_monitor_failure_keeps_last_successful_check_visible(platform: dict[str, object]) -> None:
+async def test_monitor_failure_keeps_last_successful_check_visible(platform: dict[str, object], bili_live_feed) -> None:
     from app.pipeline.live_monitor import LiveMonitor
 
     with get_session() as db:
@@ -268,13 +268,21 @@ async def test_monitor_failure_keeps_last_successful_check_visible(platform: dic
     platform["live"] = 0
     monitor = LiveMonitor()
     monitor._stop = asyncio.Event()
-    await monitor._check_all()
-    with get_session() as db:
-        room = db.get(LiveRoom, 1)
-    healthy = monitor.room_status(room, running=False, runtime_state="idle")
-    assert healthy["state"] == "waiting_live" and healthy["last_checked_at"]
-    platform["room_id"] = 999
-    await monitor._check_all()
-    failed = monitor.room_status(room, running=False, runtime_state="idle")
-    assert failed["state"] == "error" and failed["error"]
-    assert failed["last_checked_at"] == healthy["last_checked_at"]
+    from app.plugins.live_source import DanmakuStatus
+
+    try:
+        await monitor._check_all()
+        await bili_live_feed.ready(monitor, 1)
+        with get_session() as db:
+            room = db.get(LiveRoom, 1)
+        healthy = monitor.room_status(room, running=False, runtime_state="idle")
+        assert healthy["state"] == "waiting_live" and healthy["last_checked_at"]
+        platform["room_id"] = 999
+        await bili_live_feed.send(DanmakuStatus.CONNECTING)
+        await bili_live_feed.send(DanmakuStatus.AVAILABLE)
+        await bili_live_feed.ready(monitor, 1)
+        failed = monitor.room_status(room, running=False, runtime_state="idle")
+        assert failed["state"] == "error" and failed["error"]
+        assert failed["last_checked_at"] == healthy["last_checked_at"]
+    finally:
+        await monitor.stop()

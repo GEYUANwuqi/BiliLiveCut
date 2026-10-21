@@ -248,6 +248,15 @@ class DanmakuEvent(_Contract):
 
 DanmakuSink = Callable[[DanmakuEvent], Awaitable[None]]
 DanmakuStateSink = Callable[[DanmakuStatus], Awaitable[None]]
+LiveStateSink = Callable[[RoomSnapshot], Awaitable[None]]
+
+
+@runtime_checkable
+class LiveEventSource(Protocol):
+    """可选开下播推送能力，连接状态与录制期间是否保存弹幕无关。"""
+
+    async def collect_live_events(self, room: SourceRoom, emit: LiveStateSink, state: DanmakuStateSink) -> None:
+        """持续推送明确的状态变化；断连不能解释为下播，取消时须关闭连接。"""
 
 
 @runtime_checkable

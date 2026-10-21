@@ -9,6 +9,7 @@
 - recording_auto_restart_suppressed: 人工停止后阻止监控器立即重新拉起。
 - recording_wait_for_next_live: 重连预算耗尽后等待一次真实离线再允许自动录制。
 - highlight_scorer_mode: 高光评分插件的房间级模式覆盖。
+- danmaku_sampling: Bilibili 消息的房间级数据库采样比例与高密度规则。
 
 配置存储在 ``LiveRoom.room_config_json`` 中。
 """
@@ -20,6 +21,7 @@ import re
 from collections.abc import Sequence
 from copy import deepcopy
 
+from app.analysis.danmaku_sampling import DanmakuSamplingPolicy
 from app.db.entities import LiveRoom
 
 _DEFAULT_CONFIG: dict = {
@@ -32,6 +34,7 @@ _DEFAULT_CONFIG: dict = {
     "recording_auto_restart_suppressed": False,
     "recording_wait_for_next_live": False,
     "highlight_scorer_mode": "inherit",
+    "danmaku_sampling": DanmakuSamplingPolicy().model_dump(),
 }
 _CONFIG_KEYS = frozenset(_DEFAULT_CONFIG)
 
@@ -51,6 +54,8 @@ def load_room_config(room: LiveRoom | None) -> dict[str, object]:
         raise ValueError("room_config_json 不是有效 JSON") from exc
     if not isinstance(parsed, dict):
         raise ValueError("room_config_json 必须是对象")
+    # 新增采样字段采用默认值读取，既有房间无需重建数据库。
+    parsed.setdefault("danmaku_sampling", deepcopy(_DEFAULT_CONFIG["danmaku_sampling"]))
     missing = _CONFIG_KEYS - set(parsed)
     unknown = set(parsed) - _CONFIG_KEYS
     if missing:
@@ -66,6 +71,11 @@ def merge_room_config(room: LiveRoom, updates: dict[str, object]) -> dict[str, o
     if unknown:
         raise ValueError(f"room_config 包含未知字段: {sorted(unknown)}")
     merged: dict[str, object] = load_room_config(room)
+    if "danmaku_sampling" in updates:
+        policy = updates["danmaku_sampling"]
+        if not isinstance(policy, dict):
+            raise ValueError("danmaku_sampling 必须是对象")
+        updates = {**updates, "danmaku_sampling": {**merged["danmaku_sampling"], **policy}}
     merged.update(updates)
     return _validate_room_config(merged)
 
@@ -99,6 +109,7 @@ def _validate_room_config(merged: dict[str, object]) -> dict[str, object]:
     merged["blocked_topics"] = _string_list(merged["blocked_topics"], name="blocked_topics", limit=500)
     merged["aliases"] = _alias_map(merged["aliases"], name="aliases")
     merged["learned_aliases"] = _alias_map(merged["learned_aliases"], name="learned_aliases")
+    merged["danmaku_sampling"] = DanmakuSamplingPolicy.model_validate(merged["danmaku_sampling"]).model_dump()
     return merged
 
 

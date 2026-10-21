@@ -21,7 +21,7 @@ import json
 import struct
 import time
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -43,8 +43,16 @@ from app.sources.bilibili.client import (
     HttpErrorType,
     parse_uid_from_cookie,
 )
+from app.sources.bilibili.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    InteractionMessage,
+    SuperChatMessage,
+    parse_stream_message,
+)
 
 if TYPE_CHECKING:
+    from app.analysis.danmaku_sampling import DanmakuSamplingPolicy
     from app.recording.danmaku_archive import DanmakuArchive
 
 # 操作码(operation)
@@ -58,6 +66,7 @@ _HEADER = struct.Struct(">IHHII")  # 包长(4) 头长(2) 协议版本(2) 操作�
 _HEADER_LEN = 16
 _HEARTBEAT_INTERVAL_S = 30
 _AUTH_TIMEOUT_S = 10
+_MAX_DECODE_DEPTH = 8
 _DEFAULT_HOST = "broadcastlv.chat.bilibili.com"
 _DEFAULT_WSS_PORT = 2245
 _LIVE_ORIGIN = "https://live.bilibili.com"
@@ -126,7 +135,7 @@ def _iter_raw(data: bytes) -> Iterator[tuple[int, int, bytes]]:
         offset += plen
 
 
-def decode(data: bytes) -> list[tuple[int, object]]:
+def decode(data: bytes, *, _depth: int = 0) -> list[tuple[int, object]]:
     """解码一个(可能压缩、可能聚合)的弹幕数据帧。
 
     压缩包(protover==2 zlib / ==3 brotli)会被解压后递归解析,
@@ -139,6 +148,8 @@ def decode(data: bytes) -> list[tuple[int, object]]:
     :param data: 收到的二进制帧。
     :returns: ``(operation, parsed)`` 列表。
     """
+    if _depth > _MAX_DECODE_DEPTH:
+        return []
     results: list[tuple[int, object]] = []
     for ver, op, body in _iter_raw(data):
         if op == OP_HEARTBEAT_REPLY:
@@ -151,14 +162,18 @@ def decode(data: bytes) -> list[tuple[int, object]]:
                 auth_reply = None
             results.append((op, auth_reply if isinstance(auth_reply, dict) else None))
         elif op == OP_MESSAGE:
-            if ver == 2:
-                results.extend(decode(zlib.decompress(body)))
-            elif ver == 3:
-                results.extend(decode(brotli.decompress(body)))
+            if ver in {2, 3}:
+                try:
+                    expanded = zlib.decompress(body) if ver == 2 else brotli.decompress(body)
+                except (zlib.error, brotli.error):
+                    continue
+                results.extend(decode(expanded, _depth=_depth + 1))
             else:
                 try:
-                    results.append((op, json.loads(body.decode("utf-8", errors="ignore"))))
-                except json.JSONDecodeError:
+                    parsed = json.loads(body.decode("utf-8"))
+                    if isinstance(parsed, dict):
+                        results.append((op, parsed))
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
     return results
 
@@ -186,46 +201,26 @@ def server_endpoints(hosts: list[dict]) -> list[tuple[str, int]]:
 
 
 def parse_message(msg: dict) -> tuple[str, str | None, str | None, float] | None:
-    """把一条消息 JSON 解析为 ``(类型, 用户, 内容, 价值)``。
-
-    支持普通弹幕、礼物、醒目留言(SC)、进场互动;其它命令返回 ``None`` 忽略。
-
-    :param msg: 消息 JSON。
-    :returns: 四元组或 ``None``。
-    """
-    cmd = str(msg.get("cmd", ""))
-    if cmd.startswith("DANMU_MSG"):
-        info = msg.get("info") or []
-        text = info[1] if len(info) > 1 else ""
-        user = info[2][1] if len(info) > 2 and len(info[2]) > 1 else None
-        return DanmakuType.DANMAKU, user, text, 1.0
-    if cmd == "SEND_GIFT":
-        d = msg.get("data") or {}
-        # 价值用电池/金瓜子粗略折算(仅作热度权重,非精确金额)。
-        value = float(d.get("total_coin", 0)) / 1000.0 or 1.0
-        return DanmakuType.GIFT, d.get("uname"), d.get("giftName"), value
-    if cmd == "SUPER_CHAT_MESSAGE":
-        d = msg.get("data") or {}
-        return (
-            DanmakuType.SUPERCHAT,
-            (d.get("user_info") or {}).get("uname"),
-            d.get("message"),
-            float(d.get("price", 0)),
-        )
-    if cmd == "INTERACT_WORD":
-        d = msg.get("data") or {}
-        return DanmakuType.INTERACT, d.get("uname"), None, 0.2
+    """结构化解析后映射到原有入库类型和权重，不扩展保留范围。"""
+    parsed = parse_stream_message(msg)
+    if isinstance(parsed, DanmakuMessage):
+        return DanmakuType.DANMAKU, parsed.user.name, parsed.content, 1.0
+    if isinstance(parsed, GiftMessage):
+        return DanmakuType.GIFT, parsed.user_name, parsed.gift_name, parsed.total_coin / 1000.0 or 1.0
+    if isinstance(parsed, SuperChatMessage):
+        return DanmakuType.SUPERCHAT, parsed.user_info.name, parsed.message, parsed.price
+    if isinstance(parsed, InteractionMessage):
+        return DanmakuType.INTERACT, parsed.user_name, None, 0.2
     return None
 
 
 # --------------------------------------------------------------------------- #
 # 采集客户端
 # --------------------------------------------------------------------------- #
-class DanmakuClient:
-    """单个直播间的登录优先、匿名兜底弹幕采集客户端。
+class DanmakuConnection:
+    """单个直播间的登录优先、匿名兜底消息传输，不执行持久化。
 
     :param room_id: 真实房间号。
-    :param session_id: 关联的录制会话 id(弹幕据此入库,便于按窗口统计)。
     :param cookie: 可选登录 Cookie；仅用于 HTTPS token 请求，不写入日志。
     :param login_retry_max_attempts: 单场登录失败上限(首次计入)；``None`` 使用全局配置。
     :param login_retry_interval_s: 登录失败后的重试间隔；``None`` 使用全局配置。
@@ -234,11 +229,9 @@ class DanmakuClient:
     def __init__(
         self,
         room_id: int,
-        session_id: int,
         cookie: str = "",
         *,
         on_state: DanmakuStateSink | None = None,
-        archive: DanmakuArchive | None = None,
         login_retry_max_attempts: int | None = None,
         login_retry_interval_s: float | None = None,
     ) -> None:
@@ -254,9 +247,8 @@ class DanmakuClient:
             raise ValueError("login_retry_interval_s 必须 > 0")
 
         self._on_state = on_state
-        self._archive = archive
         self.room_id = room_id
-        self.session_id = session_id
+        self.session_id: int | None = None
         self.popularity = 0
         self._stop = asyncio.Event()
         self._cookie = cookie.strip()
@@ -264,9 +256,8 @@ class DanmakuClient:
         self._login_retry_max_attempts = max_attempts
         self._login_retry_interval_s = retry_interval
         self._login_failures = 0
+        self._connection_failures = 0
         self._next_login_retry_at = 0.0
-        # V0.1.13: DanmakuSampler — lazy init per-room sampler
-        self._sampler = None  # type: ignore[var-annotated]
 
     def stop(self) -> None:
         """请求停止采集。"""
@@ -387,6 +378,11 @@ class DanmakuClient:
     def _record_login_failure(self, exc: Exception) -> None:
         """记录一次登录链路失败并安排重试或熔断本场登录访问。"""
         self._login_failures += 1
+        from app.notify.delivery import publish_connection_alert
+
+        expired = isinstance(exc, BilibiliRateLimitError) and exc.error_type == HttpErrorType.COOKIE_EXPIRED
+        if expired or self._login_failures >= 3:
+            publish_connection_alert(self.room_id, "cookie_expired" if expired else "login_rejected")
         if self.login_disabled:
             logger.warning(
                 "登录 Cookie 弹幕访问失败 room={} attempt={}/{}；已达到单场上限，后续固定匿名访问: {}",
@@ -502,13 +498,15 @@ class DanmakuClient:
             close_timeout=5,
             ping_interval=None,
         ) as ws:
-            await self._authenticate(ws, access.server.token, uid=access.uid)
-            await self._report_state(DanmakuStatus.AVAILABLE)
+            first_frame = await self._authenticate(ws, access.server.token, uid=access.uid)
             mode = "登录" if access.uses_cookie else "匿名"
             logger.info("{}弹幕已连接 room={} host={} uid={}", mode, self.room_id, host, access.uid)
 
             heartbeat = asyncio.create_task(self._heartbeat(ws))
             try:
+                await self._report_state(DanmakuStatus.AVAILABLE)
+                if first_frame is not None:
+                    await self._process_frame(first_frame)
                 while not self._stop.is_set():
                     receive = asyncio.create_task(ws.recv())
                     try:
@@ -526,8 +524,7 @@ class DanmakuClient:
                         await asyncio.gather(receive, return_exceptions=True)
                     if isinstance(frame, str):
                         frame = frame.encode("utf-8")
-                    # 工作线程不能被 task.cancel 停止；重复取消也等待本批次持久化。
-                    await complete_cleanup(asyncio.to_thread(self._handle_frame, frame))
+                    await self._process_frame(frame)
             finally:
                 try:
                     await self._report_state(DanmakuStatus.CONNECTING)
@@ -535,12 +532,13 @@ class DanmakuClient:
                     heartbeat.cancel()
                     await asyncio.gather(heartbeat, return_exceptions=True)
 
-    async def _authenticate(self, ws: _WebSocketConnection, token: str, *, uid: int = 0) -> None:
+    async def _authenticate(self, ws: _WebSocketConnection, token: str, *, uid: int = 0) -> bytes:
         """发送鉴权包并确认服务端 ``op=8/code=0``。
 
         :param ws: WebSocket 连接。
         :param token: ``getDanmuInfo`` 返回的短期 token。
         :param uid: 登录用户 UID；匿名模式为 0。
+        :returns: 完整首帧，保留与鉴权回复聚合发送的业务消息。
         :raises DanmakuProtocolError: 超时、缺少鉴权回复或服务端拒绝时。
         """
         auth = {
@@ -566,7 +564,7 @@ class DanmakuClient:
             code = parsed.get("code")
             if code != 0:
                 raise DanmakuProtocolError(f"弹幕鉴权被拒绝 code={code!r}")
-            return
+            return frame
         raise DanmakuProtocolError("服务端首帧缺少弹幕鉴权回复")
 
     async def _heartbeat(self, ws: _WebSocketConnection) -> None:
@@ -580,6 +578,65 @@ class DanmakuClient:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
         except asyncio.CancelledError:
             pass
+
+    async def _process_frame(self, frame: bytes) -> None:
+        """交由连接使用方处理帧，传输层不执行归档、采样或数据库写入。"""
+        raise NotImplementedError
+
+    async def _report_state(self, state: DanmakuStatus) -> None:
+        if state == DanmakuStatus.AVAILABLE:
+            self._connection_failures = 0
+        elif state == DanmakuStatus.FAILED:
+            self._connection_failures += 1
+            if self._connection_failures >= 3:
+                from app.notify.delivery import publish_connection_alert
+
+                publish_connection_alert(self.room_id, "ws_failed")
+        if self._on_state is not None:
+            await self._on_state(state)
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
+        """休眠指定秒数,期间收到停止信号则提前返回。
+
+        :param seconds: 休眠时长(秒)。
+        """
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
+
+
+class DanmakuClient(DanmakuConnection):
+    """录制会话的弹幕采集器，沿用既有采样和持久化流程。"""
+
+    def __init__(
+        self,
+        room_id: int,
+        session_id: int,
+        cookie: str = "",
+        *,
+        on_state: DanmakuStateSink | None = None,
+        archive: DanmakuArchive | None = None,
+        sampling_policy: Callable[[], DanmakuSamplingPolicy] | None = None,
+        login_retry_max_attempts: int | None = None,
+        login_retry_interval_s: float | None = None,
+    ) -> None:
+        super().__init__(
+            room_id,
+            cookie,
+            on_state=on_state,
+            login_retry_max_attempts=login_retry_max_attempts,
+            login_retry_interval_s=login_retry_interval_s,
+        )
+        self.session_id = session_id
+        self._archive = archive
+        self._sampler = None
+        self._sampling_policy = sampling_policy
+        self._sampling_policy_updated_at = float("-inf")
+
+    async def _process_frame(self, frame: bytes) -> None:
+        """工作线程不能被取消，收尾仍需等待当前批次完成持久化。"""
+        await complete_cleanup(asyncio.to_thread(self._handle_frame, frame))
 
     def _handle_frame(self, frame: bytes) -> None:
         """解码一帧并把其中的弹幕消息批量入库。
@@ -599,6 +656,9 @@ class DanmakuClient:
                 event_format="raw",
             )
         rows: list[Danmaku] = []
+        if self._sampling_policy is not None and time.monotonic() - self._sampling_policy_updated_at >= 5:
+            self._sampler.policy = self._sampling_policy()
+            self._sampling_policy_updated_at = time.monotonic()
         for op, parsed in decoded:
             if op == OP_HEARTBEAT_REPLY and isinstance(parsed, int):
                 self.popularity = parsed
@@ -626,17 +686,3 @@ class DanmakuClient:
         if rows:
             with get_session() as db:
                 db.add_all(rows)
-
-    async def _report_state(self, state: DanmakuStatus) -> None:
-        if self._on_state is not None:
-            await self._on_state(state)
-
-    async def _sleep_or_stop(self, seconds: float) -> None:
-        """休眠指定秒数,期间收到停止信号则提前返回。
-
-        :param seconds: 休眠时长(秒)。
-        """
-        try:
-            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except TimeoutError:
-            pass
