@@ -37,6 +37,7 @@ class _Subscription:
     reconcile_task: asyncio.Task[None] | None = None
     last_snapshot: RoomSnapshot | None = None
     recording_token: object | None = None
+    retry_start: bool = False
     state: DanmakuStatus = DanmakuStatus.CONNECTING
     revision: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -249,6 +250,7 @@ class LiveMonitor:
                 entry.snapshot_task.add_done_callback(lambda task: self._observe_snapshot(db_id, entry, task))
             elif value != DanmakuStatus.AVAILABLE:
                 entry.revision += 1
+                entry.retry_start = False
                 if entry.snapshot_task is not None:
                     entry.snapshot_task.cancel()
                     await asyncio.gather(entry.snapshot_task, return_exceptions=True)
@@ -277,16 +279,27 @@ class LiveMonitor:
                 await asyncio.gather(entry.snapshot_task, return_exceptions=True)
 
     async def _initial_snapshot(self, db_id: int, entry: _Subscription, revision: int) -> None:
-        """每次连通仅补查一次；较新的推送优先，防止迟到快照覆盖真实事件。"""
-        try:
-            snapshot = await source_registry.get_room_info(entry.identity)
-        except SourceError as exc:
-            if self._subscriptions.get(db_id) is entry and entry.revision == revision:
+        """暂时失败或未知时限速重试；较新推送优先，永久错误保留诊断并结束补查。"""
+        while self._subscriptions.get(db_id) is entry and entry.revision == revision and not self._stop.is_set():
+            delay = settings.live_poll_interval_s
+            try:
+                snapshot = await source_registry.get_room_info(entry.identity)
+            except SourceError as exc:
+                if self._subscriptions.get(db_id) is not entry or entry.revision != revision:
+                    return
                 self._errors[db_id] = f"开播事件连通后的状态补查失败：{exc.code}"
-            return
-        async with entry.lock:
-            if self._subscriptions.get(db_id) is entry and entry.revision == revision:
-                await self._apply_event(db_id, entry, snapshot)
+                if not isinstance(exc, SourceTemporaryError):
+                    return
+                delay = max(delay, exc.retry_after or 0)
+            else:
+                async with entry.lock:
+                    if self._subscriptions.get(db_id) is not entry or entry.revision != revision:
+                        return
+                    if snapshot.status != LiveStatus.UNKNOWN:
+                        await self._apply_event(db_id, entry, snapshot)
+                        return
+                    self._errors[db_id] = "开播事件连通后的状态未知，将重新补查"
+            await self._sleep_or_stop(delay)
 
     def _observe_snapshot(self, db_id: int, entry: _Subscription, task: asyncio.Task[None]) -> None:
         """业务应用错误也必须可见，不能留下无人读取的后台异常。"""
@@ -306,15 +319,18 @@ class LiveMonitor:
         if room is not None:
             await self._apply_snapshot(room, entry.identity, snapshot, event_driven=True)
         entry.recording_token = recorder_manager.recording_token(db_id)
+        entry.retry_start = (
+            snapshot.status == LiveStatus.LIVE and entry.recording_token is None and db_id in self._errors
+        )
 
     def _reconcile_recording_end(self, db_id: int, entry: _Subscription) -> None:
-        """录制收尾后重新应用最后的有效推送，避免收尾期间的开播通知丢失。"""
+        """录制收尾或启动失败后重新应用有效推送，仍经过授权与人工暂停闸门。"""
         from app.web.services.rooms import recorder_manager
 
         token = recorder_manager.recording_token(db_id)
         previous = entry.recording_token
         entry.recording_token = token
-        if previous is None or token is not None or entry.state != DanmakuStatus.AVAILABLE:
+        if token is not None or entry.state != DanmakuStatus.AVAILABLE or (previous is None and not entry.retry_start):
             return
         if entry.reconcile_task is not None and not entry.reconcile_task.done():
             return
@@ -442,27 +458,34 @@ class LiveMonitor:
             logger.info("房间 {} 在延迟收尾期间恢复直播,已撤销停止。", db_id)
 
     async def _delayed_stop(self, db_id: int, identity: SourceRoom, token: object) -> None:
-        """延迟后再次向直播源确认，仍离线才停止录制。"""
-        await self._sleep_or_stop(settings.live_session_end_delay_s)
-        if self._stop is None or self._stop.is_set():
-            return
-
-        try:
-            latest = await source_registry.get_room_info(identity)
-        except SourceError as exc:
-            logger.warning("房间 {} 停录前复核失败,本轮保留录制: {}", db_id, exc.code)
-            return
-        if latest.status != LiveStatus.OFFLINE:
-            self._offline_counts[db_id] = 0
-            logger.info("房间 {} 停录前未确认下播,继续当前会话。", db_id)
-            return
-
+        """延迟后确认下播；暂时失败或未知时保留录制并限速复核同一实例。"""
         from app.web.services.rooms import recorder_manager
 
-        if await recorder_manager.stop_if_current(db_id, token):
-            self._offline_counts.pop(db_id, None)
-            self._started_at.pop(db_id, None)
-            self._duration_tokens.pop(db_id, None)
+        await self._sleep_or_stop(settings.live_session_end_delay_s)
+        while self._stop is not None and not self._stop.is_set():
+            delay = settings.live_poll_interval_s
+            try:
+                latest = await source_registry.get_room_info(identity)
+            except SourceError as exc:
+                logger.warning("房间 {} 停录前复核失败,保留录制: {}", db_id, exc.code)
+                if not isinstance(exc, SourceTemporaryError):
+                    self._errors[db_id] = f"停录前状态复核失败：{exc.code}"
+                    return
+                delay = max(delay, exc.retry_after or 0)
+            else:
+                if latest.status == LiveStatus.LIVE:
+                    self._offline_counts[db_id] = 0
+                    logger.info("房间 {} 停录前已确认仍在直播,继续当前会话。", db_id)
+                    return
+                if latest.status == LiveStatus.OFFLINE:
+                    if await recorder_manager.stop_if_current(db_id, token):
+                        self._offline_counts.pop(db_id, None)
+                        self._started_at.pop(db_id, None)
+                        self._duration_tokens.pop(db_id, None)
+                    return
+            await self._sleep_or_stop(delay)
+            if recorder_manager.recording_token(db_id) is not token:
+                return
 
     async def _start_recording(self, db_id: int, auto_analyze: bool, auto_render: bool) -> None:
         """启动录制。

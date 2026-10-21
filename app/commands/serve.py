@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import ModuleType
 
 import click
+from loguru import logger
 from rich.console import Console
 
+from app.core.sanitize import safe_exception_summary
 from config.launcher_settings import (
     APP_ROOT_ENV,
     WEB_PORT_ENV,
@@ -50,11 +53,12 @@ def _wait_parent_pipe() -> None:
         time.sleep(0.1)
 
 
-def _serve_with_parent_pipe(uvicorn, **options: object) -> None:
+def _serve_with_parent_pipe(uvicorn: ModuleType, **options: object) -> None:
     """受监管后端通过父进程管道正常退出，兼容没有控制台的 Windows 服务。"""
     import threading
 
     stop_requested = threading.Event()
+    pipe_error: OSError | ValueError | None = None
 
     class ParentPipeServer(uvicorn.Server):
         async def on_tick(self, counter: int) -> bool:
@@ -64,14 +68,18 @@ def _serve_with_parent_pipe(uvicorn, **options: object) -> None:
             return await super().on_tick(counter)
 
     def watch_parent() -> None:
+        nonlocal pipe_error
         try:
             _wait_parent_pipe()
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            pipe_error = exc
         stop_requested.set()
 
     threading.Thread(target=watch_parent, name="blc-parent-pipe", daemon=True).start()
     ParentPipeServer(uvicorn.Config("app.web.main:app", **options)).run()
+    if pipe_error is not None:
+        logger.error("父进程监管管道异常：{}", safe_exception_summary(pipe_error))
+        raise click.ClickException("父进程监管管道异常，后端已完成关闭，请查看服务日志。") from pipe_error
 
 
 def _request_console_stop(processes: list, *, windows: bool) -> None:
@@ -239,6 +247,8 @@ def cmd_console(
     import sys
     import time
 
+    from app.analysis.transcription.process_tree import ProcessTree
+
     directory = _frontend_directory(frontend_dir)
     actual_port = validate_web_port(port if port is not None else load_launcher_config(runtime_app_root()).web_port)
     # 对外发布独立前端同样要求后台密码，不能借助回环代理绕过既有访问边界。
@@ -257,6 +267,7 @@ def cmd_console(
     if os.name == "nt":
         child_env["_BLC_PARENT_STDIN"] = "1"
     processes: list[subprocess.Popen] = []
+    frontend_tree: ProcessTree | None = None
     shutdown_signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
         shutdown_signals.append(signal.SIGBREAK)
@@ -304,6 +315,10 @@ def cmd_console(
             if time.monotonic() >= deadline:
                 raise RuntimeError("等待 API 启动超时，请检查数据库与后端配置。")
             time.sleep(0.1)
+        frontend_options = dict(process_options)
+        if os.name == "nt":
+            # 先让 Job 接管，再运行虚拟环境启动器及其后代，避免父进程退出后遗留监听端口。
+            frontend_options["creationflags"] |= 0x00000004  # CREATE_SUSPENDED
         processes.append(
             subprocess.Popen(
                 [
@@ -320,9 +335,17 @@ def cmd_console(
                     "--port",
                     str(actual_port),
                 ],
-                **process_options,
+                **frontend_options,
             )
         )
+        if os.name == "nt":
+            try:
+                frontend_tree = ProcessTree(processes[-1].pid)
+                frontend_tree.resume_suspended()
+            except BaseException:
+                processes[-1].kill()
+                processes[-1].wait(timeout=5)
+                raise
         console.print(f"[green]工作台启动中[/green] -> http://{host}:{actual_port}")
         while all(process.poll() is None for process in processes):
             time.sleep(0.25)
@@ -335,7 +358,11 @@ def cmd_console(
         closing = True
         try:
             console.print("[yellow]正在停止录制并释放后台资源，再次按 Ctrl+C 可强制退出。[/yellow]")
-            _request_console_stop(processes, windows=os.name == "nt")
+            try:
+                _request_console_stop(processes, windows=os.name == "nt")
+            finally:
+                if frontend_tree is not None:
+                    frontend_tree.terminate()
             # 各服务自行管理关闭期限，不能在 Worker 宽限期结束前强杀 API。
             while any(process.poll() is None for process in processes):
                 if force_exit:

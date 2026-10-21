@@ -387,17 +387,20 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
     from contextlib import nullcontext
     from types import SimpleNamespace
 
+    from app.analysis.transcription import process_tree
     from app.commands.serve import cmd_console
 
     (tmp_path / "index.html").write_text("frontend")
     processes = []
     options = []
+    ownership = []
     original_signals = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
 
     class Process:
         returncode = None
 
-        def __init__(self):
+        def __init__(self) -> None:
+            self.pid = len(processes) + 1
             self.stopping = False
             self.waits = 0
             self.stdin = None
@@ -437,6 +440,20 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
         if seconds == 0.25:
             raise KeyboardInterrupt
 
+    class SystemOwnership:
+        # 本测试控制外部进程与 Job 边界，真实进程树清理由集成测试验证。
+        def __init__(self, pid: int) -> None:
+            assert pid == processes[-1].pid
+            ownership.append("attach")
+
+        def resume_suspended(self) -> None:
+            assert options[-1]["creationflags"] & 0x00000004
+            ownership.append("resume")
+
+        def terminate(self) -> None:
+            ownership.append("terminate")
+
+    monkeypatch.setattr(process_tree, "ProcessTree", SystemOwnership)
     monkeypatch.setattr(subprocess, "Popen", spawn)
     monkeypatch.setattr(time, "sleep", sleep)
     monkeypatch.setattr(
@@ -446,6 +463,7 @@ def test_console_isolates_terminal_signals_and_waits_for_backend_cleanup(
     )
     cmd_console(frontend_dir=str(tmp_path), port=8080)
     assert len(processes) == 2
+    assert ownership == (["attach", "resume", "terminate"] if os.name == "nt" else [])
     for kwargs in options:
         if os.name == "nt":
             assert kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP

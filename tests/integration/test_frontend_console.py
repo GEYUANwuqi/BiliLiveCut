@@ -145,7 +145,7 @@ def test_console_starts_independent_frontend_and_api_and_cleans_up(tmp_path: Pat
                 assert b'"rooms":[]' in response.read()
             with opener.open(f"http://127.0.0.1:{port}/api/settings", timeout=3) as response:
                 assert json.loads(response.read())["current_web_port"] == port
-            children = psutil.Process(process.pid).children()
+            children = psutil.Process(process.pid).children(recursive=True)
             _stop_console(process)
             exit_code = process.wait(timeout=25)
             # Windows 的 TerminateProcess 退出码由调用方决定；监督器须保留失败语义。
