@@ -13,7 +13,7 @@ anyio==4.14.2 --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45e
 audioread==3.1.0 --hash=sha256:b30d1df6c5d3de5dcef0fb0e256f6ea17bdcf5f979408df0297d8a408e2971b4  # audioread-3.1.0-py3-none-any.whl
 av==18.0.0 --hash=sha256:aaf4d354d2beaa6651e4f92e54409a578bde64f79c0beef9a30b388d06f7c629  # av-18.0.0-cp311-abi3-win_amd64.whl
 brotli==1.2.0 --hash=sha256:022426c9e99fd65d9475dce5c195526f04bb8be8907607e27e747893f6ee3e24  # brotli-1.2.0-cp311-cp311-win_amd64.whl
-certifi==2026.7.22 --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775  # certifi-2026.7.22-py3-none-any.whl
+certifi==2026.10.19 --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b  # certifi-2026.10.19-py3-none-any.whl
 cffi==2.1.1 --hash=sha256:42f6930c31dc7f50732c9ae793c2786c7b6b044195967bbdde40bb9be81c4cc0  # cffi-2.1.1-cp311-cp311-win_amd64.whl
 charset-normalizer==3.4.9 --hash=sha256:6366a16e1a25018694d6a5d784d09b046edc9eac40ea2b54065c3052672516a1  # charset_normalizer-3.4.9-cp311-cp311-win_amd64.whl
 click==8.4.2 --hash=sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76  # click-8.4.2-py3-none-any.whl
