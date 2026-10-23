@@ -37,6 +37,7 @@ import { download } from "./library";
 import { Evidence } from "./review";
 import { Input } from "@/components/ui/input";
 import { settingsCatalog } from "@/features/settings-catalog";
+import { createLlmProvider, llmPresets } from "@/features/llm-presets";
 
 export function SettingsPage() {
   const auth = useAuth();
@@ -293,6 +294,8 @@ export function LlmPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<Row[]>([]);
+  const [presetId, setPresetId] = useState("custom");
+  const preset = llmPresets.find((entry) => entry.id === presetId);
   useEffect(() => {
     onBusy?.(busy);
     return () => onBusy?.(false);
@@ -352,6 +355,62 @@ export function LlmPage({
     >
       <QueryState query={query}>
         <div className="space-y-5">
+          <Card>
+            <CardContent className="space-y-4">
+              <h2 className="font-medium">添加大模型服务</h2>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1">
+                  <FormField
+                    field={{
+                      name: "llm_preset",
+                      label: "服务商预设",
+                      options: [
+                        { value: "custom", label: "自定义 OpenAI 兼容服务" },
+                        ...llmPresets.map((entry) => ({
+                          value: entry.id,
+                          label: entry.name,
+                        })),
+                      ],
+                    }}
+                    value={presetId}
+                    disabled={busy}
+                    onChange={(next) => setPresetId(String(next))}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    draft.update([...providers, createLlmProvider(preset)]);
+                    setResults([]);
+                  }}
+                >
+                  <Plus className="size-4" />
+                  添加服务
+                </Button>
+              </div>
+              {preset ? (
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p className="break-all font-mono text-xs">
+                    {preset.baseUrl}
+                  </p>
+                  <p>{preset.note}</p>
+                  <a
+                    href={preset.docsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline underline-offset-4"
+                  >
+                    {preset.name}官方接入文档
+                  </a>
+                </div>
+              ) : null}
+              <p className="text-xs leading-6 text-muted-foreground">
+                预设会填入名称、API 地址和已有的模型示例，添加后均可修改。
+                模型权限和价格以平台控制台为准，密钥需自行填写。添加不会保存或发送请求。
+              </p>
+            </CardContent>
+          </Card>
           {providers.map((provider, index) => (
             <Card key={index}>
               <CardContent>
@@ -403,29 +462,6 @@ export function LlmPage({
               description="添加支持兼容接口的服务，启用摘要、高光分析与文案生成。"
             />
           )}
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() =>
-              draft.update([
-                ...providers,
-                {
-                  id: "",
-                  name: "",
-                  base_url: "",
-                  model: "",
-                  api_key: "",
-                  enabled: true,
-                  priority: 100,
-                  price_input_per_m: 0,
-                  price_output_per_m: 0,
-                },
-              ])
-            }
-          >
-            <Plus className="size-4" />
-            添加服务
-          </Button>
           {draft.dirty && (
             <Button
               variant="ghost"
