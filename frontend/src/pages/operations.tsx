@@ -2,7 +2,7 @@ import { taskStages, statusLabels } from "@/lib/status";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Activity, Cpu, HardDrive, ListTodo, Upload } from "lucide-react";
-import { useAction, useApi } from "@/api/client";
+import { useAction, useApi, type Row } from "@/api/client";
 import { obj, rows, text, number, time, duration } from "@/lib/data";
 import {
   Page,
@@ -273,16 +273,42 @@ export function UploadsPage() {
     </Page>
   );
 }
+function logTimestamp(entry: Row): number | null {
+  const value = entry.created_at || entry.timestamp;
+  if (!value) return null;
+  const source = String(value);
+  const timestamp = Date.parse(
+    /[zZ]|[+-]\d\d:\d\d$/.test(source) ? source : `${source}Z`,
+  );
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
 export function LogsPage() {
   const [level, setLevel] = useState("");
   const [search, setSearch] = useState("");
-  const query = useApi(
-    `/api/logs?limit=500${level ? `&level=${level}` : ""}`,
-    10000,
-  );
-  const logs = rows(query.data).filter((entry) =>
-    JSON.stringify(entry).toLowerCase().includes(search.toLowerCase()),
-  );
+  const [order, setOrder] = useState("desc");
+  const [date, setDate] = useState("");
+  const params = new URLSearchParams({ limit: "500" });
+  if (level) params.set("level", level);
+  if (date) {
+    const start = new Date(`${date}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    params.set("start_at", start.toISOString());
+    params.set("end_at", end.toISOString());
+  }
+  const query = useApi(`/api/logs?${params}`, 10000);
+  const logs = rows(query.data)
+    .filter((entry) =>
+      JSON.stringify(entry).toLowerCase().includes(search.toLowerCase()),
+    )
+    .sort((left, right) => {
+      const a = logTimestamp(left);
+      const b = logTimestamp(right);
+      if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1;
+      const comparison = a - b || number(left.id) - number(right.id);
+      return order === "desc" ? -comparison : comparison;
+    });
   return (
     <Page
       eyebrow="OPERATIONS / LOGS"
@@ -293,6 +319,7 @@ export function LogsPage() {
       <div className="flex flex-wrap gap-3">
         <Input
           className="max-w-md bg-card"
+          aria-label="搜索日志内容"
           placeholder="搜索日志内容…"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -308,7 +335,33 @@ export function LogsPage() {
           <option>ERROR</option>
           <option>CRITICAL</option>
         </select>
+        <Input
+          type="date"
+          aria-label="日志日期"
+          title="按本地日期筛选日志"
+          className="w-44 bg-card"
+          value={date}
+          onChange={(event) => setDate(event.target.value)}
+        />
+        {date && (
+          <Button variant="ghost" onClick={() => setDate("")}>
+            清除日期
+          </Button>
+        )}
+        <select
+          className="native-select w-40"
+          aria-label="日志排序"
+          value={order}
+          onChange={(event) => setOrder(event.target.value)}
+        >
+          <option value="desc">最新在前</option>
+          <option value="asc">最早在前</option>
+        </select>
       </div>
+      <p className="text-xs text-muted-foreground">
+        日期按浏览器本地时区筛选，与日志显示时间一致。最多显示符合条件的最近 500
+        条。
+      </p>
       <QueryState query={query}>
         {logs.length ? (
           <div className="overflow-hidden rounded-2xl border bg-card">

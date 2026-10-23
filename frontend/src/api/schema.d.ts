@@ -4055,6 +4055,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 level?: string | null;
+                start_at?: string | null;
+                end_at?: string | null;
             };
             header?: never;
             path?: never;

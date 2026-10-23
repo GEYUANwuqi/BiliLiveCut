@@ -65,6 +65,125 @@ async function mock(page: Page) {
 }
 test.beforeEach(async ({ page }) => mock(page));
 
+test("logs default to newest first and keep the selected order after filtering and refresh", async ({
+  page,
+}) => {
+  let refreshed = false;
+  await page.route("**/api/logs?**", async (route) => {
+    const logs = [
+      {
+        id: 1,
+        created_at: "2026-10-22T01:00:00",
+        level: "WARNING",
+        message: "采集：较早日志",
+      },
+      {
+        id: 3,
+        created_at: "2026-10-22T02:00:00Z",
+        level: "ERROR",
+        message: "采集：同秒较新日志",
+      },
+      {
+        id: 2,
+        created_at: "2026-10-22T10:00:00+08:00",
+        level: "ERROR",
+        message: "采集：同秒较早日志",
+      },
+    ];
+    if (refreshed)
+      logs.unshift({
+        id: 4,
+        created_at: "2026-10-22T03:00:00Z",
+        level: "ERROR",
+        message: "采集：刷新新增日志",
+      });
+    const level = new URL(route.request().url()).searchParams.get("level");
+    return route.fulfill({
+      json: level ? logs.filter((entry) => entry.level === level) : logs,
+    });
+  });
+  await page.goto("/logs");
+  const messages = page.locator("p.font-mono");
+  await expect(page.getByLabel("日志排序")).toHaveValue("desc");
+  await expect(messages).toHaveText([
+    "采集：同秒较新日志",
+    "采集：同秒较早日志",
+    "采集：较早日志",
+  ]);
+  await page.getByLabel("日志排序").selectOption("asc");
+  await expect(messages.first()).toHaveText("采集：较早日志");
+  await page.getByLabel("日志等级").selectOption("ERROR");
+  await page.getByLabel("搜索日志内容").fill("同秒");
+  await expect(messages).toHaveText([
+    "采集：同秒较早日志",
+    "采集：同秒较新日志",
+  ]);
+  await page.getByLabel("日志排序").selectOption("desc");
+  await page.getByLabel("搜索日志内容").clear();
+  refreshed = true;
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(messages.first()).toHaveText("采集：刷新新增日志");
+  await expect(page.getByLabel("日志排序")).toHaveValue("desc");
+});
+
+test.describe("log dates in the browser timezone", () => {
+  test.use({ timezoneId: "Asia/Shanghai" });
+
+  test("date selection queries the whole local day and clearing keeps other filters", async ({
+    page,
+  }) => {
+    const requested: URL[] = [];
+    await page.route("**/api/logs?**", async (route) => {
+      const url = new URL(route.request().url());
+      requested.push(url);
+      return route.fulfill({
+        json: url.searchParams.has("start_at")
+          ? [
+              {
+                id: 1,
+                created_at: "2026-10-21T16:00:00Z",
+                level: "ERROR",
+                message: "所选日期的历史日志",
+              },
+            ]
+          : [
+              {
+                id: 2,
+                created_at: "2026-10-23T16:00:00Z",
+                level: "ERROR",
+                message: "最新日期日志",
+              },
+            ],
+      });
+    });
+    await page.goto("/logs");
+    await expect(page.getByText("最新日期日志", { exact: true })).toBeVisible();
+    await page.getByLabel("日志等级").selectOption("ERROR");
+    await page.getByLabel("日志排序").selectOption("asc");
+    await page.getByLabel("日志日期").fill("2026-10-22");
+    await expect(page.getByText("所选日期的历史日志")).toBeVisible();
+    expect(requested.at(-1)?.searchParams.get("start_at")).toBe(
+      "2026-10-21T16:00:00.000Z",
+    );
+    expect(requested.at(-1)?.searchParams.get("end_at")).toBe(
+      "2026-10-22T16:00:00.000Z",
+    );
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await expect(page.getByLabel("日志日期")).toHaveValue("2026-10-22");
+    await page.getByRole("button", { name: "清除日期", exact: true }).click();
+    await expect(page.getByText("最新日期日志", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("日志日期")).toHaveValue("");
+    await expect(page.getByLabel("日志等级")).toHaveValue("ERROR");
+    await expect(page.getByLabel("日志排序")).toHaveValue("asc");
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await expect
+      .poll(() => requested.at(-1)?.searchParams.has("start_at"))
+      .toBe(false);
+    expect(requested.at(-1)?.searchParams.has("start_at")).toBe(false);
+    expect(requested.at(-1)?.searchParams.has("end_at")).toBe(false);
+  });
+});
+
 test("settings groups are searchable and open the selected parameter category", async ({
   page,
 }) => {
