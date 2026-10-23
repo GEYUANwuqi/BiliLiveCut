@@ -61,6 +61,32 @@ def test_failure_releases_all_lease_fields(temp_db: None, permanent: bool) -> No
         assert task.last_error == "model failed"
 
 
+def test_final_transcription_failure_remains_error(
+    temp_db: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    task_id, _, _ = seed()
+    monkeypatch.setattr(scheduler, "_WORKER_ID", "worker")
+    monkeypatch.setattr(scheduler, "start_heartbeat_thread", lambda *args: threading.Event())
+
+    def unavailable(lease: object) -> None:
+        raise RuntimeError("所有 ASR 引擎均不可用")
+
+    monkeypatch.setattr(scheduler, "run_transcribe", unavailable)
+    task_logger = logging.getLogger(scheduler.__name__)
+    task_logger.addHandler(caplog.handler)
+    try:
+        scheduler.execute_task(task_id, TaskStatus.TRANSCRIBING, "old")
+    finally:
+        task_logger.removeHandler(caplog.handler)
+    assert any(record.levelname == "ERROR" and "阶段" in record.message for record in caplog.records)
+    with get_session() as db:
+        task = db.get(SegmentTask, task_id)
+        assert task is not None and task.stage == TaskStatus.TRANSIENT_FAILED
+        assert "所有 ASR 引擎均不可用" in task.last_error
+
+
 @pytest.mark.parametrize("stage", [TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.COMPLETED])
 def test_terminal_cancel_returns_business_failure(temp_db: None, stage: str) -> None:
     task_id, _, _ = seed(stage)

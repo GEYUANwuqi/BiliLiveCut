@@ -61,6 +61,12 @@ def sdk_process(connection: Connection) -> None:
                 origin="fake_sdk:infer:42",
                 message="model fallback at https://example.com/model?token=private-token",
             )
+            send(
+                "progress",
+                stage="fallback_completed",
+                details={"primary_backend": "funasr-nano", "fallback_backend": "whisper"},
+                models=[],
+            )
             send("result", result={"text": "ok"}, pid=os.getpid(), models=[])
         elif mode == "wrong_request":
             connection.send_bytes(json.dumps({"kind": "result", "request_id": "stale"}).encode())
@@ -181,8 +187,8 @@ def test_partial_ipc_frame_cannot_block_supervision() -> None:
 def test_child_diagnostic_reaches_parent_with_context_and_redaction() -> None:
     from loguru import logger
 
-    messages: list[str] = []
-    sink = logger.add(lambda message: messages.append(str(message)))
+    messages: list[tuple[str, str]] = []
+    sink = logger.add(lambda message: messages.append((message.record["level"].name, str(message))))
     pool = ASRProcessPool(sdk_process)
     try:
         pool.execute(
@@ -191,8 +197,10 @@ def test_child_diagnostic_reaches_parent_with_context_and_redaction() -> None:
     finally:
         pool.shutdown(0)
         logger.remove(sink)
-    report = "\n".join(messages)
+    report = "\n".join(message for _, message in messages)
     assert "asr_diagnostic" in report and "159" in report and "lease-a" in report
+    assert any(level == "WARNING" and "asr_diagnostic" in message for level, message in messages)
+    assert any(level == "INFO" and "fallback_completed" in message for level, message in messages)
     assert "fake_sdk:infer:42" in report and "private-token" not in report
 
 
