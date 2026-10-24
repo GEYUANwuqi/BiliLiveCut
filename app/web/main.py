@@ -7,7 +7,7 @@
 启动方式::
 
     python -m app.cli serve            # 推荐
-    uvicorn app.web.main:app --reload  # 开发热重载
+    uvicorn app.web.main:app --reload --timeout-graceful-shutdown 10  # 开发热重载
 """
 
 from __future__ import annotations
@@ -380,7 +380,8 @@ class _AuthMiddleware(_BaseMiddleware):
         """检查请求是否为状态修改类请求 (POST/PUT/PATCH/DELETE)。"""
         return request.method in ("POST", "PUT", "PATCH", "DELETE")
 
-    def _check_csrf(self, request: Request) -> bool:
+    @classmethod
+    def _check_csrf(cls, request: Request) -> bool:
         """跨站请求伪造检查 (V0.1.14.11 强化)。
 
         浏览器修改请求必须带有与当前请求完全同源的 Origin。
@@ -400,13 +401,13 @@ class _AuthMiddleware(_BaseMiddleware):
             return True
 
         # ── Parse origin ──
-        parsed = self._parse_origin(origin)
+        parsed = cls._parse_origin(origin)
         if parsed is None:
             return False
 
         # ── Build expected from request ──
         scheme = request.url.scheme or "http"
-        authority = self._parse_authority(request.headers.get("Host", ""))
+        authority = cls._parse_authority(request.headers.get("Host", ""))
         if authority is None:
             return False
         hostname, port_hint = authority
@@ -564,7 +565,7 @@ class _AuthMiddleware(_BaseMiddleware):
     @staticmethod
     def _reviewer_path_allowed(path: str) -> bool:
         """限制审核员只能进入审核工作台和读取审核所需媒体。"""
-        if path.startswith("/review/"):
+        if path == "/api/events" or path.startswith("/review/"):
             return True
         parts = path.strip("/").split("/")
         if len(parts) >= 2 and parts[:2] == ["api", "jobs"]:

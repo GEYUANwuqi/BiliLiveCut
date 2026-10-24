@@ -85,7 +85,10 @@ def get_session() -> Iterator[Session]:
 
     :yields: 一个可用的 :class:`~sqlmodel.Session`。
     """
+    from app.db.notifications import observe_commits
+
     session = Session(engine, expire_on_commit=False)
+    observe_commits(session)
     try:
         yield session
         session.commit()

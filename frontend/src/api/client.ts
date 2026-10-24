@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { authHeaders, expireAuth, refreshAuth, useAuth } from "./auth";
+import { eventsConnected } from "./events";
 import type { paths, components } from "./schema";
 
 export type Schemas = components["schemas"];
@@ -16,6 +17,14 @@ export class ApiError extends Error {
     this.status = status;
     this.retryAfter = retryAfter;
   }
+}
+
+export function allowsAutomaticRefresh(error: unknown): boolean {
+  return !(
+    error instanceof ApiError &&
+    error.status >= 400 &&
+    error.status < 500
+  );
 }
 
 let pauseUntil = 0;
@@ -125,16 +134,12 @@ export function useApi<T = unknown>(
     staleTime: 3000,
     refetchInterval: (query) => {
       const error = query.state.error;
-      if (
-        error instanceof ApiError &&
-        error.status >= 400 &&
-        error.status < 500
-      )
-        return false;
+      if (!allowsAutomaticRefresh(error)) return false;
       return typeof interval === "number"
         ? Math.min(
             60000,
-            interval * 2 ** Math.min(query.state.fetchFailureCount, 4),
+            Math.max(interval, eventsConnected() ? 30000 : 0) *
+              2 ** Math.min(query.state.fetchFailureCount, 4),
           )
         : false;
     },

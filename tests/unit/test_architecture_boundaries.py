@@ -8,6 +8,8 @@ from scripts.check_architecture import check, violations
 @pytest.mark.parametrize(
     "path,source",
     [
+        ("app/core/notifications.py", "from app.db import session"),
+        ("app/db/notifications.py", "from app.web import main"),
         ("app/models/contracts.py", "from app.core import config"),
         ("app/models/configuration.py", "from app.web.services import settings"),
         ("app/core/configuration_policy.py", "from app.web import main"),

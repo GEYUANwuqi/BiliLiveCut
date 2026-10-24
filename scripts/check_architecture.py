@@ -8,6 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BOUNDARIES = {
+    "app/core/notifications.py": ("app", "sqlalchemy", "sqlmodel", "fastapi", "starlette"),
+    "app/db/notifications.py": ("app.web", "app.pipeline", "app.recording", "fastapi", "starlette"),
     "app/models/contracts.py": ("app", "sqlalchemy", "sqlmodel", "fastapi", "starlette"),
     "app/models/configuration.py": ("app.web", "app.pipeline", "app.clipping", "fastapi", "starlette"),
     "app/core/configuration_policy.py": ("app", "sqlalchemy", "sqlmodel", "fastapi", "starlette"),

@@ -171,9 +171,18 @@ def cmd_serve(
         source_root = Path(__file__).resolve().parents[2]
         reload_options["reload_dirs"] = [str(source_root / "app"), str(source_root / "config")]
     if os.environ.pop("_BLC_PARENT_STDIN", "") == "1" and not reload:
-        _serve_with_parent_pipe(uvicorn, host=host, port=actual_port, log_config=None)
+        _serve_with_parent_pipe(uvicorn, host=host, port=actual_port, log_config=None, timeout_graceful_shutdown=10)
     else:
-        uvicorn.run("app.web.main:app", host=host, port=actual_port, reload=reload, log_config=None, **reload_options)
+        # 先结束 HTTP 长连接，再进入 lifespan；媒体执行仍由 Supervisor 等待真实退出。
+        uvicorn.run(
+            "app.web.main:app",
+            host=host,
+            port=actual_port,
+            reload=reload,
+            log_config=None,
+            timeout_graceful_shutdown=10,
+            **reload_options,
+        )
 
 
 # 注册列表

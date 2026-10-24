@@ -284,6 +284,7 @@ def test_serve_exports_actual_cli_port_to_application(monkeypatch) -> None:  # n
         "port": 8080,
         "reload": False,
         "log_config": None,
+        "timeout_graceful_shutdown": 10,
     }
     assert os.environ["BLC_WEB_PORT"] == "8080"
     assert os.environ["BLC_APP_ROOT"] == os.getcwd()
@@ -309,6 +310,7 @@ def test_backend_reload_watches_application_sources_independent_of_cwd(
     root = Path(serve.__file__).resolve().parents[2]
     assert captured["reload_dirs"] == [str(root / "app"), str(root / "config")]
     assert captured["reload"] is True
+    assert captured["timeout_graceful_shutdown"] == 10
 
 
 def test_record_pipeline_default_persists_scheduler_switches(

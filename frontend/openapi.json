@@ -2244,6 +2244,18 @@
         "summary": "Get Dashboard"
       }
     },
+    "/api/events": {
+      "get": {
+        "description": "订阅当前账号可见的状态提示；所有业务数据仍由 HTTP 查询。",
+        "operationId": "events_api_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Events"
+      }
+    },
     "/api/events/{event_id}/variants": {
       "get": {
         "description": "列出某事件的所有成品版本。",
