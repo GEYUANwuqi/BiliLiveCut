@@ -19,13 +19,15 @@ import math
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from loguru import logger
 from sqlmodel import select
 
+from app.clipping.drafts import input_fingerprint, publication
 from app.core.config import settings
 from app.core.paths import clips_dir
 from app.core.process_control import ProcessCancelledError, run_cancellable
@@ -42,6 +44,9 @@ from app.db.entities import (
     Topic,
 )
 from app.db.session import get_session
+
+if TYPE_CHECKING:
+    from app.jobs.context import JobContext
 
 
 def get_collection_events(topic_id: int) -> list[dict[str, object]]:
@@ -142,6 +147,38 @@ def render_collection(
     *,
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    job_context: JobContext | None = None,
+) -> ClipVariant | None:
+    """在独占输出范围内计算并发布合集，失败或取消时清理未引用文件。"""
+    output = clips_dir() / f"collection_{topic_id}_{uuid4().hex}.mp4"
+    if output.exists():
+        raise FileExistsError("当前合集输出已存在，拒绝覆盖")
+    with publication((output,)):
+        result = _render_collection(
+            topic_id,
+            event_ids,
+            chapter_titles,
+            include_chapter_cards,
+            output=output,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+            job_context=job_context,
+        )
+        if result is None:
+            output.unlink(missing_ok=True)
+        return result
+
+
+def _render_collection(
+    topic_id: int,
+    event_ids: list[int],
+    chapter_titles: list[str] | None,
+    include_chapter_cards: bool,
+    *,
+    output: Path,
+    progress_callback: Callable[[int, str], None] | None,
+    cancel_check: Callable[[], bool] | None,
+    job_context: JobContext | None,
 ) -> ClipVariant | None:
     """将同主题的多个高光拼接为合集 MP4。
 
@@ -171,6 +208,9 @@ def render_collection(
         if topic is None:
             logger.error("主题 {} 不存在。", topic_id)
             return None
+        topic_snapshot = topic.model_dump(mode="json")
+        input_snapshots: dict[int, str] = {}
+        clip_snapshots: dict[int, dict[str, object]] = {}
 
         # 收集 clip 文件。
         linked_ids = set(db.exec(select(HighlightTopic.event_id).where(HighlightTopic.topic_id == topic_id)).all())
@@ -196,6 +236,9 @@ def render_collection(
             if clips is None or not clips.file_path or not Path(clips.file_path).exists():
                 logger.warning("事件 {} 没有可用成品文件。", eid)
                 return None
+            assert clips.id is not None and cand.id is not None
+            input_snapshots[cand.id] = input_fingerprint(db, cand.id)
+            clip_snapshots[clips.id] = clips.model_dump(mode="json")
             clip_files.append(
                 {
                     "path": clips.file_path,
@@ -208,9 +251,9 @@ def render_collection(
         logger.error("可用成品文件不足 2 个,无法生成合集。")
         return None
 
-    out_dir = clips_dir()
+    out_dir = output.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / (f"collection_{topic_id}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}.mp4")
+    out_file = output
 
     # 章节标题卡(简单纯色+文字)。
     chapter_videos = []
@@ -356,8 +399,25 @@ def render_collection(
         out_file.unlink(missing_ok=True)
         return None
 
-    # 写入 ClipVariant。
-    with get_session() as db:
+    # 正式结果、输入条件与作业终态在同一写事务内复验和提交。
+    transaction = job_context.result_transaction() if job_context is not None else get_session()
+    with transaction as db:
+        if job_context is None:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        _check_collection_cancel(cancel_check)
+        topic = db.get(Topic, topic_id)
+        if topic is None or topic.model_dump(mode="json") != topic_snapshot:
+            raise ValueError("主题已改变，拒绝发布旧输入生成的合集")
+        linked_ids = set(db.exec(select(HighlightTopic.event_id).where(HighlightTopic.topic_id == topic_id)).all())
+        if not set(event_ids).issubset(linked_ids):
+            raise ValueError("合集事件关联已改变，拒绝发布")
+        for candidate_id, fingerprint in input_snapshots.items():
+            if input_fingerprint(db, candidate_id) != fingerprint:
+                raise ValueError("合集候选或审核内容已改变，拒绝发布")
+        for clip_id, snapshot in clip_snapshots.items():
+            source_clip = db.get(FinalClip, clip_id)
+            if source_clip is None or source_clip.model_dump(mode="json") != snapshot:
+                raise ValueError("合集来源成片已改变，拒绝发布")
         variant = ClipVariant(
             event_id=event_ids[0],
             variant_type=ClipVariantType.COLLECTION_CHAPTER,
@@ -394,8 +454,17 @@ def render_collection(
                     cand.status = CandidateStatus.MERGED
                     db.add(cand)
 
-        logger.info("合集渲染完成: {} ({} 个片段,{:.1f}s)", out_file, len(normalized_paths), duration_s)
+        if job_context is not None:
+            job_context.complete(
+                db,
+                {
+                    "variant_id": variant.id,
+                    "file_path": variant.file_path,
+                    "duration_s": variant.duration_s,
+                },
+            )
 
+    logger.info("合集渲染完成: {} ({} 个片段,{:.1f}s)", out_file, len(normalized_paths), duration_s)
     return variant
 
 

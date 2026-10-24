@@ -155,6 +155,11 @@ export const sections = [
             '文档站维护',
             '/development/documentation.html',
           ],
+          [
+            'docs/development/architecture.md',
+            '任务执行与结果发布',
+            '/development/architecture.html',
+          ],
         ],
       },
       {

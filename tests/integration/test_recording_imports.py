@@ -17,8 +17,9 @@ from sqlmodel import select
 
 from app.db.entities import AppSetting, Danmaku, LiveRoom, RawSegment, RecordingSession, SegmentTask
 from app.db.session import get_session
+from app.jobs.context import JobContext
+from app.jobs.contracts import JobAttempt, JobCancelled, JobData, now_iso
 from app.recording.imports import ImportRequest, create_import, get_import, prepare_import, save_import, upload_path
-from app.web.services.background_jobs import JobCancelled, JobContext
 
 
 def _video(path: Path, *, audio: bool = True) -> None:
@@ -46,7 +47,32 @@ def _ready_import(monkeypatch: MonkeyPatch, *, comments: bool = True, audio: boo
     record.comments_uploaded = comments
     with get_session() as db:
         save_import(db, record)
-    monkeypatch.setattr(JobContext, "report", lambda self, progress, message: None)
+    from app.db import job_store
+
+    now = now_iso()
+    job: JobData = {
+        "version": 1,
+        "id": record.id,
+        "type": "local_import",
+        "label": "导入测试",
+        "owner": "local-admin",
+        "payload": {"import_id": record.id},
+        "dedup_key": None,
+        "cancellable_while_running": True,
+        "status": "queued",
+        "progress": 0,
+        "message": "等待执行",
+        "result": None,
+        "error": None,
+        "attempt": 1,
+        "created_at": now,
+        "updated_at": now,
+        "started_at": None,
+        "finished_at": None,
+        "recovered": False,
+    }
+    job_store.register(job)
+    job_store.claim(JobAttempt(record.id, 1))
     return record.id
 
 
@@ -93,7 +119,7 @@ def test_real_media_import_is_atomic_idempotent_and_aligned(temp_db: None, monke
     from app.web.services.dashboard import dashboard_state
 
     import_id = _ready_import(monkeypatch)
-    context = JobContext("test", threading.Event())
+    context = JobContext(import_id, threading.Event())
     result = prepare_import(context, import_id)
     assert prepare_import(context, import_id) == result
     record = get_import(import_id)
@@ -136,7 +162,7 @@ def test_no_comments_is_unavailable_evidence(temp_db: None, monkeypatch: MonkeyP
     from app.analysis.hotspot_detector import build_segment_signal_buckets
 
     import_id = _ready_import(monkeypatch, comments=False)
-    prepare_import(JobContext("test", threading.Event()), import_id)
+    prepare_import(JobContext(import_id, threading.Event()), import_id)
     with get_session() as db:
         segment = db.exec(select(RawSegment)).first()
         assert segment is not None and segment.id is not None
@@ -149,14 +175,14 @@ def test_invalid_comments_and_audio_publish_no_tasks(temp_db: None, monkeypatch:
     record = get_import(import_id)
     upload_path(record, "comments").write_text("<invalid>", encoding="utf-8")
     with pytest.raises(ValueError, match="XML"):
-        prepare_import(JobContext("test", threading.Event()), import_id)
+        prepare_import(JobContext(import_id, threading.Event()), import_id)
     with get_session() as db:
         assert db.exec(select(SegmentTask)).all() == []
         assert db.exec(select(RecordingSession)).all() == []
     assert upload_path(record, "video").is_file()
     silent_id = _ready_import(monkeypatch, comments=False, audio=False)
     with pytest.raises(ValueError, match="音频"):
-        prepare_import(JobContext("test", threading.Event()), silent_id)
+        prepare_import(JobContext(silent_id, threading.Event()), silent_id)
 
 
 def test_cancelled_import_can_resume_without_duplicate_records(temp_db: None, monkeypatch: MonkeyPatch) -> None:
@@ -164,10 +190,10 @@ def test_cancelled_import_can_resume_without_duplicate_records(temp_db: None, mo
     cancelled = threading.Event()
     cancelled.set()
     with pytest.raises(JobCancelled):
-        prepare_import(JobContext("test", cancelled), import_id)
+        prepare_import(JobContext(import_id, cancelled), import_id)
     assert get_import(import_id).session_id is None
     cancelled.clear()
-    assert prepare_import(JobContext("test", cancelled), import_id)["session_id"] is not None
+    assert prepare_import(JobContext(import_id, cancelled), import_id)["session_id"] is not None
 
 
 def test_publication_failure_rolls_back_all_entities(temp_db: None, monkeypatch: MonkeyPatch) -> None:
@@ -181,13 +207,13 @@ def test_publication_failure_rolls_back_all_entities(temp_db: None, monkeypatch:
 
     monkeypatch.setattr(module, "save_import", fail_publication)
     with pytest.raises(RuntimeError, match="提交失败"):
-        prepare_import(JobContext("test", threading.Event()), import_id)
+        prepare_import(JobContext(import_id, threading.Event()), import_id)
     with get_session() as db:
         for model in (LiveRoom, RecordingSession, RawSegment, Danmaku, SegmentTask):
             assert not db.exec(select(model)).all()
     assert not list((upload_path(get_import(import_id), "video").parent / "segments").glob("*.mkv"))
     monkeypatch.setattr(module, "save_import", original)
-    assert prepare_import(JobContext("test", threading.Event()), import_id)["session_id"] is not None
+    assert prepare_import(JobContext(import_id, threading.Event()), import_id)["session_id"] is not None
 
 
 def test_upload_limits_sealing_and_cleanup(temp_db: None, monkeypatch: MonkeyPatch) -> None:
@@ -229,7 +255,7 @@ def test_import_page_progress_and_exact_session_results(temp_db: None, monkeypat
     from app.web.main import _rate_buckets, app
 
     import_id = _ready_import(monkeypatch, comments=False)
-    prepare_import(JobContext("test", threading.Event()), import_id)
+    prepare_import(JobContext(import_id, threading.Event()), import_id)
     imported_session_id = get_import(import_id).session_id
     with get_session() as db:
         tasks = db.exec(select(SegmentTask).order_by(SegmentTask.id)).all()
@@ -291,7 +317,7 @@ def test_disguised_playlist_is_rejected_before_registration(temp_db: None, monke
         "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nfile:///private.ts\n#EXT-X-ENDLIST\n", encoding="utf-8"
     )
     with pytest.raises(subprocess.CalledProcessError):
-        prepare_import(JobContext("test", threading.Event()), import_id)
+        prepare_import(JobContext(import_id, threading.Event()), import_id)
     assert get_import(import_id).session_id is None
 
 
@@ -314,7 +340,7 @@ def test_local_asr_uses_configured_llm_for_refinement_and_full_summary(
     from app.pipeline.workers.transcribe import transcribe_compute
 
     import_id = _ready_import(monkeypatch, comments=False)
-    prepare_import(JobContext("test", threading.Event()), import_id)
+    prepare_import(JobContext(import_id, threading.Event()), import_id)
     text = "今天我们来讨论这个游戏的操作方法。这一段需要先观察对手，再选择合适的位置。"
     cleaned = "今天讨论游戏操作方法。这一段需要先观察对手，再选择合适的位置。"
     expected_summary = "这场录播讲解了观察对手与选择位置的操作方法。"
@@ -390,7 +416,7 @@ def test_imported_hotspot_reanalysis_replaces_cached_fallback_with_llm(temp_db: 
     from app.pipeline.workers.analyze import analyze_compute
 
     import_id = _ready_import(monkeypatch, comments=False)
-    prepare_import(JobContext("test", threading.Event()), import_id)
+    prepare_import(JobContext(import_id, threading.Event()), import_id)
     advance_recorded()
     text = "主播宣布周末挑战规则，挑战完成后抽取奖励。"
     with get_session() as db:
@@ -474,11 +500,12 @@ def test_imported_hotspot_reanalysis_replaces_cached_fallback_with_llm(temp_db: 
 
 
 def test_job_restart_reuses_published_session(temp_db: None, monkeypatch: MonkeyPatch) -> None:
-    from app.web.services.background_jobs import WebJobManager, get_job
+    from app.db.job_store import get_job
+    from app.web.services.background_jobs import WebJobManager
 
     import_id = _ready_import(monkeypatch)
-    # 先落库场次，模拟进程在作业结果写回前中断。
-    result = prepare_import(JobContext("test", threading.Event()), import_id)
+    # 已发布场次在重复请求时复用；原作业与场次已经共同提交。
+    result = prepare_import(JobContext(import_id, threading.Event()), import_id)
 
     async def run() -> None:
         manager = WebJobManager()
@@ -502,7 +529,7 @@ def test_imported_clip_and_collection_use_configured_llm(temp_db: None, monkeypa
     from app.publishing import collection_copywriter, copywriter
 
     import_id = _ready_import(monkeypatch, comments=False)
-    prepare_import(JobContext("test", threading.Event()), import_id)
+    prepare_import(JobContext(import_id, threading.Event()), import_id)
     with get_session() as db:
         segment = db.exec(select(RawSegment)).first()
         assert segment and segment.start_ts and segment.end_ts

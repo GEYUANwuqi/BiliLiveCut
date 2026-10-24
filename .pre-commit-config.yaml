@@ -44,6 +44,12 @@ repos:
         language: python
         pass_filenames: false
         always_run: true
+      - id: architecture-boundaries
+        name: Check architecture import boundaries
+        entry: python scripts/check_architecture.py
+        language: python
+        pass_filenames: false
+        always_run: true
       - id: react-frontend
         name: Check React types, lint and unit tests
         entry: python scripts/check_react_frontend.py

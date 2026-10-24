@@ -22,6 +22,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from loguru import logger
 from sqlmodel import select
@@ -29,6 +30,7 @@ from sqlmodel import select
 from app.accelerators.dispatcher import group_srt_blocks
 from app.analysis.transcript_windows import extract_transcript_window
 from app.clipping.danmaku import write_danmaku_ass
+from app.clipping.drafts import ClipDraft, input_fingerprint, publication, publish_draft
 from app.clipping.models import ClipOptions
 from app.core.config import settings
 from app.core.ffmpeg_errors import classify_ffmpeg_error
@@ -36,7 +38,6 @@ from app.core.paths import clips_dir
 from app.core.process_control import ProcessCancelledError, run_cancellable
 from app.core.runtime_settings import configured_task
 from app.db.entities import (
-    CandidateStatus,
     ClipStatus,
     ClipVariant,
     ClipVariantType,
@@ -800,7 +801,7 @@ def render_clip_to_file(
 
 
 @configured_task
-def produce_clip(
+def prepare_clip(
     candidate_id: int,
     options: ClipOptions | None = None,
     *,
@@ -811,19 +812,70 @@ def produce_clip(
     cancel_check: Callable[[], bool] | None = None,
     render_variants: bool = True,
     task_lease: TaskLease | None = None,
-) -> FinalClip:
-    """把一个高光候选生成为成品 MP4 并入库。
+) -> ClipDraft:
+    """计算独占文件草稿；失败只清理本次预先声明的输出文件。"""
+    suffix = output_suffix or (f"lease_{task_lease.lease_token}" if task_lease is not None else uuid4().hex)
+    stem = f"clip_{candidate_id}{_normalize_output_suffix(suffix)}"
+    root = clips_dir()
+    paths = tuple(
+        root / f"{stem}{ending}"
+        for ending in (
+            ".mp4",
+            ".jpg",
+            "_concat.txt",
+            ".srt",
+            ".ass",
+            "_archive.mp4",
+            "_compressed.mp4",
+            "_subtitled.mp4",
+            "_clean.mp4",
+        )
+    )
+    if any(path.exists() for path in paths):
+        raise FileExistsError("当前执行的成片或辅助文件已存在，拒绝覆盖")
+    prepared = False
+    try:
+        draft = _prepare_clip(
+            candidate_id,
+            options,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            output_suffix=suffix,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+            render_variants=render_variants,
+        )
+        draft.artifacts = paths
+        prepared = True
+        return draft
+    finally:
+        if not prepared:
+            for path in paths:
+                path.unlink(missing_ok=True)
+
+
+def _prepare_clip(
+    candidate_id: int,
+    options: ClipOptions | None = None,
+    *,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    output_suffix: str,
+    progress_callback: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    render_variants: bool = True,
+) -> ClipDraft:
+    """计算主片与派生版本，仅返回未发布草稿。
 
     :param candidate_id: ``highlight_candidates`` 主键。
     :param options: 切片选项;默认取自配置。
     :param start_ts: 显式剪辑起点;必须与 ``end_ts`` 同时提供。
     :param end_ts: 显式剪辑终点;必须与 ``start_ts`` 同时提供。
-    :param output_suffix: 可选的安全文件名后缀,用于保留多次渲染版本。
+    :param output_suffix: 本次执行的安全文件名后缀，用于保留多次渲染版本。
     :param progress_callback: 可选的进度回调。
     :param cancel_check: 可选的协作取消检查。
     :param render_variants: 是否继续生成派生版本。
-    :param task_lease: 人工任务的原租约，提交前在写事务内复验。
-    :returns: 新建的 :class:`FinalClip`。
+    :returns: 尚未写入正式结果表的草稿。
     :raises ValueError: 候选不存在或找不到覆盖片段时。
     :raises RuntimeError: FFmpeg 执行失败时。
     """
@@ -835,6 +887,7 @@ def produce_clip(
         cand = db.get(HighlightCandidate, candidate_id)
         if cand is None:
             raise ValueError(f"候选不存在: id={candidate_id}")
+        source_fingerprint = input_fingerprint(db, candidate_id)
         session_id = cand.session_id
         if (start_ts is None) != (end_ts is None):
             raise ValueError("显式剪辑起点和终点必须同时提供。")
@@ -858,13 +911,11 @@ def produce_clip(
     duration = (resolved_end_ts - resolved_start_ts).total_seconds()
     peak_rel = max(0.0, (peak_ts - resolved_start_ts).total_seconds())
 
-    if task_lease is not None and output_suffix is None:
-        output_suffix = f"lease_{task_lease.lease_token}"
     output_stem = f"clip_{candidate_id}{_normalize_output_suffix(output_suffix)}"
     out_path = clips_dir() / f"{output_stem}.mp4"
     cover_path = clips_dir() / f"{output_stem}.jpg"
-    if task_lease is not None and (out_path.exists() or cover_path.exists()):
-        raise FileExistsError("当前租约的成片或封面路径已存在，拒绝覆盖")
+    if out_path.exists() or cover_path.exists():
+        raise FileExistsError("当前执行的成片或封面路径已存在，拒绝覆盖")
 
     with tempfile.TemporaryDirectory(prefix="blc_clip_") as tmp:
         work_dir = Path(tmp)
@@ -923,41 +974,11 @@ def produce_clip(
         content_hash=content_hash,
         status=ClipStatus.GENERATED,
     )
-    with get_session() as db:
-        if task_lease is not None:
-            from app.pipeline.lease import LeaseLostError, require_current_lease
-
-            try:
-                require_current_lease(db, task_lease)
-            except LeaseLostError:
-                out_path.unlink(missing_ok=True)
-                cover_path.unlink(missing_ok=True)
-                raise
-        db.add(clip)
-        db.flush()
-        db.refresh(clip)
-        cand = db.get(HighlightCandidate, candidate_id)
-        if cand is not None:
-            cand.status = CandidateStatus.CLIPPED
-            db.add(cand)
-        clip_id = clip.id
-    _report_progress(progress_callback, 65, "主视频已保存")
-
-    logger.success(
-        "切片完成 clip={} candidate={} 时长={:.1f}s 分辨率={}x{} -> {}",
-        clip_id,
-        candidate_id,
-        real_duration,
-        width,
-        height,
-        out_path.name,
-    )
+    _report_progress(progress_callback, 65, "主视频草稿已生成")
+    variants: list[ClipVariant] = []
 
     if render_variants:
-        # V0.1.8: 生成多版本 ClipVariant 记录。
-        _create_clip_variants(
-            clip, options, segments, cut_offset, subtitle_rendered=options.subtitle and srt_path is not None
-        )
+        variants = _prepare_clip_variants(clip, subtitle_rendered=options.subtitle and srt_path is not None)
 
         # 在持久化目录中重建 concat 清单和 SRT,供变体渲染使用。
         _recon_dir = Path(clip.file_path).parent
@@ -982,15 +1003,52 @@ def produce_clip(
             danmaku_path=_recon_danmaku,
             progress_callback=progress_callback,
             cancel_check=cancel_check,
+            variants=variants,
         )
     else:
         _report_progress(progress_callback, 90, "审核版本已完成")
 
-    # V0.1.8 P2:切片完成通知。
+    _raise_if_cancelled(cancel_check)
+    return ClipDraft(clip=clip, variants=variants, input_fingerprint=source_fingerprint)
+
+
+@configured_task
+def produce_clip(
+    candidate_id: int,
+    options: ClipOptions | None = None,
+    *,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    output_suffix: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    render_variants: bool = True,
+    task_lease: TaskLease | None = None,
+) -> FinalClip:
+    """为同步调用者准备草稿并在短写事务内发布。"""
+    draft = prepare_clip(
+        candidate_id,
+        options,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        output_suffix=output_suffix,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+        render_variants=render_variants,
+        task_lease=task_lease,
+    )
+    with publication(draft.artifacts), get_session() as db:
+        if task_lease is not None:
+            from app.pipeline.lease import require_current_lease
+
+            require_current_lease(db, task_lease)
+        else:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        _raise_if_cancelled(cancel_check)
+        clip = publish_draft(db, draft)
     from app.notify.webhook import notify_clip_complete
 
-    notify_clip_complete(candidate_id, str(out_path), real_duration)
-
+    notify_clip_complete(candidate_id, clip.file_path, clip.duration_s)
     return clip
 
 
@@ -1010,97 +1068,31 @@ def _resolve_event_id(db, candidate_id: int) -> int:
     return event.id
 
 
-def _create_clip_variants(
+def _prepare_clip_variants(
     clip: FinalClip,
-    options: ClipOptions,
-    segments: list[RawSegment],
-    cut_offset: float,
     *,
     subtitle_rendered: bool,
-) -> None:
-    """为成品切片创建多版本 ClipVariant 记录。
-
-    规则:
-    - 主版本记作 SINGLE(已渲染,直接关联)。
-    - 如果渲染了字幕,同时记作 SUBTITLED。
-    - 无 ASR 字幕版(NO_SUBTITLES)在未烧录转写时登记，弹幕独立。
-    - 压制版(COMPRESSED)和归档版(ARCHIVE):先标记 queued,P1.1 渲染流程更新。
-
-    :param clip: 新创建的 FinalClip。
-    :param options: 渲染选项。
-    :param segments: 覆盖片段列表。
-    :param cut_offset: 裁剪偏移。
-    :param subtitle_rendered: 主视频实际是否包含字幕，不能只根据开关推断。
-    """
+) -> list[ClipVariant]:
+    """为已经生成的主文件准备派生引用，暂不发布数据库记录。"""
     with get_session() as db:
-        # V0.1.11-alpha:用真实 HighlightEvent.id 作为 event_id。
         event_id = _resolve_event_id(db, clip.candidate_id)
-
-        # SINGLE:主版本(总是生成,已渲染完成)。
-        db.add(
-            ClipVariant(
-                event_id=event_id,
-                variant_type=ClipVariantType.SINGLE,
-                file_path=clip.file_path,
-                duration_s=clip.duration_s,
-                resolution=f"{clip.width}x{clip.height}" if clip.width and clip.height else None,
-                has_subtitles=subtitle_rendered,
-                render_status=RenderStatus.DONE,
-                version_number=1,
-                created_at=clip.created_at,
-            )
+    return [
+        ClipVariant(
+            event_id=event_id,
+            variant_type=kind,
+            file_path=clip.file_path,
+            duration_s=clip.duration_s,
+            resolution=f"{clip.width}x{clip.height}" if clip.width and clip.height else None,
+            has_subtitles=subtitle_rendered,
+            render_status=RenderStatus.DONE,
+            version_number=1,
+            created_at=clip.created_at,
         )
-        # 按字幕状态标记。
-        if subtitle_rendered:
-            db.add(
-                ClipVariant(
-                    event_id=event_id,
-                    variant_type=ClipVariantType.SUBTITLED,
-                    file_path=clip.file_path,
-                    duration_s=clip.duration_s,
-                    has_subtitles=True,
-                    render_status=RenderStatus.DONE,
-                    version_number=1,
-                    created_at=clip.created_at,
-                )
-            )
-        else:
-            db.add(
-                ClipVariant(
-                    event_id=event_id,
-                    variant_type=ClipVariantType.NO_SUBTITLES,
-                    file_path=clip.file_path,
-                    duration_s=clip.duration_s,
-                    has_subtitles=False,
-                    render_status=RenderStatus.DONE,
-                    version_number=1,
-                    created_at=clip.created_at,
-                )
-            )
-        # ARCHIVE + COMPRESSED:先标记 queued,由 _render_variants 完成后更新。
-        db.add(
-            ClipVariant(
-                event_id=event_id,
-                variant_type=ClipVariantType.ARCHIVE,
-                has_subtitles=subtitle_rendered,
-                render_status=RenderStatus.QUEUED,
-                version_number=1,
-            )
+        for kind in (
+            ClipVariantType.SINGLE,
+            ClipVariantType.SUBTITLED if subtitle_rendered else ClipVariantType.NO_SUBTITLES,
         )
-        db.add(
-            ClipVariant(
-                event_id=event_id,
-                variant_type=ClipVariantType.COMPRESSED,
-                has_subtitles=subtitle_rendered,
-                render_status=RenderStatus.QUEUED,
-                version_number=1,
-            )
-        )
-        logger.info(
-            "ClipVariant 队列已创建 candidate={} variants={}",
-            clip.candidate_id,
-            "SUBTITLED" if subtitle_rendered else "NO_SUBTITLES",
-        )
+    ]
 
 
 def _run_ffmpeg_clip(
@@ -1214,6 +1206,7 @@ def _render_variants(
     duration: float,
     srt_path: Path | None,
     *,
+    variants: list[ClipVariant],
     progress_callback: Callable[[int, str], None] | None = None,
     danmaku_path: Path | None = None,
     cancel_check: Callable[[], bool] | None = None,
@@ -1225,7 +1218,7 @@ def _render_variants(
     - COMPRESSED:投稿压制版(CPU CRF/硬件质量值 26,128k 音频)
     - 互补字幕版:与主干相反(主干有字幕→无 ASR 字幕版,主干无字幕→带 ASR 字幕版；弹幕始终独立保留)
 
-    每个变体渲染完成即更新对应的 ClipVariant 记录。
+    变体仅加入调用方草稿，正式记录由最终事务统一发布。
 
     :param clip: 主干 FinalClip。
     :param options: 主干渲染选项。
@@ -1236,51 +1229,56 @@ def _render_variants(
     :param danmaku_path: 独立于 ASR 字幕的 ASS 弹幕路径(可空)。
     :param progress_callback: 可选的进度回调。
     :param cancel_check: 可选的取消检查。
+    :param variants: 接收已经计算完成的派生草稿。
     """
     variants_dir = Path(clip.file_path).parent
 
     _report_progress(progress_callback, 70, "正在生成高码率版本")
     _raise_if_cancelled(cancel_check)
     # --- ARCHIVE:高码率归档 ---
-    archive_path = variants_dir / f"clip_{clip.candidate_id}_archive.mp4"
-    _render_single_variant(
-        concat_list,
-        archive_path,
-        cut_offset,
-        duration,
-        crf=14,
-        hardware_quality=14,
-        options=options,
-        preset="medium",
-        audio_bitrate="256k",
-        subtitle=options.subtitle,
-        srt_path=srt_path,
-        variant_type=ClipVariantType.ARCHIVE,
-        clip=clip,
-        danmaku_path=danmaku_path,
-        cancel_check=cancel_check,
+    archive_path = variants_dir / f"{Path(clip.file_path).stem}_archive.mp4"
+    variants.append(
+        _render_single_variant(
+            concat_list,
+            archive_path,
+            cut_offset,
+            duration,
+            crf=14,
+            hardware_quality=14,
+            options=options,
+            preset="medium",
+            audio_bitrate="256k",
+            subtitle=options.subtitle,
+            srt_path=srt_path,
+            variant_type=ClipVariantType.ARCHIVE,
+            clip=clip,
+            danmaku_path=danmaku_path,
+            cancel_check=cancel_check,
+        )
     )
 
     _report_progress(progress_callback, 77, "正在生成压制版本")
     _raise_if_cancelled(cancel_check)
     # --- COMPRESSED:投稿压制 ---
-    compressed_path = variants_dir / f"clip_{clip.candidate_id}_compressed.mp4"
-    _render_single_variant(
-        concat_list,
-        compressed_path,
-        cut_offset,
-        duration,
-        crf=26,
-        hardware_quality=26,
-        options=options,
-        preset="veryfast",
-        audio_bitrate="128k",
-        subtitle=options.subtitle,
-        srt_path=srt_path,
-        variant_type=ClipVariantType.COMPRESSED,
-        clip=clip,
-        danmaku_path=danmaku_path,
-        cancel_check=cancel_check,
+    compressed_path = variants_dir / f"{Path(clip.file_path).stem}_compressed.mp4"
+    variants.append(
+        _render_single_variant(
+            concat_list,
+            compressed_path,
+            cut_offset,
+            duration,
+            crf=26,
+            hardware_quality=26,
+            options=options,
+            preset="veryfast",
+            audio_bitrate="128k",
+            subtitle=options.subtitle,
+            srt_path=srt_path,
+            variant_type=ClipVariantType.COMPRESSED,
+            clip=clip,
+            danmaku_path=danmaku_path,
+            cancel_check=cancel_check,
+        )
     )
 
     if srt_path is None:
@@ -1293,41 +1291,45 @@ def _render_variants(
     counterpart_subtitle = not options.subtitle
     if counterpart_subtitle:
         # 使用主流程按相同覆盖分段生成的字幕，不能把整场起点混入剪辑偏移。
-        sub_path = variants_dir / f"clip_{clip.candidate_id}_subtitled.mp4"
-        _render_single_variant(
-            concat_list,
-            sub_path,
-            cut_offset,
-            duration,
-            crf=options.crf,
-            options=options,
-            preset=options.preset,
-            audio_bitrate="160k",
-            subtitle=True,
-            srt_path=srt_path,
-            variant_type=ClipVariantType.SUBTITLED,
-            clip=clip,
-            danmaku_path=danmaku_path,
-            cancel_check=cancel_check,
+        sub_path = variants_dir / f"{Path(clip.file_path).stem}_subtitled.mp4"
+        variants.append(
+            _render_single_variant(
+                concat_list,
+                sub_path,
+                cut_offset,
+                duration,
+                crf=options.crf,
+                options=options,
+                preset=options.preset,
+                audio_bitrate="160k",
+                subtitle=True,
+                srt_path=srt_path,
+                variant_type=ClipVariantType.SUBTITLED,
+                clip=clip,
+                danmaku_path=danmaku_path,
+                cancel_check=cancel_check,
+            )
         )
     else:
         # 主干有 ASR 字幕 → 渲染无 ASR 字幕版，弹幕仍沿用主片设置
-        clean_path = variants_dir / f"clip_{clip.candidate_id}_clean.mp4"
-        _render_single_variant(
-            concat_list,
-            clean_path,
-            cut_offset,
-            duration,
-            crf=options.crf,
-            options=options,
-            preset=options.preset,
-            audio_bitrate="160k",
-            subtitle=False,
-            srt_path=None,
-            variant_type=ClipVariantType.NO_SUBTITLES,
-            clip=clip,
-            danmaku_path=danmaku_path,
-            cancel_check=cancel_check,
+        clean_path = variants_dir / f"{Path(clip.file_path).stem}_clean.mp4"
+        variants.append(
+            _render_single_variant(
+                concat_list,
+                clean_path,
+                cut_offset,
+                duration,
+                crf=options.crf,
+                options=options,
+                preset=options.preset,
+                audio_bitrate="160k",
+                subtitle=False,
+                srt_path=None,
+                variant_type=ClipVariantType.NO_SUBTITLES,
+                clip=clip,
+                danmaku_path=danmaku_path,
+                cancel_check=cancel_check,
+            )
         )
     _report_progress(progress_callback, 90, "派生版本已完成")
 
@@ -1349,8 +1351,8 @@ def _render_single_variant(
     hardware_quality: int | None = None,
     danmaku_path: Path | None = None,
     cancel_check: Callable[[], bool] | None = None,
-) -> None:
-    """执行单个变体的 FFmpeg 渲染并更新数据库。
+) -> ClipVariant:
+    """执行单个变体的 FFmpeg 渲染并返回未发布元数据。
 
     :param concat_list: concat 清单文件。
     :param out_path: 输出文件路径。
@@ -1437,36 +1439,22 @@ def _render_single_variant(
 
     with get_session() as db:
         event_id = _resolve_event_id(db, clip.candidate_id)
-        variant = db.exec(
-            select(ClipVariant).where(
-                ClipVariant.event_id == event_id,
-                ClipVariant.variant_type == variant_type,
-            )
-        ).first()
-        if variant is None:
-            variant = ClipVariant(event_id=event_id, variant_type=variant_type, has_subtitles=False)
-        if variant:
-            if result.returncode == 0:
-                real_dur, w, h = probe_media(str(out_path))
-                variant.file_path = str(out_path)
-                variant.duration_s = real_dur or duration
-                variant.resolution = f"{w}x{h}" if w and h else None
-                variant.has_subtitles = subtitle and srt_path is not None
-                variant.render_status = RenderStatus.DONE
-                logger.success("变体 {} candidate={} 渲染完成 -> {}", variant_type, clip.candidate_id, out_path.name)
-            else:
-                variant.render_status = RenderStatus.FAILED
-                stderr = result.stderr.decode("utf-8", errors="ignore")
-                error_type = classify_ffmpeg_error(result.returncode, stderr)
-                logger.error(
-                    "变体 {} candidate={} 渲染失败 [{}]: {}",
-                    variant_type,
-                    clip.candidate_id,
-                    error_type.name,
-                    stderr,
-                )
-            db.add(variant)
-            db.commit()
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        error_type = classify_ffmpeg_error(result.returncode, stderr)
+        raise RuntimeError(f"变体 {variant_type} 渲染失败 [{error_type.name}]: {stderr}")
+    real_dur, width, height = probe_media(str(out_path))
+    if real_dur <= 0 or width <= 0 or height <= 0:
+        raise ValueError(f"变体 {variant_type} 没有通过媒体校验")
+    return ClipVariant(
+        event_id=event_id,
+        variant_type=variant_type,
+        file_path=str(out_path),
+        duration_s=real_dur,
+        resolution=f"{width}x{height}",
+        has_subtitles=subtitle and srt_path is not None,
+        render_status=RenderStatus.DONE,
+    )
 
 
 def _report_progress(

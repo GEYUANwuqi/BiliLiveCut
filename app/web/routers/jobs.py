@@ -6,7 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.web.services.background_jobs import get_job, list_jobs, web_job_manager
+from app.db.job_store import get_job, list_jobs
+from app.web.services.background_jobs import web_job_manager
 from app.web.services.review_workflow import review_actor
 
 router = APIRouter()
@@ -50,7 +51,7 @@ async def retry_job(job_id: str, request: Request) -> dict[str, Any]:
     actor, role = review_actor(request)
     try:
         await web_job_manager.start()
-        return web_job_manager.retry(job_id, actor, is_admin=role == "admin")
+        return await web_job_manager.retry(job_id, actor, is_admin=role == "admin")
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

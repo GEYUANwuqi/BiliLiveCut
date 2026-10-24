@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, Any
 from app.core.sanitize import sanitize_diagnostic
 
 if TYPE_CHECKING:
-    from app.web.services.background_jobs import JobContext, WebJobManager
+    from app.jobs.context import JobContext
+    from app.jobs.manager import JobManager
 
 
-def register_job_handlers(manager: WebJobManager) -> None:
+def register_job_handlers(manager: JobManager) -> None:
     """向作业管理器注册全部内置处理器。"""
     manager.register("candidate_render", _render_candidate)
     manager.register("review_rerender", _rerender_review)
@@ -37,6 +38,7 @@ def _render_candidate(context: JobContext, payload: dict[str, Any]) -> dict[str,
         reviewed_by=str(payload["reviewed_by"]),
         progress_callback=context.report,
         cancel_check=context.cancelled,
+        job_context=context,
     )
     if clip_id is None:
         raise RuntimeError("候选出片失败")
@@ -53,10 +55,12 @@ def _rerender_review(context: JobContext, payload: dict[str, Any]) -> dict[str, 
         auto_upload=False,
         start_ts=datetime.fromisoformat(str(payload["start_ts"])),
         end_ts=datetime.fromisoformat(str(payload["end_ts"])),
-        output_suffix=str(payload["version"]),
+        output_suffix=f"job_{context.job_id}_{context.attempt}_{payload['version']}",
         progress_callback=context.report,
         cancel_check=context.cancelled,
         render_variants=False,
+        job_context=context,
+        result_metadata={"version": payload["version"]},
     )
     if clip is None:
         raise RuntimeError("审核版本渲染失败")
@@ -79,6 +83,7 @@ def _render_collection(context: JobContext, payload: dict[str, Any]) -> dict[str
         bool(payload["include_chapter_cards"]),
         progress_callback=context.report,
         cancel_check=context.cancelled,
+        job_context=context,
     )
     if result is None:
         raise RuntimeError("合集渲染失败，需至少两个可用成片")

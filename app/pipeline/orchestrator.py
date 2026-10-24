@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from pydantic import JsonValue
 
 from app.analysis.highlight import score_segment
 from app.analysis.transcription.models import TranscriberBackend
@@ -22,6 +23,7 @@ from app.core.runtime_settings import configured_task
 from app.db.entities import FinalClip, HighlightCandidate, RawSegment
 
 if TYPE_CHECKING:
+    from app.jobs.context import JobContext
     from app.pipeline.lease import TaskLease
 
 
@@ -96,6 +98,8 @@ def produce_clip(
     cancel_check: Callable[[], bool] | None = None,
     render_variants: bool = True,
     task_lease: TaskLease | None = None,
+    job_context: JobContext | None = None,
+    result_metadata: dict[str, JsonValue] | None = None,
 ) -> FinalClip | None:
     """把一个高光候选生成成品切片并配上文案。
 
@@ -109,39 +113,59 @@ def produce_clip(
     :param render_variants: 是否生成派生版本。
     :param task_lease: 可选的人工任务租约，成片和文案提交前复验。
     """
-    from app.clipping.core import produce_clip as _cut_clip
+    from app.clipping.core import prepare_clip
+    from app.clipping.drafts import publication, publish_draft
     from app.core.process_control import ProcessCancelledError
-    from app.pipeline.lease import LeaseLostError
-    from app.publishing.copywriter import generate_copy
+    from app.db.entities import ClipStatus, SegmentTask, TaskStatus
+    from app.db.session import get_session
+    from app.pipeline.lease import LeaseLostError, still_owns_lease
+    from app.pipeline.stage_result import enqueue_next, mark_completed
+    from app.publishing.copywriter import export_manifest, prepare_copy
 
-    try:
-        clip = _cut_clip(
-            candidate_id,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            output_suffix=output_suffix,
-            progress_callback=progress_callback,
-            cancel_check=cancel_check,
-            render_variants=render_variants,
-            task_lease=task_lease,
-        )
-    except (ProcessCancelledError, LeaseLostError):
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.error("候选 {} 切片失败: {}", candidate_id, exc)
-        return None
+    draft = prepare_clip(
+        candidate_id,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        output_suffix=output_suffix,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+        render_variants=render_variants,
+        task_lease=task_lease,
+    )
+    with publication(draft.artifacts):
+        if progress_callback is not None:
+            progress_callback(92, "正在生成文案")
+        prepare_copy(draft.clip)
+        transaction = job_context.result_transaction() if job_context is not None else get_session()
+        with transaction as db:
+            if job_context is None:
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            if task_lease is not None and not still_owns_lease(db, task_lease):
+                raise LeaseLostError(f"结果提交前租约已失效: task={task_lease.task_id}")
+            if cancel_check is not None and cancel_check():
+                raise ProcessCancelledError("用户取消了出片")
+            clip = publish_draft(db, draft)
+            if task_lease is not None:
+                task = db.get(SegmentTask, task_lease.task_id)
+                assert task is not None
+                mark_completed(task)
+                enqueue_next(task, TaskStatus.RENDERED, clip_id=clip.id)
+                db.add(task)
+            if job_context is not None:
+                job_context.complete(
+                    db,
+                    {
+                        **(result_metadata or {}),
+                        "candidate_id": candidate_id,
+                        "clip_id": clip.id,
+                        "file_path": clip.file_path,
+                    },
+                )
+    from app.notify.webhook import notify_clip_complete
 
-    if clip.id is None:
-        return clip
-    if progress_callback is not None:
-        progress_callback(92, "正在生成文案")
-    try:
-        clip = generate_copy(clip.id, task_lease=task_lease) if task_lease is not None else generate_copy(clip.id)
-    except LeaseLostError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.error("切片 {} 文案生成失败: {}", clip.id, exc)
-        return clip
+    notify_clip_complete(candidate_id, clip.file_path, clip.duration_s)
+    if clip.status == ClipStatus.READY and clip.id is not None:
+        export_manifest(clip.id)
 
     # V0.1.11-alpha: auto_upload 明确检查。
     if clip.status == "ready" and auto_upload and clip.id is not None:

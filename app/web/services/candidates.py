@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from sqlmodel import select
@@ -17,6 +17,9 @@ from app.db.entities import (
     ReviewStatus,
 )
 from app.db.session import get_session
+
+if TYPE_CHECKING:
+    from app.jobs.context import JobContext
 
 
 def set_candidate_status(candidate_id: int, status: str, *, reviewed_by: str = "web_admin") -> None:
@@ -74,20 +77,23 @@ def approve_candidate_sync(
     reviewed_by: str = "web_admin",
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    job_context: JobContext | None = None,
 ) -> int | None:
     """同步批准候选并出片，供后台作业线程调用。
 
-    在同一个 session 中完成审批与 ``produce_clip``；候选缺少审核事件时拒绝出片。
+    审批作为独立输入保存；媒体、文案与执行结果在计算结束后共同提交。
+    候选缺少审核事件时拒绝出片。
 
     :param candidate_id: 候选 id。
     :param reviewed_by: 发起人工批准的审核者。
     :param progress_callback: 可选的作业进度回调。
     :param cancel_check: 可选的取消检查。
-    :returns: 生成的 clip_id;失败返回 ``None``。
+    :returns: 生成的 clip_id。
     """
     from app.core.process_control import ProcessCancelledError
     from app.db.entities import HighlightEvent, SegmentTask
     from app.db.entities import TaskStatus as _Ts
+    from app.jobs.contracts import JobCancelled
     from app.pipeline.approval import approve_event_and_task
     from app.pipeline.heartbeat import start_heartbeat_thread
     from app.pipeline.highlight_feedback import record_candidate_review_feedback
@@ -186,6 +192,7 @@ def approve_candidate_sync(
             cancel_check=cancelled,
             task_lease=lease,
             output_suffix=f"lease_{lease.lease_token}" if lease is not None else None,
+            job_context=job_context,
         )
     except Exception as exc:
         if claimed_task_id is not None:
@@ -196,7 +203,7 @@ def approve_candidate_sync(
                     and claimed_task.stage == _Ts.RENDERING
                     and claimed_task.lease_token == claimed_lease_token
                 ):
-                    if isinstance(exc, (ProcessCancelledError, LeaseLostError)):
+                    if isinstance(exc, (JobCancelled, ProcessCancelledError, LeaseLostError)):
                         request_cancellation(claimed_task)
                     else:
                         mark_failed(claimed_task, f"人工出片失败: {exc}", permanent=False)
