@@ -84,7 +84,7 @@ def save_llm_providers(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def test_llm_providers(items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """逐个测试当前表单或已保存 provider 的连通性(各发一次极小请求)。
+    """逐个测试当前草稿或已保存 provider 的最终正文，使用有界的思考预算。
 
     :param items: 当前表单配置；为 ``None`` 时读取已保存配置。
     :returns: ``{"results": [{"id","name","ok","detail"}, ...]}``。
@@ -94,7 +94,7 @@ async def test_llm_providers(items: list[dict[str, Any]] | None = None) -> dict[
 
     def _probe(p: provs.LLMProvider) -> dict[str, Any]:
         try:
-            text = llm_mod._complete(p, "只回复 pong", max_tokens=64)
+            text = llm_mod.probe_provider(p)
             if not text.strip():
                 raise llm_mod.EmptyLLMResponseError("服务已响应，但未返回可用正文")
             return {"id": p.id, "name": p.name, "ok": True, "detail": text[:40]}

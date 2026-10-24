@@ -47,6 +47,7 @@ from app.analysis.transcription.models import (  # single source — no duplicat
     ASRTranscriptResult,
     TranscriberBackend,
 )
+from app.analysis.transcription.progress import report_progress
 from app.analysis.transcription.quality import (
     TranscriptQuality,
     assess_transcript_quality,
@@ -159,7 +160,17 @@ class ASRPipeline:
                         empty.primary_backend = result.primary_backend
                         empty.fallback_backend = result.fallback_backend
                         result = empty
-            return require_final_result(result)
+            result = require_final_result(result)
+            if result.fallback_backend:
+                # 通过进度通道转发 INFO；隔离进程的诊断通道仅接收 WARNING 及以上。
+                report_progress(
+                    "fallback_completed",
+                    primary_backend=result.primary_backend,
+                    fallback_backend=result.fallback_backend,
+                    trigger_reason=result.fallback_trigger_reason,
+                    result_type=result.result_type,
+                )
+            return result
         finally:
             # 缓存的流水线不能持有失败初始化/推理帧中的模型与 GPU 张量。
             self._last_backend_error = None
@@ -180,7 +191,7 @@ class ASRPipeline:
                 result = self._get_primary().transcribe_funasr(audio_path, initial_prompt)
             except Exception as exc:
                 self._last_backend_error = exc
-                logger.opt(exception=True).error("Fun-ASR-Nano 主引擎转写失败: {}", exc)
+                logger.warning("Fun-ASR-Nano 主引擎转写失败: {}", safe_exception_summary(exc, limit=500))
                 result = ASRTranscriptResult(
                     text="",
                     language="zh",
@@ -223,7 +234,7 @@ class ASRPipeline:
                 secondary = self._get_primary().transcribe(audio_path, initial_prompt)
             except Exception as exc:
                 self._last_backend_error = exc
-                logger.opt(exception=True).error("Paraformer 次级引擎转写失败: {}", exc)
+                logger.warning("Paraformer 次级引擎转写失败: {}", safe_exception_summary(exc, limit=500))
                 result.metadata["secondary_error"] = {
                     "backend": "paraformer",
                     "error_type": type(exc).__name__,
@@ -276,7 +287,7 @@ class ASRPipeline:
                 result = self._get_primary().transcribe(audio_path, initial_prompt)
             except Exception as exc:
                 self._last_backend_error = exc
-                logger.opt(exception=True).error("Paraformer 主引擎转写失败: {}", exc)
+                logger.warning("Paraformer 主引擎转写失败: {}", safe_exception_summary(exc, limit=500))
                 result = ASRTranscriptResult(
                     text="",
                     language="zh",

@@ -1,3 +1,6 @@
 # CPU 镜像的 PyTorch/TorchAudio 配套运行时，使用官方 CPU wheel。
 torch==2.13.0+cpu
 torchaudio==2.11.0+cpu
+# 缓存锁与安装工具使用官方修复版本，避免保留旧依赖。
+filelock>=4.2.1
+setuptools>=84.1.0

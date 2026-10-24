@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -277,11 +278,20 @@ def _empty_response_details(resp: object) -> tuple[str, bool, int, int]:
     return finish_reason, bool(reasoning), completion_tokens, reasoning_tokens
 
 
-def _should_disable_thinking(provider: provs.LLMProvider, has_reasoning: bool) -> bool:
-    """判断空正文重试是否应关闭 DeepSeek 思考模式。"""
-    if has_reasoning:
-        return True
-    return "deepseek-v4" in provider.model.lower()
+def _low_reasoning_options(provider: provs.LLMProvider) -> dict[str, object]:
+    """仅对已核实的官方端点和模型发送对应的思考控制参数。"""
+    host = urlsplit(provider.base_url).hostname
+    model = provider.model.strip().lower()
+    if host == "api.deepseek.com" and model in {"deepseek-flash", "deepseek-v4-pro"}:
+        return {"thinking": {"type": "disabled"}}
+    if host == "api.minimax.cn" and model == "minimax-m3.1-flash":
+        return {"reasoning_effort": "low"}
+    return {}
+
+
+def probe_provider(provider: provs.LLMProvider) -> str:
+    """用包含思考开销的有限生成预算测试最终正文，最多调用两次。"""
+    return _complete(provider, "只回复 pong", max_tokens=4096, extra_body=_low_reasoning_options(provider) or None)
 
 
 def _create_completion(
@@ -349,9 +359,16 @@ def _complete_using_client(
 
     retry_extra = dict(extra_body or {})
     retry_mode = "原参数"
-    if _should_disable_thinking(provider, has_reasoning):
-        retry_extra["thinking"] = {"type": "disabled"}
-        retry_mode = "关闭思考模式"
+    retry_extra.update(_low_reasoning_options(provider))
+    if retry_extra != (extra_body or {}):
+        retry_mode = "使用已核实的低思考参数"
+    elif finish_reason == "length":
+        raise EmptyLLMResponseError(
+            f"输出预算已耗尽且未返回最终正文: max_tokens={max_tokens}, "
+            f"finish_reason={finish_reason}, completion_tokens={completion_tokens}, "
+            f"reasoning_tokens={reasoning_tokens}, reasoning={has_reasoning}；"
+            "请提高该任务的输出预算，或选择思考开销较低的模型。"
+        )
     logger.warning(
         "模型 {} 返回空正文,finish_reason={} completion_tokens={} reasoning_tokens={} reasoning={};将{}重试一次。",
         provider.name,

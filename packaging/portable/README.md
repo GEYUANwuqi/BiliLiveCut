@@ -1,6 +1,6 @@
 # Portable 安装与构建
 
-**版本：V0.1.19.4 Alpha** (`0.1.19.4-alpha`)
+**版本：V0.1.19.5 Alpha** (`0.1.19.5-alpha`)
 
 本文介绍 Windows Portable 的发行结构、模型准备、运行依赖和构建方法。第一次使用请按下方用户指南完成安装；升级时保留旧运行目录，使用新目录和当前版本数据库。常见问题见[故障排查](../../docs/features/troubleshooting.md)。
 
@@ -119,7 +119,7 @@ python build_engine_pack.py --from-cache  # 从已验证缓存构建
 
 输出:
 
-- dist/engine-pack/BiliLiveCut-EnginePack-0.1.19.4-alpha.zip
+- dist/engine-pack/BiliLiveCut-EnginePack-0.1.19.5-alpha.zip
 - dist/engine-pack/engine-pack-manifest.json
 - dist/engine-pack/CRC32SUMS.txt
 - dist/engine-pack/SHA256SUMS.txt
@@ -174,7 +174,7 @@ Web 端口可在控制台“配置 → 功能开关 → Web 管理端口”保�
 Portable 使用 Python 3.11 / 3.12 两套 Windows x64 完整依赖锁。锁文件覆盖直接依赖和全部传递依赖（包括大模型连通测试所需的 OpenAI 兼容 SDK），每个条目都固定为 `==` 版本并校验所选 wheel 的 SHA-256。`pip` 固定为 `26.2`，Launcher 使用 `pip freeze --all` 检查当前环境；不符合当前锁的环境会重建。PyPI 没有提供 wheel 的五个纯 Python 包由受控脚本从固定 SHA-256 的源码构建，构建工具版本和时间戳同样固定；这 5 个 wheel 会作为最小 bootstrap 集内嵌进 Lite EXE。Lite 联网安装其余依赖时使用 `--only-binary=:all: --require-hashes`，不会静默回退到 sdist。
 
 ```powershell
-python -m pip install setuptools==83.0.0 wheel==0.47.0
+python -m pip install setuptools==84.1.0 wheel==0.47.0
 python scripts/build_portable_runtime_wheels.py --output-dir packaging/portable/dist/bootstrap-wheels
 python scripts/generate_portable_runtime_locks.py
 ```
@@ -230,7 +230,7 @@ packaging/portable/                     # ★ 即插即用分发版根目录 (�
 ├── runtime/                  # ★ Runtime 版本管理
 │   ├── current.json          #   当前激活的 Release 信息
 │   └── releases/
-│       └── 0.1.19.4-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
+│       └── 0.1.19.5-alpha+<source-sha>+<payload-hash>/  # 内容寻址的固定版本源码
 │
 ├── .venv/                    # Python 虚拟环境（launcher.exe 自动创建）
 ├── models/                   # 四引擎 ASR 模型 (由 Engine Pack 或在线下载安装)

@@ -4,6 +4,39 @@
 
 设置首页按「采集与运行」「分析与成片」「账号与外部服务」「提醒与维护」组织入口，可以搜索功能名称并直接进入对应分类。全部参数按用途分组展示；跨分类搜索时可展开高级设置查找完整参数。
 
+## 大模型服务商预设
+
+进入「设置中心 → 大模型服务商」，在「服务商预设」中选择平台，再点击「添加服务」。页面会填入服务名称、OpenAI 兼容 API 地址，以及官方文档中已有的模型示例；所有字段都可以继续编辑。初次使用引导中的大模型设置也提供相同选项。
+
+填写自己账号的 API 密钥，并确认模型已开通。模型或推理接入点由账号决定的平台，需要从控制台复制完整 ID。点击「测试连接」只测试当前草稿；点击「保存全部服务」才会保存。选择预设或添加服务不会自动访问平台，也不会替换已有服务和密钥。「自定义 OpenAI 兼容服务」可用于其他平台或自建服务。
+
+测试连接会实际调用所填服务并按账号规则计费：每个服务最多两次请求，每次生成预算最多 4096 token（包括思考）。仅有推理内容时不会显示成功。预算耗尽且没有可用的参数调整时直接报告原因，不重复消耗相同预算。
+
+思考控制按已核实的官方端点与模型匹配：[DeepSeek](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/) 的 `deepseek-flash` / `deepseek-v4-pro` 可关闭思考；[MiniMax](https://platform.minimax.cn/docs/api-reference/text-openai-api) 的 `MiniMax-M3.1-Flash` 强制思考，使用 `reasoning_effort=low` 进行连通测试或空正文重试。自定义地址及未核实的模型保持原参数，不因返回推理内容就发送禁用思考指令。业务请求仍遵守原有输出预算，重试最多一次；推理过程不作为最终正文保存。
+
+以下预设按官方公开接入信息核对。地址填写基础路径，不要再追加 `/chat/completions`。模型可用性、额度、价格以对应平台控制台为准；预设不自动填写价格或开通模型。
+
+| 平台与官方接入说明 | 预填 API 地址 | 使用说明 |
+| --- | --- | --- |
+| [DeepSeek](https://api-docs.deepseek.com/zh-cn/) | `https://api.deepseek.com` | 使用开放平台 API Key。 |
+| [阿里云百炼（Qwen）](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 北京地域通用地址；可以替换为控制台提供的业务空间专属地址。地域与 API Key 必须匹配。 |
+| [火山方舟（豆包）](https://docs.volcengine.com/docs/ark/compatible-with-openai-sdk?lang=zh) | `https://ark.cn-beijing.volces.com/api/v3` | 使用已开通的 Model ID；自定义推理接入点填写自己的 `ep-…` ID。 |
+| [Kimi（Moonshot）](https://platform.kimi.com/docs/get-api-key) | `https://api.moonshot.cn/v1` | 使用 API 开放平台密钥。 |
+| [智谱 GLM](https://docs.bigmodel.cn/cn/guide/develop/openai/introduction) | `https://open.bigmodel.cn/api/paas/v4` | 通用按量 API 地址。 |
+| [小米 MiMo](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call) | `https://api.xiaomimimo.com/v1` | 实时按量 API 地址。 |
+| [硅基流动](https://docs.siliconflow.cn/docs/userguide/capabilities/text-generation) | `https://api.siliconflow.cn/v1` | 国内平台；模型填写含组织名及可能存在的 `Pro/` 前缀的完整 ID。 |
+| [MiniMax](https://platform.minimax.cn/docs/api-reference/text-openai-api) | `https://api.minimax.cn/v1` | 国内平台 OpenAI 兼容地址。 |
+| [百度千帆](https://cloud.baidu.com/doc/qianfan-docs/s/Fm9l6ocai) | `https://qianfan.baidubce.com/v2` | 使用千帆通用 API Key，并复制已开通的模型或推理接入点 ID。 |
+| [腾讯云 TokenHub（混元等）](https://cloud.tencent.com/document/product/1823/132252) | `https://tokenhub.tencentmaas.com/v1` | 使用 TokenHub API Key；新账号优先使用此入口。 |
+| [讯飞星火](https://www.xfyun.cn/doc/spark/HTTP调用文档.html) | `https://spark-api-open.xf-yun.com/v1` | 密钥填写对应版本的 **APIPassword**，不是 WebSocket 的 APIKey 或 APISecret。 |
+| [魔搭 ModelScope](https://www.modelscope.cn/docs/model-service/API-Inference/intro) | `https://api-inference.modelscope.cn/v1` | 使用 ModelScope Token，复制支持 API 推理的完整 Model ID。 |
+| [阶跃星辰 StepFun](https://platform.stepfun.com/) | `https://api.stepfun.com/v1` | 国内平台；从模型列表选择可用的文本模型 ID。 |
+| [无问芯穹](https://docs.infini-ai.com/support/faq.html) | `https://cloud.infini-ai.com/maas/v1` | 使用 GenStudio API Key 与服务列表中的模型 ID。 |
+| [腾讯混元旧平台](https://cloud.tencent.com/document/product/1729/111007) | `https://api.hunyuan.cloud.tencent.com/v1` | 供仍有旧平台服务的账号使用；新购模型已迁移至 TokenHub。 |
+| [腾讯云 LKEAP 旧平台](https://cloud.tencent.com/document/product/1772/130549) | `https://api.lkeap.cloud.tencent.com/v1` | 原 DeepSeek 接口已迁移至 TokenHub，旧平台凭据不与 TokenHub 混用。 |
+
+上述常用预设面向通用模型 API。Coding Plan、Token Plan、批量推理和国际区域可能有不同地址、凭据及适用范围，请按对应平台说明修改，不要将套餐密钥直接用于通用按量地址。
+
 ## 飞书 / Lark 运行提醒
 
 进入「设置中心 → 提醒与通知 → 飞书 / Lark 应用机器人」，配置 App ID、App Secret、服务区域和接收对象。通知直接调用 OpenAPI，不建立 WebSocket 连接，也不需要事件订阅。

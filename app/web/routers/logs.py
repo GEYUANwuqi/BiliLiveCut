@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.web.services import logs as logs_service
 
@@ -20,7 +21,15 @@ router = APIRouter()
 
 
 @router.get("/logs")
-def get_logs(limit: int = 100, level: str | None = None) -> list[dict[str, Any]]:
+def get_logs(
+    limit: int = 100,
+    level: str | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> list[dict[str, Any]]:
     """返回系统日志(WARNING 及以上)。"""
     limit = _clamp(limit, 1, _MAX_QUERY_LIMIT)
-    return logs_service.list_logs(limit=limit, level=level)
+    try:
+        return logs_service.list_logs(limit=limit, level=level, start_at=start_at, end_at=end_at)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

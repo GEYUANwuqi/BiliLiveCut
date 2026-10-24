@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SOURCE_DATE_EPOCH = "1700000000"
-REQUIRED_BUILD_TOOLS = {"setuptools": "83.0.0", "wheel": "0.47.0"}
+REQUIRED_BUILD_TOOLS = {"setuptools": "84.1.0", "wheel": "0.47.0"}
 
 
 @dataclass(frozen=True)

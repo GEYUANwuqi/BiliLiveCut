@@ -313,13 +313,13 @@ class TaskWorker:
         )
 
     async def _preload_models(self) -> None:
-        """后台预加载失败只记录错误，正常转写仍使用已有回退机制。"""
+        """后台预加载失败只记录警告，正常转写仍使用已有回退机制。"""
         from app.analysis.transcription.isolated import preload_isolated_models
 
         try:
             await asyncio.to_thread(preload_isolated_models)
         except (RuntimeError, OSError, ValueError, ImportError) as exc:
-            _logger.opt(exception=exc).error("ASR 预加载失败: {}", safe_exception_summary(exc))
+            _logger.warning("ASR 预加载失败，任务仍可按配置尝试加载或回退: {}", safe_exception_summary(exc, limit=500))
 
     async def stop(self) -> None:
         """优雅关闭 — 停止领取新任务, 等待当前任务完成或取消。"""

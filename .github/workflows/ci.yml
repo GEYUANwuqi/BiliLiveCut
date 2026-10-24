@@ -1,4 +1,4 @@
-# BiliLiveCut CI (V0.1.19.4 Alpha)
+# BiliLiveCut CI (V0.1.19.5 Alpha)
 # 触发: push/PR 到 main → lint → audit + test → portable → coverage summary
 #
 # Job 结构:
@@ -140,7 +140,7 @@ jobs:
       - name: Install Python dev deps
         shell: bash
         run: |
-          python -m pip install --upgrade pip "setuptools>=77" "Cython==3.2.9"
+          python -m pip install --upgrade pip "setuptools>=84.1.0" "Cython==3.2.9"
           pip install -e ".[dev,web]"
           python setup.py build_ext --inplace
 
