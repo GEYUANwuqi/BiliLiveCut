@@ -12,24 +12,13 @@ from sqlmodel import Session, select
 
 from app.analysis.scoring_config import ScoringOptions, scoring_defaults
 from app.core.config import Settings, get_settings
-from app.core.runtime_settings import publish_settings
+from app.core.configuration_policy import BOOTSTRAP, configuration_policy
+from app.core.runtime_settings import active_configuration_snapshots, process_configuration, publish_settings
 from app.db.entities import AppSetting
 from app.db.session import get_session
 
 _LOCK = RLock()
 _REVISION = "configuration_revision"
-BOOTSTRAP = {
-    "database_url": "数据库连接必须在数据库打开前确定；通过部署环境配置。",
-    "storage_root": "存储路径在启动时确定；变更需迁移现有数据并重启。",
-    "plugin_dir": "插件目录由启动时的插件发现确定；修改部署配置后重启。",
-    "app_env": "运行环境由部署配置确定，重启后生效。",
-    "log_level": "日志输出在启动时配置；修改部署配置后重启。",
-    "admin_password": "管理员凭据影响服务绑定与认证；在部署配置中修改后重启。",
-    "docker_auth_enabled": "Docker 登录模式由容器入口启用，不可在业务配置中关闭。",
-    "docker_auth_idle_seconds": "会话空闲期限属于部署配置，重建容器后生效。",
-    "docker_auth_session_seconds": "会话最长有效期属于部署配置，重建容器后生效。",
-    "reviewer_accounts_json": "审核员凭据在启动时加载；在部署配置中修改后重启。",
-}
 SECRETS = {
     "admin_password",
     "reviewer_accounts_json",
@@ -125,13 +114,13 @@ def reload_configuration() -> None:
     with _LOCK:
         with get_session() as db:
             db.connection().exec_driver_sql("BEGIN")
-            stored, _ = _read_rows(db)
+            stored, revision = _read_rows(db)
             if stored:
                 core, runtime = _validated(stored)
             else:
                 core, runtime = get_settings(), RuntimeOptions()
             overrides, extras = _publication(db, stored, core, runtime)
-        publish_settings(overrides, extras)
+        publish_settings(overrides, extras, revision=revision)
 
 
 def _publication(
@@ -227,9 +216,25 @@ def save_configuration(change: ConfigurationChange) -> dict[str, JsonValue]:
             version.value = str(revision + 1)
             db.add(version)
             overrides, extras = _publication(db, stored, core, runtime)
-            response = _configuration_view(stored, revision + 1, core, runtime)
-        publish_settings(overrides, extras)
+            response = _configuration_view(stored, revision + 1, core, runtime, projected=True)
+        publish_settings(overrides, extras, revision=revision + 1)
         return response
+
+
+def save_registered_settings(values: dict[str, str]) -> bool:
+    """让 CLI 与登录入口的已注册设置共用验证、版本号和发布事务。"""
+    registered = set(values) & _known_keys()
+    if not registered:
+        return False
+    if registered != set(values):
+        raise ValueError("已注册业务配置不能与其他存储键混合写入")
+    clear = [key for key, value in values.items() if key in SECRETS and not value.strip()]
+    save_configuration(
+        ConfigurationChange(
+            values={key: _decode(key, value) for key, value in values.items() if key not in clear}, clear=clear
+        )
+    )
+    return True
 
 
 def _group(key: str) -> str:
@@ -272,47 +277,44 @@ def configuration_view() -> dict[str, JsonValue]:
 
 
 def _configuration_view(
-    stored: dict[str, str], revision: int, core: Settings, runtime: RuntimeOptions
+    stored: dict[str, str], revision: int, core: Settings, runtime: RuntimeOptions, *, projected: bool = False
 ) -> dict[str, JsonValue]:
     """生成同一版本的脱敏视图；活动任务各自保留旧快照。"""
     from app.core.configuration_labels import LABELS
 
     effective = core.model_dump() | runtime.model_dump()
     baseline = get_settings().model_dump() | RuntimeOptions().model_dump()
+    current, extras, current_revision = process_configuration(prospective=core if projected else None)
+    current_runtime = (
+        runtime
+        if projected
+        else RuntimeOptions.model_validate(
+            {key: _decode(key, value) for key, value in extras.items() if key in RuntimeOptions.model_fields}
+        )
+    )
+    current_values = current.model_dump() | current_runtime.model_dump()
+    snapshots = active_configuration_snapshots()
     schemas = Settings.model_json_schema()["properties"] | RuntimeOptions.model_json_schema()["properties"]
     fields: list[JsonValue] = []
     for key, schema in schemas.items():
         secret = key in SECRETS
         group = _group(key)
         reason = BOOTSTRAP.get(key)
-        effect = "next_recording" if group == "recording" else "next_task"
-        if group in {"review", "system"} or key == "asr_task_max_concurrency":
-            effect = "immediate"
-        if key in {
-            "live_poll_interval_s",
-            "live_offline_confirm_count",
-            "live_session_end_delay_s",
-            "recording_max_duration_s",
-            "schedule_check_interval_s",
-            "max_analyzing",
-            "max_rendering",
-            "max_publishing",
-            "critical_disk_threshold_gb",
-            "low_disk_threshold_gb",
-            "disk_alert_threshold_gb",
-            "asr_model_idle_unload_seconds",
-        } or key.endswith(("_max_concurrency", "_keep_loaded")):
-            effect = "next_poll"
-        if key == "asr_preload_on_start":
-            effect = "restart"
-        room_default = key in {
-            "highlight_threshold",
-            "highlight_review_threshold",
-            "highlight_auto_approve_threshold",
-            "auto_publish_threshold",
-        }
-        if room_default:
-            effect = "new_room"
+        policy = configuration_policy(key)
+        room_default = policy.effect == "new_room"
+        retained = {"task": 0, "recording": 0}
+        if policy.mode == "safe_boundary" and not policy.current_read:
+            for snapshot in snapshots:
+                previous = (
+                    getattr(snapshot.settings, key)
+                    if key in Settings.model_fields
+                    else _decode(key, snapshot.extras[key])
+                    if key in snapshot.extras
+                    else baseline[key]
+                )
+                if previous != effective[key]:
+                    retained[snapshot.boundary] += 1
+        pending_restart = policy.mode == "restart" and current_values[key] != effective[key]
         fields.append(
             {
                 "key": key,
@@ -330,7 +332,13 @@ def _configuration_view(
                 "baseline": None if secret else baseline[key],
                 "value": None if secret else effective[key],
                 "saved": None if secret else effective[key],
+                "effective": None if secret else current_values[key],
                 "configured": bool(effective[key]) if secret else None,
+                "effective_configured": bool(current_values[key]) if secret else None,
+                "pending_restart": pending_restart,
+                "pending_service": current_values[key] != effective[key],
+                "pending": current_values[key] != effective[key] or any(retained.values()),
+                "retained_snapshots": retained,
                 "secret": secret,
                 "overridden": key in stored,
                 "source": "web"
@@ -338,7 +346,9 @@ def _configuration_view(
                 else ("environment" if key in get_settings().model_fields_set else "default"),
                 "editable": not bool(reason),
                 "reason": reason,
-                "effect": "deployment" if reason else effect,
+                "effect": policy.effect,
+                "apply_mode": policy.mode,
+                "effect_description": policy.description,
                 "persistence": "environment" if reason else "database",
                 "unit": "秒"
                 if key.endswith(("_s", "_seconds"))
@@ -351,6 +361,7 @@ def _configuration_view(
         )
     return {
         "revision": revision,
+        "runtime_revision": revision if projected else current_revision,
         "fields": fields,
         "scopes": [
             {"id": "rooms", "label": "房间配置与自动开播", "url": "/?tab=rooms", "persistence": "LiveRoom"},

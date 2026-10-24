@@ -92,9 +92,10 @@ def test_disk_settings_reach_running_recording_guard(temp_db: None, monkeypatch:
 
     monkeypatch.setattr(storage_lifecycle, "get_disk_usage", lambda: {"free_gb": 7.0})
     with settings_scope():
+        assert settings.critical_disk_threshold_gb == 5
         assert storage_lifecycle.should_stop_recording() is False
         save_configuration(ConfigurationChange(values={"critical_disk_threshold_gb": 8}))
-        assert settings.critical_disk_threshold_gb == 5
+        assert settings.critical_disk_threshold_gb == 8
         assert storage_lifecycle.should_stop_recording() is True
 
 

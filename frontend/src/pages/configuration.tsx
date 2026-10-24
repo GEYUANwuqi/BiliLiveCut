@@ -33,6 +33,10 @@ import { useDraft } from "@/lib/drafts";
 import { obj, rows, text } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { settingsTopic } from "@/features/settings-catalog";
+import {
+  ConfigurationStatus,
+  configurationSaveSummary,
+} from "@/components/configuration-status";
 
 export const settingGroups: Record<string, string> = {
   recording: "录制与自动化",
@@ -57,6 +61,8 @@ const effects: Record<string, string> = {
   next_task: "下一任务生效",
   next_recording: "下次录制生效",
   next_poll: "下次调度生效",
+  next_shutdown: "下次停止时生效",
+  next_claim: "下次领取审核时生效",
   immediate: "下一次读取生效",
   restart: "重启后生效",
   deployment: "启动配置",
@@ -158,16 +164,25 @@ export default function ConfigurationPage() {
               : value;
         }
       }
-      await send("/api/settings/configuration", "PATCH", {
-        revision: view.revision,
-        values,
-        clear,
-        reset,
-      });
+      const saved = obj(
+        await send("/api/settings/configuration", "PATCH", {
+          revision: view.revision,
+          values,
+          clear,
+          reset,
+        }),
+      );
       draft.reset();
       setConflict(false);
       await cache.invalidateQueries({ queryKey: ["api"] });
-      toast.success("配置已保存，活动任务继续使用启动时的设置");
+      const requested = new Set([...Object.keys(values), ...clear, ...reset]);
+      toast.success(
+        configurationSaveSummary(
+          rows(saved.fields).filter((field) =>
+            requested.has(String(field.key)),
+          ),
+        ),
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "保存失败");
       setConflict(reason instanceof ApiError && reason.status === 409);
@@ -400,6 +415,7 @@ export default function ConfigurationPage() {
                             <p className="text-xs leading-6 text-muted-foreground">
                               {text(field.description, "")}
                             </p>
+                            <ConfigurationStatus field={field} />
                             {field.editable === false ? (
                               <div className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">
                                 {text(field.reason, "仅可通过部署配置修改")} ·

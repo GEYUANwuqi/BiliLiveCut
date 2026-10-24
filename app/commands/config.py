@@ -24,10 +24,13 @@ def cmd_set_upload(
     """
     from app.core import settings_store
 
+    values: dict[str, str] = {}
     if biliup is not None:
-        settings_store.set_bool("biliup_enabled", biliup)
+        values["biliup_enabled"] = "true" if biliup else "false"
     if auto is not None:
-        settings_store.set_bool("auto_upload", auto)
+        values["auto_upload"] = "true" if auto else "false"
+    if values:
+        settings_store.set_settings(values)
     console.print(
         f"biliup_enabled={settings_store.biliup_enabled()} "
         f"auto_upload={settings_store.auto_upload_enabled()} "

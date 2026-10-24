@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from sqlmodel import select
+
 from app.db.entities import AppSetting
 from app.db.session import get_session
 
@@ -48,6 +50,12 @@ def get_setting(key: str, default: str | None = None) -> str:
     return _DEFAULTS.get(key, "")
 
 
+def saved_keys(keys: set[str]) -> set[str]:
+    """查询实际持久化的键，不把环境默认值或运行快照误判为数据库覆盖。"""
+    with get_session() as db:
+        return set(db.exec(select(AppSetting.key).where(AppSetting.key.in_(keys))).all())
+
+
 def set_setting(key: str, value: str) -> None:
     """写入(或更新)一个运行时设置值。
 
@@ -59,8 +67,11 @@ def set_setting(key: str, value: str) -> None:
 
 def set_settings(values: dict[str, str]) -> None:
     """把已由对应业务 schema 验证的键值作为同一事务写入。"""
+    from app.core.configuration import save_registered_settings
     from app.db.entities import utcnow
 
+    if save_registered_settings(values):
+        return
     with get_session() as db:
         for key, value in values.items():
             row = db.get(AppSetting, key)
@@ -171,8 +182,6 @@ def all_settings() -> dict[str, str]:
     """
     result = dict(_DEFAULTS)
     with get_session() as db:
-        from sqlmodel import select
-
         for row in db.exec(select(AppSetting)).all():
             result[row.key] = row.value
     return result

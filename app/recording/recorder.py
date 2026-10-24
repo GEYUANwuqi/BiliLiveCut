@@ -227,7 +227,7 @@ class Recorder:
         try:
             async with source_registry.use(self.source_room.platform, self._drain_source) as source:
                 self._source = source
-                async with async_settings_scope(fresh=True):
+                async with async_settings_scope(fresh=True, boundary="recording"):
                     await self._run_with_settings()
         finally:
             self._source = None
