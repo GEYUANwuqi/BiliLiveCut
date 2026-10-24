@@ -174,7 +174,7 @@ Web 端口可在控制台“配置 → 功能开关 → Web 管理端口”保�
 Portable 使用 Python 3.11 / 3.12 两套 Windows x64 完整依赖锁。锁文件覆盖直接依赖和全部传递依赖（包括大模型连通测试所需的 OpenAI 兼容 SDK），每个条目都固定为 `==` 版本并校验所选 wheel 的 SHA-256。`pip` 固定为 `26.2`，Launcher 使用 `pip freeze --all` 检查当前环境；不符合当前锁的环境会重建。PyPI 没有提供 wheel 的五个纯 Python 包由受控脚本从固定 SHA-256 的源码构建，构建工具版本和时间戳同样固定；这 5 个 wheel 会作为最小 bootstrap 集内嵌进 Lite EXE。Lite 联网安装其余依赖时使用 `--only-binary=:all: --require-hashes`，不会静默回退到 sdist。
 
 ```powershell
-python -m pip install setuptools==83.0.0 wheel==0.47.0
+python -m pip install setuptools==84.1.0 wheel==0.47.0
 python scripts/build_portable_runtime_wheels.py --output-dir packaging/portable/dist/bootstrap-wheels
 python scripts/generate_portable_runtime_locks.py
 ```

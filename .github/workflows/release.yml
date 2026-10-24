@@ -108,7 +108,7 @@ jobs:
 
       - name: Install dev dependencies
         run: |
-          python -m pip install --upgrade pip "setuptools>=77" "Cython==3.2.9"
+          python -m pip install --upgrade pip "setuptools>=84.1.0" "Cython==3.2.9"
           pip install -e ".[dev,web]" --index-url https://pypi.org/simple
           python setup.py build_ext --inplace
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -335,7 +335,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller setuptools==83.0.0 wheel==0.47.0
+          pip install pyinstaller setuptools==84.1.0 wheel==0.47.0
           pip install -e ".[dev,web]"
         timeout-minutes: 10
 

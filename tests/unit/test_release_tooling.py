@@ -350,7 +350,7 @@ def test_direct_setup_builds_install_declared_backend_requirements() -> None:
                 command = step.get("run", "")
                 if "python setup.py build_ext --inplace" in command:
                     matched_commands.append(command)
-                    assert '"setuptools>=77"' in command
+                    assert '"setuptools>=84.1.0"' in command
                     assert '"Cython==3.2.9"' in command
 
     assert len(matched_commands) == 2

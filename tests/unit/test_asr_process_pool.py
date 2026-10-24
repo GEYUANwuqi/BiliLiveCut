@@ -369,11 +369,19 @@ def test_cleanup_failure_does_not_report_cancelled_or_requeue(
                     assert "IPC" in task.last_error
                 assert psutil.pid_exists(pid)
                 assert not task_worker.retry_task(task_id)
+                failed_slot = next(slot for slot in pool._slots if slot.process.pid == pid)
+                failed_process = psutil.Process(pid)
             finally:
                 with pool._condition:
                     for slot in list(pool._slots):
                         kill(slot)
-        assert not psutil.pid_exists(pid)
+        # Windows 退出进程的句柄仍可能保留 PID；等待原进程并验证真实退出及 IPC 收尾。
+        failed_process.wait(timeout=5)
+        assert failed_slot.process.exitcode is not None
+        assert not failed_slot.process.is_alive()
+        assert failed_slot.connection.closed
+        assert failed_slot.io_thread is not None and not failed_slot.io_thread.is_alive()
+        assert not pool.has_active_task(task_id, "cleanup-failure")
         stale_recovery.recover_stale()
         with get_session() as db:
             assert db.get(SegmentTask, task_id).stage == TaskStatus.CANCELLED

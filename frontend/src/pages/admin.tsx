@@ -336,7 +336,7 @@ export function LlmPage({
   return (
     <Frame
       title="大模型服务"
-      description="按优先级调用可用服务；密钥留空时保留原值。测试只验证草稿，不会保存配置。"
+      description="按优先级调用可用服务；密钥留空时保留原值。测试只验证草稿，不会保存配置；会实际调用服务并计费，每个服务最多两次请求，每次生成上限为 4096 token（含思考）。"
       actions={
         <>
           <Button

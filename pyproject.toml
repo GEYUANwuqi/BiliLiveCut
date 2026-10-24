@@ -19,7 +19,7 @@ dependencies = [
     "click>=8.1.7,<9",        # 命令行入口
     "rich>=13.7",             # 终端美化输出
     "websockets>=12.0",       # 弹幕 WebSocket 长连接
-    "brotli>=1.1",            # 弹幕协议解压(B 站使用 brotli)
+    "brotli>=1.2.1",          # 弹幕协议解压，包含 CVE-2026-111497 的官方修复
     "pyyaml>=6.0",            # 读取评分权重配置
     "psutil>=7.2.2",          # 实测内存及进程资源
     "numpy>=1.26",            # 音频特征计算(RMS 包络、静音检测)
@@ -31,6 +31,8 @@ dependencies = [
 asr-whisper = [
     "faster-whisper>=1.0",
     "huggingface-hub==1.30.0", # 修复 Hub 绝对重定向；与 Portable 和真实 SDK 回归测试一致
+    "filelock>=4.2.1", # 模型缓存锁包含官方路径及 Windows 超时安全修复
+    "setuptools>=84.1.0", # ASR 传递依赖与构建工具保持已修复的安全下限
     "av>=11,<19", # faster-whisper 1.2.1 仍使用 PyAV 19 已移除的 metadata_errors 参数
 ]
 # V0.1.12.2: Paraformer-zh / SenseVoice-Small / Fun-ASR-Nano 所需依赖。
@@ -81,7 +83,7 @@ blc = "app.cli:main"
 [dependency-groups]
 # uv 默认安装开发环境；复用 pip extras，避免维护两份依赖清单。
 # 构建工具与可复现 bootstrap wheel 构建器一致。
-dev = ["bili-live-cut[dev,web]", "setuptools==83.0.0", "wheel==0.47.0"]
+dev = ["bili-live-cut[dev,web]", "setuptools==84.1.0", "wheel==0.47.0"]
 
 [tool.uv]
 # 原生源文件或跳过开关变化后重新构建，避免复用不匹配的 editable wheel。
@@ -103,7 +105,7 @@ cache-keys = [
 ]
 
 [build-system]
-requires = ["setuptools>=77", "Cython==3.2.9"]
+requires = ["setuptools>=84.1.0", "Cython==3.2.9"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

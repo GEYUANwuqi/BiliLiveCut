@@ -395,7 +395,7 @@ def test_llm_connectivity_uses_unsaved_form_payload(temp_db: None, monkeypatch: 
     ) -> str:
         assert provider.api_key == "draft-secret"
         assert prompt == "只回复 pong"
-        assert max_tokens == 64
+        assert max_tokens == 4096
         assert extra_body is None
         return "pong"
 

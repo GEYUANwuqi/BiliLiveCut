@@ -83,9 +83,11 @@ def test_runtime_locks_cover_core_application_imports() -> None:
 def test_runtime_locks_keep_security_upgrades_pinned() -> None:
     expected = {
         "aiofiles": "25.1.0",
+        "brotli": "1.2.1",
         "cryptography": "50.0.0",
         "fastapi": "0.141.1",
         "faster-whisper": "1.2.1",
+        "filelock": "4.2.1",
         "funasr": "1.3.30",
         "hydra-core": "1.3.7",
         "huggingface-hub": "1.30.0",
@@ -97,6 +99,7 @@ def test_runtime_locks_keep_security_upgrades_pinned() -> None:
         "pydantic": "2.13.4",
         "python-dotenv": "1.2.2",
         "python-multipart": "0.0.32",
+        "setuptools": "84.1.0",
         "sqlmodel": "0.0.39",
         "starlette": "1.3.1",
         "torch": "2.13.0",
