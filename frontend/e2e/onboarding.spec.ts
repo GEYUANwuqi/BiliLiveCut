@@ -68,17 +68,21 @@ async function fixture(
         },
       });
     }
-    if (path === "/api/llm-providers") {
+    if (path === "/api/model-configuration") {
       if (request.method() === "PUT")
-        providers = request.postDataJSON().providers;
+        providers = request.postDataJSON().connections;
       return route.fulfill({
         json: {
-          providers: providers.map((provider) => ({
+          revision: 1,
+          source: "routes",
+          routes: [],
+          asr_selection: "",
+          connections: providers.map((provider) => ({
             ...provider,
             api_key: undefined,
             api_key_set: true,
           })),
-          active_count: providers.length,
+          active_counts: { analysis: providers.length },
         },
       });
     }
@@ -199,20 +203,25 @@ test("setup saves only explicitly and keeps errors/drafts until corrected", asyn
   await page.getByRole("button", { name: "添加服务", exact: true }).click();
   await page.getByLabel("服务名称", { exact: true }).fill("我的模型服务");
   await page.getByLabel(/API 地址/).fill("https://llm.example.invalid/v1");
+  await page.getByRole("button", { name: "添加路由", exact: true }).click();
   await page.getByLabel(/模型名称/).fill("chat-model");
   await page
     .getByLabel("API 密钥", { exact: true })
     .fill("another-private-key");
-  await page.getByRole("button", { name: "保存全部服务", exact: true }).click();
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "下一步", exact: true }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "下一步", exact: true }).click();
-  await expect(page.getByText("1 个启用服务", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("1 个启用连接，1 条启用路由", { exact: true }),
+  ).toBeVisible();
   expect(writes).toEqual([
     "/api/login/qrcode",
     "/api/settings/configuration",
-    "/api/llm-providers",
+    "/api/model-configuration",
   ]);
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
     "private-key",

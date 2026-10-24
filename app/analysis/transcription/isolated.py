@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Protocol
+from typing import Protocol
 
 from app.analysis.transcription.audio_normalization import (
     inspect_pcm_audio,
@@ -15,6 +15,7 @@ from app.analysis.transcription.audio_normalization import (
 from app.analysis.transcription.models import ASRSegmentResult, ASRTranscriptResult, EmotionEvent, Word
 from app.analysis.transcription.process_pool import ASRProcessPool, get_process_pool
 from app.core.runtime_settings import effective_settings
+from app.models.configuration import asr_worker_settings
 from app.pipeline.lease import LeaseLostError, TaskLease, still_owns_lease
 
 
@@ -36,13 +37,9 @@ def _noop() -> None:
     pass
 
 
-def _settings_payload() -> dict[str, Any]:
+def _settings_payload() -> dict[str, object]:
     """只传 ASR 配置和工具路径，不向子进程传播数据库或 LLM 凭据。"""
-    return {
-        key: value
-        for key, value in effective_settings().model_dump(mode="json").items()
-        if key.startswith(("asr_", "whisper_")) or key in {"ffmpeg_path", "ffprobe_path"}
-    }
+    return asr_worker_settings()
 
 
 class IsolatedPipeline:

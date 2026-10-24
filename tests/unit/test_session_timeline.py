@@ -447,9 +447,10 @@ def test_whole_session_summary_analyzes_all_final_asr_once_in_time_order(
 
     prompts: list[str] = []
 
-    def fake_call_text(prompt: str, max_tokens: int) -> str:
+    def fake_call_text(prompt: str, max_tokens: int, *, capability: str) -> str:
         prompts.append(prompt)
         assert max_tokens == 65536
+        assert capability == "summary"
         return '{"summary":"19:00:00 主播先介绍挑战规则，19:05:00 挑战反转并成功。"}'
 
     monkeypatch.setattr(llm, "call_text", fake_call_text)

@@ -114,7 +114,7 @@ def collect_trends(topic: str = "") -> list[TrendRecord]:
             max_tokens=4096,
         )
     else:
-        raw = llm_mod.call_text(prompt, max_tokens=4096)
+        raw = llm_mod.call_text(prompt, max_tokens=4096, capability="trends")
 
     if raw is None:
         logger.warning("网感采集未获得模型输出(LLM 不可用或超预算),返回空。")

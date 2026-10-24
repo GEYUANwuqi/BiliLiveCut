@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from threading import RLock
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
@@ -127,19 +129,45 @@ def _publication(
     db: Session, stored: dict[str, str], core: Settings, runtime: RuntimeOptions
 ) -> tuple[dict[str, object], dict[str, str]]:
     """在当前事务中准备完整快照，提交后不再进行可能失败的数据库读取。"""
+    from app.models.configuration import MODEL_CONFIGURATION_KEY, validate_asr_selection
+
+    validate_asr_selection(db, core)
     overrides = {key: getattr(core, key) for key in stored if key in Settings.model_fields and key not in BOOTSTRAP}
     extras = {key: _encode(value) for key, value in runtime.model_dump().items()}
     extras.update({key: _encode(getattr(core, key)) for key in Settings.model_fields if key not in BOOTSTRAP})
     for row in db.exec(
-        select(AppSetting).where((AppSetting.key == "llm_providers") | AppSetting.key.startswith("plugin."))
+        select(AppSetting).where(
+            AppSetting.key.in_({"llm_providers", MODEL_CONFIGURATION_KEY}) | AppSetting.key.startswith("plugin.")
+        )
     ).all():
         extras[row.key] = row.value
     extras.setdefault("llm_providers", "")
+    extras.setdefault(MODEL_CONFIGURATION_KEY, "")
     return overrides, extras
 
 
 def _encode(value: object) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+
+@contextmanager
+def configuration_transaction(revision: int | None = None) -> Iterator[tuple[Session, int]]:
+    """领域配置在同一版本、写事务和发布锁内保存，失败不发布部分快照。"""
+    with _LOCK:
+        with get_session() as db:
+            db.connection().execute(text("BEGIN IMMEDIATE"))
+            _, current = _read_rows(db)
+            if revision is not None and revision != current:
+                raise ConfigurationConflict("配置已在其他页面修改，请重新加载后合并草稿。")
+            yield db, current + 1
+            db.flush()
+            stored, _ = _read_rows(db)
+            core, runtime = _validated(stored)
+            overrides, extras = _publication(db, stored, core, runtime)
+            version = db.get(AppSetting, _REVISION) or AppSetting(key=_REVISION, value="0")
+            version.value = str(current + 1)
+            db.add(version)
+        publish_settings(overrides, extras, revision=current + 1)
 
 
 def save_configuration(change: ConfigurationChange) -> dict[str, JsonValue]:

@@ -34,6 +34,7 @@ const fields: FieldSpec[] = [
 ];
 export function OnboardingAsr({ onBusy }: { onBusy: (busy: boolean) => void }) {
   const query = useApi("/api/settings/configuration", false);
+  const models = useApi("/api/model-configuration", false);
   const draft = useDraft<Row>("onboarding-asr", {});
   const cache = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -86,8 +87,42 @@ export function OnboardingAsr({ onBusy }: { onBusy: (busy: boolean) => void }) {
         </p>
         <form onSubmit={(event) => void save(event)} className="space-y-5">
           <fieldset disabled={busy} className="grid gap-5 sm:grid-cols-2">
-            {fields
-              .filter((field) => field.name === "asr_primary" || remote)
+            {[
+              fields[0],
+              {
+                name: "asr_remote_route_id",
+                label: "远程转写路由",
+                disabled: models.isPending || models.isError,
+                description:
+                  "可选择已保存的共享连接路由，或使用独立 API 配置。",
+                options: [
+                  { value: "", label: "使用独立 API 配置" },
+                  ...rows(obj(models.data).routes)
+                    .filter(
+                      (route) =>
+                        route.capability === "asr" &&
+                        route.enabled &&
+                        rows(obj(models.data).connections).some(
+                          (connection) =>
+                            connection.id === route.connection_id &&
+                            connection.enabled,
+                        ),
+                    )
+                    .map((route) => ({
+                      value: String(route.id),
+                      label: `${route.name} · ${route.model}`,
+                    })),
+                ],
+              },
+              ...fields.slice(1),
+            ]
+              .filter(
+                (field) =>
+                  field.name === "asr_primary" ||
+                  (remote &&
+                    (field.name === "asr_remote_route_id" ||
+                      !values.asr_remote_route_id)),
+              )
               .map((field) => (
                 <FormField
                   key={field.name}

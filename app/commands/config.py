@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from app.core.sanitize import safe_exception_summary
+from app.models.contracts import TEXT_CAPABILITIES, TextCapability
 
 console = Console()
 
@@ -38,19 +39,20 @@ def cmd_set_upload(
     )
 
 
-def cmd_llm_list() -> None:
-    """列出已配置的大模型(按优先级),显示是否可用(key 掩码)。"""
+@click.option("--capability", type=click.Choice(TEXT_CAPABILITIES), default="analysis", show_default=True)
+def cmd_llm_list(capability: TextCapability = "analysis") -> None:
+    """列出指定文字业务的路由，凭据仅显示是否配置。"""
     from app.analysis import llm_providers as provs
 
-    items = provs.load_providers()
+    items = provs.load_providers(capability)
     if not items:
-        console.print("[yellow]未配置任何大模型。可在 Web「模型」页添加,或配置 .env[/yellow]")
+        console.print("[yellow]该业务没有模型路由，请在 Web「模型连接与业务路由」页配置。[/yellow]")
         return
-    table = Table(title="大模型(按优先级升序)")
+    table = Table(title=f"模型路由 {capability}（按优先级升序）")
     for col in ("priority", "name", "model", "base_url", "key", "enabled"):
         table.add_column(col)
     for p in items:
-        hint = f"****{p.api_key[-4:]}" if p.api_key else "(未配置)"
+        hint = "已配置" if p.api_key else "未配置"
         table.add_row(
             str(p.priority),
             p.name,
@@ -62,23 +64,26 @@ def cmd_llm_list() -> None:
     console.print(table)
 
 
-def cmd_llm_test() -> None:
-    """逐个测试已启用大模型的连通性(各发一次极小请求)。"""
+@click.option("--capability", type=click.Choice(TEXT_CAPABILITIES), default="analysis", show_default=True)
+def cmd_llm_test(capability: TextCapability = "analysis") -> None:
+    """逐个测试指定文字业务的路由；每条最多两次有限请求，按服务商规则计费。"""
+    from openai import OpenAIError
+
     from app.analysis import llm as llm_mod
     from app.analysis import llm_providers as provs
 
-    providers = provs.active_providers()
+    providers = provs.active_providers(capability)
     if not providers:
-        console.print("[yellow]无可用大模型(需已启用且配置 key)。[/yellow]")
+        console.print("[yellow]该业务没有已启用的模型连接和路由。[/yellow]")
         raise click.exceptions.Exit(code=1)
     failed = False
     for p in providers:
         try:
-            text = llm_mod._complete(p, "ping", max_tokens=1)
+            text = llm_mod.probe_provider(p)
             if not text or not text.strip():
                 raise llm_mod.EmptyLLMResponseError("服务未返回可用正文")
             console.print(f"[green]OK[/green] {p.name}({p.model}) -> {text[:40]!r}")
-        except Exception as exc:  # noqa: BLE001 — 汇总每个 provider 的错误
+        except (OpenAIError, llm_mod.EmptyLLMResponseError) as exc:
             failed = True
             console.print(f"[red]FAIL[/red] {p.name}({p.model}): {safe_exception_summary(exc)}")
     if failed:

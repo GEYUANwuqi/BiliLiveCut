@@ -13,12 +13,16 @@ import pytest
 from app.analysis.transcription.isolated import IsolatedPipeline
 from app.analysis.transcription.process_pool import ASRProcessPool
 from app.core.config import settings
+from app.core.configuration import ConfigurationChange, save_configuration
+from app.models.configuration import save_model_configuration
+from app.models.contracts import ConnectionChange, ModelConfigurationChange, ModelRoute
 from app.pipeline.lease import LeaseLostError
 
 
 @pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("routed", [False, True])
 def test_real_remote_process_reuses_slot_or_stops_blocked_request(
-    pcm_wav: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
+    temp_db: None, pcm_wav: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool, routed: bool
 ) -> None:
     received = threading.Event()
     release = threading.Event()
@@ -55,6 +59,39 @@ def test_real_remote_process_reuses_slot_or_stops_blocked_request(
     monkeypatch.setattr(settings, "asr_primary", "openai_compatible")
     monkeypatch.setattr(settings, "asr_fallback_whisper", False)
     monkeypatch.setattr(settings, "asr_remote_timeout_s", 30)
+    if routed:
+        save_model_configuration(
+            ModelConfigurationChange(
+                revision=0,
+                connections=[
+                    ConnectionChange(
+                        id="speech",
+                        name="本地协议测试",
+                        base_url=f"http://127.0.0.1:{server.server_port}/v1",
+                        api_key="process-fixture-key",
+                    )
+                ],
+                routes=[
+                    ModelRoute(
+                        id="speech",
+                        name="远程测试",
+                        capability="asr",
+                        connection_id="speech",
+                        model="fixture-only-model",
+                    )
+                ],
+            )
+        )
+        save_configuration(
+            ConfigurationChange(
+                values={
+                    "asr_remote_route_id": "speech",
+                    "asr_remote_base_url": "",
+                    "asr_remote_model": "",
+                    "asr_remote_api_key": "",
+                }
+            )
+        )
     pool = ASRProcessPool()
     pids: list[int] = []
 
@@ -77,6 +114,7 @@ def test_real_remote_process_reuses_slot_or_stops_blocked_request(
             again = pipeline.transcribe(str(pcm_wav))
             assert result.text == again.text == "远程转写已经通过真实子进程返回。"
             assert result.backend == "openai_compatible" and result.audio_duration == 8.336
+            assert result.model_id == "fixture-only-model"
             assert result.segments[0].words == [] and result.segments[0].raw_confidence is None
             assert len(pool._slots) == 1 and pool._slots[0].process.pid == first_pid
             assert paths == ["/v1/audio/transcriptions"] * 2

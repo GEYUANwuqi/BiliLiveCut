@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import httpx2 as httpx
 import pytest
 
 from app.analysis import llm as llm_mod
@@ -128,37 +129,55 @@ def test_merge_rejects_missing_or_unknown_provider_fields(temp_db: None) -> None
         provs.merge_providers([unknown])
 
 
-def test_call_text_failover(monkeypatch: MonkeyPatch) -> None:
+def test_call_text_failover(temp_db: None, monkeypatch: MonkeyPatch) -> None:
     """首个 provider 失败时应自动降级到下一个并返回其结果。
 
     :param monkeypatch: pytest 夹具。
     """
     p1, p2 = _p("P1", 1), _p("P2", 2)
-    monkeypatch.setattr(provs, "active_providers", lambda: [p1, p2])
-    monkeypatch.setattr(llm_mod.provs, "active_providers", lambda: [p1, p2])
+    p1.base_url, p2.base_url = "https://p1.example/v1", "https://p2.example/v1"
+    provs.save_providers([p1, p2])
+    calls: list[str] = []
 
-    def fake_complete(provider, prompt, max_tokens, extra_body=None):
-        if provider.name == "P1":
-            raise RuntimeError("boom")
-        return "from-P2"
+    def transport(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host)
+        if request.url.host == "p1.example":
+            return httpx.Response(503, json={"error": {"message": "服务暂不可用"}}, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "completion",
+                "model": "m",
+                "created": 1,
+                "object": "chat.completion",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "from-P2"}, "finish_reason": "stop"}
+                ],
+            },
+            request=request,
+        )
 
-    monkeypatch.setattr(llm_mod, "_complete", fake_complete)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", transport)
     assert llm_mod.call_text("hi") == "from-P2"
+    assert calls == ["p1.example", "p2.example"]
 
 
-def test_call_text_all_fail_returns_none(monkeypatch: MonkeyPatch) -> None:
+def test_call_text_all_fail_returns_none(temp_db: None, monkeypatch: MonkeyPatch) -> None:
     """所有 provider 都失败时返回 None。
 
     :param monkeypatch: pytest 夹具。
     """
     p1 = _p("P1", 1)
-    monkeypatch.setattr(llm_mod.provs, "active_providers", lambda: [p1])
+    provs.save_providers([p1])
+    calls: list[str] = []
 
-    def boom(*a, **k):
-        raise RuntimeError("down")
+    def transport(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host)
+        return httpx.Response(503, json={"error": {"message": "服务暂不可用"}}, request=request)
 
-    monkeypatch.setattr(llm_mod, "_complete", boom)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", transport)
     assert llm_mod.call_text("hi") is None
+    assert calls == ["x"]
 
 
 def test_extract_text_supports_openai_content_parts() -> None:
@@ -357,9 +376,10 @@ def test_refine_transcript_prompt_requests_conservative_repetition_cleanup(monke
     """整理提示词应清除 ASR 边界复读，同时明确保留真实口语强调。"""
     captured: dict[str, object] = {}
 
-    def fake_call_text(prompt: str, max_tokens: int = 512) -> str:
+    def fake_call_text(prompt: str, max_tokens: int = 512, *, capability: str) -> str:
         captured["prompt"] = prompt
         captured["max_tokens"] = max_tokens
+        assert capability == "transcript"
         return '{"clean_text":"整理后的正文。","summary":"本段摘要"}'
 
     monkeypatch.setattr(llm_mod, "call_text", fake_call_text)

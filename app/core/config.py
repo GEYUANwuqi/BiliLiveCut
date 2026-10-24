@@ -119,20 +119,29 @@ class Settings(BaseSettings):
     # ---------- AI:多引擎 ASR 流水线 (V0.1.12) ----------
     # 只有显式选择 openai_compatible 才上传音频到远程转写服务。
     asr_primary: Literal["funasr_nano", "paraformer", "whisper", "openai_compatible"] = "funasr_nano"
+    asr_remote_route_id: str = Field(
+        default="",
+        max_length=128,
+        pattern=r"^[^\x00-\x20\x7F]*$",
+        description="远程转写业务路由；留空使用下方独立服务配置。仅选择远程主引擎时上传音频。",
+    )
     asr_remote_base_url: str = Field(
         default="",
         max_length=2048,
-        description="远程转写基础地址（含 /v1 等前缀）；选择远程主引擎后音频会上传到此服务。",
+        description="独立远程转写基础地址（含 /v1 等前缀）；未选择业务路由时使用。",
     )
     asr_remote_api_key: str = Field(
         default="",
         max_length=4096,
         pattern=r"^[!-~]*$",
         repr=False,
-        description="远程转写 Bearer 密钥；无需鉴权的自建服务可留空。",
+        description="独立远程转写 Bearer 密钥；选择业务路由后使用连接内的密钥，无认证服务可留空。",
     )
     asr_remote_model: str = Field(
-        default="", max_length=200, pattern=r"^[^\x00-\x1F\x7F]*$", description="服务实际支持的转写模型 ID。"
+        default="",
+        max_length=200,
+        pattern=r"^[^\x00-\x1F\x7F]*$",
+        description="独立配置的转写模型 ID；选择业务路由后使用路由模型。",
     )
     asr_remote_language: str = Field(
         default="", pattern=r"^(?:[a-z]{2,3})?$", description="ISO 639 语言码，如 zh；留空由服务识别。"
@@ -194,12 +203,15 @@ class Settings(BaseSettings):
 
     # ---------- 网感资料库(联网采集热门内容,供评分/文案参考) ----------
     trend_enabled: bool = False  # 是否启用网感资料库(默认关闭,按需开启)
-    # 趋势采集专用 API 配置(独立于通用 LLM,可指定不同的模型/服务商)。
-    # 留空则使用多模型列表中的首个启用项。
-    trend_api_key: str = Field(default="", repr=False)  # 趋势采集专用 API Key
-    trend_base_url: str = ""  # 趋势采集专用 base_url(OpenAI 兼容)
-    trend_model: str = ""  # 趋势采集专用模型名
-    trend_web_search_param: str = "enable_search"  # 专用模型的联网搜索开关键名
+    # 未保存独立业务路由时兼容原热点专用配置，留空按旧通用列表回退。
+    trend_api_key: str = Field(
+        default="", repr=False, description="原热点专用密钥；保存独立业务路由后使用热点路由连接。"
+    )
+    trend_base_url: str = Field(default="", description="原热点专用基础地址；保存独立业务路由后使用热点路由连接。")
+    trend_model: str = Field(default="", description="原热点专用模型；保存独立业务路由后使用热点路由模型。")
+    trend_web_search_param: str = Field(
+        default="enable_search", description="原热点专用搜索参数；保存独立业务路由后使用路由参数。"
+    )
     trend_web_search: bool = True  # 是否启用联网搜索工具采集(关闭则仅靠模型知识)
     trend_max_items: int = Field(default=12, ge=1, le=200)  # 单次采集解析条目上限
     trend_retention_days: int = Field(default=14, ge=1)  # 资料库保留天数
@@ -384,10 +396,14 @@ class Settings(BaseSettings):
         :returns: 校验通过的 ``self``。
         :raises ValueError: 校验失败时抛出含描述性信息的异常。
         """
-        if self.asr_primary == "openai_compatible" and (
-            not self.asr_remote_base_url or not self.asr_remote_model.strip()
+        if (
+            self.asr_primary == "openai_compatible"
+            and not self.asr_remote_route_id
+            and (not self.asr_remote_base_url or not self.asr_remote_model.strip())
         ):
-            raise ValueError("openai_compatible 需要同时配置 asr_remote_base_url 和 asr_remote_model")
+            raise ValueError(
+                "openai_compatible 需要同时配置 asr_remote_base_url 和 asr_remote_model，或选择远程转写路由"
+            )
 
         # asr_review_risk_threshold 必须在 [0, 1] 范围内
         if not (0.0 <= self.asr_review_risk_threshold <= 1.0):

@@ -159,6 +159,90 @@
         "title": "ConfigurationChange",
         "type": "object"
       },
+      "ConnectionChange": {
+        "additionalProperties": false,
+        "description": "空密钥保留同一连接的已保存凭据，清空必须明确声明。",
+        "properties": {
+          "api_key": {
+            "default": "",
+            "maxLength": 4096,
+            "pattern": "^[!-~]*$",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "clear_api_key": {
+            "default": false,
+            "title": "Clear Api Key",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x20\\x7F]+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\s\\x00-\\x1F\\x7F](?:[^\\x00-\\x1F\\x7F]*[^\\s\\x00-\\x1F\\x7F])?$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "base_url"
+        ],
+        "title": "ConnectionChange",
+        "type": "object"
+      },
+      "ConnectionView": {
+        "description": "服务连接的公开投影，永不包含密钥。",
+        "properties": {
+          "api_key_set": {
+            "title": "Api Key Set",
+            "type": "boolean"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "base_url",
+          "enabled",
+          "api_key_set"
+        ],
+        "title": "ConnectionView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -519,6 +603,267 @@
           "target_id"
         ],
         "title": "MergeTopicsRequest",
+        "type": "object"
+      },
+      "ModelConfigurationChange": {
+        "additionalProperties": false,
+        "description": "模型配置整体保存，与其他设置共用乐观版本检查。",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionChange"
+            },
+            "maxItems": 64,
+            "title": "Connections",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRoute"
+            },
+            "maxItems": 256,
+            "title": "Routes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "connections",
+          "routes"
+        ],
+        "title": "ModelConfigurationChange",
+        "type": "object"
+      },
+      "ModelConfigurationView": {
+        "description": "同一数据库版本的连接、路由及兼容来源。",
+        "properties": {
+          "active_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "analysis",
+                "transcript",
+                "trends",
+                "summary",
+                "copywriting",
+                "asr"
+              ]
+            },
+            "title": "Active Counts",
+            "type": "object"
+          },
+          "asr_selection": {
+            "title": "Asr Selection",
+            "type": "string"
+          },
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionView"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRoute"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "source": {
+            "enum": [
+              "legacy",
+              "routes"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "source",
+          "connections",
+          "routes",
+          "active_counts",
+          "asr_selection"
+        ],
+        "title": "ModelConfigurationView",
+        "type": "object"
+      },
+      "ModelProbe": {
+        "additionalProperties": false,
+        "description": "仅测试管理员明确选择的文本路由，不保存草稿。",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionChange"
+            },
+            "maxItems": 64,
+            "title": "Connections",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "route_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x20\\x7F]+$",
+            "title": "Route Id",
+            "type": "string"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRoute"
+            },
+            "maxItems": 256,
+            "title": "Routes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "connections",
+          "routes",
+          "route_id"
+        ],
+        "title": "ModelProbe",
+        "type": "object"
+      },
+      "ModelProbeResult": {
+        "description": "单条文本路由的有限调用结果。",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "ok",
+          "detail"
+        ],
+        "title": "ModelProbeResult",
+        "type": "object"
+      },
+      "ModelRoute": {
+        "additionalProperties": false,
+        "description": "业务能力独立选择模型、连接、调用顺序和计费参数。",
+        "properties": {
+          "capability": {
+            "enum": [
+              "analysis",
+              "transcript",
+              "trends",
+              "summary",
+              "copywriting",
+              "asr"
+            ],
+            "title": "Capability",
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x20\\x7F]+$",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x20\\x7F]+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "maximum": 65536.0,
+                "minimum": 16.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\s\\x00-\\x1F\\x7F](?:[^\\x00-\\x1F\\x7F]*[^\\s\\x00-\\x1F\\x7F])?$",
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\s\\x00-\\x1F\\x7F](?:[^\\x00-\\x1F\\x7F]*[^\\s\\x00-\\x1F\\x7F])?$",
+            "title": "Name",
+            "type": "string"
+          },
+          "price_input_per_m": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Price Input Per M",
+            "type": "number"
+          },
+          "price_output_per_m": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Price Output Per M",
+            "type": "number"
+          },
+          "priority": {
+            "default": 100,
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "web_search_param": {
+            "default": "",
+            "maxLength": 64,
+            "pattern": "^(?:[A-Za-z][A-Za-z0-9_]*)?$",
+            "title": "Web Search Param",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "capability",
+          "connection_id",
+          "model"
+        ],
+        "title": "ModelRoute",
         "type": "object"
       },
       "PluginSettingsBody": {
@@ -2748,6 +3093,101 @@
           }
         },
         "summary": "Get Metrics"
+      }
+    },
+    "/api/model-configuration": {
+      "get": {
+        "description": "返回共享连接与各业务路由的脱敏视图。",
+        "operationId": "get_model_configuration_api_model_configuration_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigurationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Model Configuration"
+      },
+      "put": {
+        "description": "在同一配置版本内保存全部连接与路由，不修改运行中任务的快照。",
+        "operationId": "put_model_configuration_api_model_configuration_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelConfigurationChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigurationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Model Configuration"
+      }
+    },
+    "/api/model-configuration/test": {
+      "post": {
+        "description": "仅测试指定文本路由，保留真实执行的取消与收尾约束。",
+        "operationId": "test_model_configuration_api_model_configuration_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProbe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelProbeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Model Configuration"
       }
     },
     "/api/monitor": {

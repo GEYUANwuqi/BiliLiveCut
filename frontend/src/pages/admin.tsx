@@ -222,7 +222,7 @@ export function AutomationPage() {
   );
 }
 
-const providerFields: FieldSpec[] = [
+const connectionFields: FieldSpec[] = [
   { name: "name", label: "服务名称" },
   {
     name: "base_url",
@@ -230,15 +230,34 @@ const providerFields: FieldSpec[] = [
     required: true,
     placeholder: "https://api.example.com/v1",
   },
-  { name: "model", label: "模型名称", required: true },
   {
     name: "api_key",
     label: "API 密钥",
     type: "password",
-    description: "留空保留已保存的密钥。",
+    description:
+      "留空保留原密钥；修改地址时必须重新填写或明确清空。无认证的本地服务可留空。",
   },
   { name: "clear_api_key", label: "清除已保存密钥", type: "boolean" },
   { name: "enabled", label: "启用服务", type: "boolean" },
+];
+const capabilityOptions = [
+  { value: "analysis", label: "高光分析" },
+  { value: "transcript", label: "转写整理" },
+  { value: "trends", label: "热点采集" },
+  { value: "summary", label: "整场总结" },
+  { value: "copywriting", label: "投稿文案" },
+  { value: "asr", label: "远程语音转写" },
+];
+const routeFields: FieldSpec[] = [
+  { name: "name", label: "路由名称", required: true },
+  {
+    name: "capability",
+    label: "业务能力",
+    options: capabilityOptions,
+    required: true,
+  },
+  { name: "model", label: "模型名称", required: true },
+  { name: "enabled", label: "启用路由", type: "boolean" },
   {
     name: "priority",
     label: "优先级（较小的优先）",
@@ -246,6 +265,14 @@ const providerFields: FieldSpec[] = [
     required: true,
   },
   { name: "web_search_param", label: "联网搜索参数" },
+  {
+    name: "max_output_tokens",
+    label: "路由输出 Token 上限",
+    type: "number",
+    min: 16,
+    max: 65536,
+    description: "留空使用业务预算；填写后取两者较小值，包含模型思考开销。",
+  },
   {
     name: "price_input_per_m",
     label: "每百万输入 Token 价格",
@@ -259,11 +286,19 @@ const providerFields: FieldSpec[] = [
     min: 0,
   },
 ];
-function normalizedProviders(values: Row[]) {
-  return values.map((value) => ({
-    id: text(value.id, ""),
-    ...serializeFields(value, providerFields),
-  }));
+function normalizedModels(view: Row) {
+  return {
+    revision: view.revision,
+    connections: rows(view.connections).map((value) => ({
+      id: value.id,
+      ...serializeFields(value, connectionFields),
+    })),
+    routes: rows(view.routes).map((value) => ({
+      id: value.id,
+      connection_id: value.connection_id,
+      ...serializeFields(value, routeFields),
+    })),
+  };
 }
 function SetupPanel({
   description,
@@ -288,44 +323,55 @@ export function LlmPage({
   embedded = false,
   onBusy,
 }: { embedded?: boolean; onBusy?: (busy: boolean) => void } = {}) {
-  const query = useApi("/api/llm-providers", false);
-  const draft = useDraft<Row[] | null>("llm-providers", null);
+  const query = useApi("/api/model-configuration", false);
+  const draft = useDraft<Row | null>("model-configuration", null);
   const cache = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<Row[]>([]);
   const [presetId, setPresetId] = useState("custom");
+  const [capability, setCapability] = useState("analysis");
+  const [connectionId, setConnectionId] = useState("");
   const preset = llmPresets.find((entry) => entry.id === presetId);
   useEffect(() => {
     onBusy?.(busy);
     return () => onBusy?.(false);
   }, [busy, onBusy]);
   const Frame = embedded ? SetupPanel : Page;
-  const providers: Row[] =
-    draft.value ??
-    rows(obj(query.data).providers).map((entry) => ({
-      ...entry,
-      api_key: "",
-      clear_api_key: false,
-    }));
+  const view = draft.value ?? obj(query.data);
+  const providers: Row[] = rows(view.connections).map((entry) => ({
+    api_key: "",
+    clear_api_key: false,
+    ...entry,
+  }));
+  const routes = rows(view.routes);
+  const updateView = (changes: Row) => {
+    draft.update({ ...view, ...changes });
+    setResults([]);
+  };
   const update = (index: number, next: unknown, key: string) =>
-    draft.update(
-      providers.map((row, i) => (i === index ? { ...row, [key]: next } : row)),
-    );
-  async function save(test = false) {
+    updateView({
+      connections: providers.map((row, i) =>
+        i === index ? { ...row, [key]: next } : row,
+      ),
+    });
+  async function save(routeId?: string) {
     setBusy(true);
     setError("");
     try {
       const result = await send<Row>(
-        test ? "/api/llm-providers/test" : "/api/llm-providers",
-        test ? "POST" : "PUT",
-        { providers: normalizedProviders(providers) },
+        routeId ? "/api/model-configuration/test" : "/api/model-configuration",
+        routeId ? "POST" : "PUT",
+        {
+          ...normalizedModels({ ...view, connections: providers }),
+          ...(routeId ? { route_id: routeId } : {}),
+        },
       );
-      if (test) setResults(rows(result.results));
+      if (routeId) setResults([result]);
       else {
         draft.reset();
         await cache.invalidateQueries({ queryKey: ["api"] });
-        toast.success("服务配置已保存");
+        toast.success("连接与业务路由已保存；新任务使用新配置");
       }
     } catch (error) {
       setError((error as Error).message);
@@ -335,29 +381,39 @@ export function LlmPage({
   }
   return (
     <Frame
-      title="大模型服务"
-      description="按优先级调用可用服务；密钥留空时保留原值。测试只验证草稿，不会保存配置；会实际调用服务并计费，每个服务最多两次请求，每次生成上限为 4096 token（含思考）。"
+      title="模型连接与业务路由"
+      description="多个业务可共用一个连接和密钥，各自选择模型与优先级。测试会实际调用指定文本路由并计费，最多两次、每次不超过 4096 token。远程语音转写需要到转写设置中明确选择路由后启用。"
       actions={
         <>
+          <Button disabled={busy || !draft.dirty} onClick={() => void save()}>
+            保存连接与路由
+          </Button>
           <Button
             variant="outline"
             disabled={busy}
-            onClick={() => void save(true)}
+            onClick={async () => {
+              const result = await query.refetch();
+              if (result.data && draft.dirty)
+                toast.info(
+                  "已读取最新配置，当前草稿与原版本仍保留；如有冲突，请放弃草稿后在最新配置上重新修改，避免覆盖他人的新增路由",
+                );
+            }}
           >
-            <FlaskConical className="size-4" />
-            测试连接
-          </Button>
-          <Button disabled={busy || !draft.dirty} onClick={() => void save()}>
-            保存全部服务
+            读取最新版本
           </Button>
         </>
       }
     >
       <QueryState query={query}>
         <div className="space-y-5">
+          {view.source === "legacy" && (
+            <p className="text-sm text-muted-foreground">
+              已按原有配置生成完整路由预览；保存后开始使用独立路由。原本通用模型已分别用于五项文字业务，热点专用模型保留优先顺序。
+            </p>
+          )}
           <Card>
             <CardContent className="space-y-4">
-              <h2 className="font-medium">添加大模型服务</h2>
+              <h2 className="font-medium">添加共享服务连接</h2>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div className="min-w-0 flex-1">
                   <FormField
@@ -381,8 +437,12 @@ export function LlmPage({
                   variant="outline"
                   disabled={busy}
                   onClick={() => {
-                    draft.update([...providers, createLlmProvider(preset)]);
-                    setResults([]);
+                    const provider = {
+                      ...createLlmProvider(preset),
+                      id: crypto.randomUUID(),
+                    };
+                    updateView({ connections: [...providers, provider] });
+                    setConnectionId(provider.id);
                   }}
                 >
                   <Plus className="size-4" />
@@ -412,7 +472,7 @@ export function LlmPage({
             </CardContent>
           </Card>
           {providers.map((provider, index) => (
-            <Card key={index}>
+            <Card key={String(provider.id)}>
               <CardContent>
                 <div className="mb-5 flex justify-between">
                   <h2 className="font-medium">
@@ -426,9 +486,17 @@ export function LlmPage({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={busy}
+                    disabled={
+                      busy ||
+                      routes.some(
+                        (route) => route.connection_id === provider.id,
+                      )
+                    }
+                    title="先移除引用此连接的路由，再移除连接"
                     onClick={() =>
-                      draft.update(providers.filter((_, i) => i !== index))
+                      updateView({
+                        connections: providers.filter((_, i) => i !== index),
+                      })
                     }
                   >
                     <Trash2 className="size-4" />
@@ -436,22 +504,14 @@ export function LlmPage({
                   </Button>
                 </div>
                 <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-                  {providerFields
-                    .filter(
-                      (field) =>
-                        !embedded ||
-                        ["name", "base_url", "model", "api_key"].includes(
-                          field.name,
-                        ),
-                    )
-                    .map((field) => (
-                      <FormField
-                        key={field.name}
-                        field={field}
-                        value={provider[field.name]}
-                        onChange={(next) => update(index, next, field.name)}
-                      />
-                    ))}
+                  {connectionFields.map((field) => (
+                    <FormField
+                      key={field.name}
+                      field={field}
+                      value={provider[field.name]}
+                      onChange={(next) => update(index, next, field.name)}
+                    />
+                  ))}
                 </fieldset>
               </CardContent>
             </Card>
@@ -462,6 +522,170 @@ export function LlmPage({
               description="添加支持兼容接口的服务，启用摘要、高光分析与文案生成。"
             />
           )}
+          <Card>
+            <CardContent className="space-y-4">
+              <h2 className="font-medium">添加业务路由</h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField
+                  field={{
+                    name: "new_capability",
+                    label: "业务能力",
+                    options: capabilityOptions,
+                  }}
+                  value={capability}
+                  disabled={busy}
+                  onChange={(value) => setCapability(String(value))}
+                />
+                <FormField
+                  field={{
+                    name: "new_connection",
+                    label: "使用连接",
+                    options: providers.map((item) => ({
+                      value: String(item.id),
+                      label: text(item.name),
+                    })),
+                  }}
+                  value={connectionId}
+                  disabled={busy}
+                  onChange={(value) => setConnectionId(String(value))}
+                />
+              </div>
+              <Button
+                variant="outline"
+                disabled={
+                  busy || !providers.some((item) => item.id === connectionId)
+                }
+                onClick={() => {
+                  const connection = providers.find(
+                    (item) => item.id === connectionId,
+                  );
+                  updateView({
+                    routes: [
+                      ...routes,
+                      {
+                        id: crypto.randomUUID(),
+                        name:
+                          capabilityOptions.find(
+                            (item) => item.value === capability,
+                          )?.label || "新路由",
+                        capability,
+                        connection_id: connectionId,
+                        model:
+                          capability === "asr" ? "" : connection?.model || "",
+                        enabled: true,
+                        priority: 100,
+                        web_search_param: "",
+                        max_output_tokens: null,
+                        price_input_per_m: 0,
+                        price_output_per_m: 0,
+                      },
+                    ],
+                  });
+                }}
+              >
+                <Plus className="size-4" />
+                添加路由
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                同一业务可添加多个路由，按较小优先级先调用。远程语音转写只使用转写设置中明确选中的一条路由；本地
+                CUDA 转写保持原有设置。
+              </p>
+            </CardContent>
+          </Card>
+          {routes.map((route, index) => (
+            <Card key={String(route.id)}>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-medium">
+                    {text(route.name)} ·{" "}
+                    {
+                      capabilityOptions.find(
+                        (item) => item.value === route.capability,
+                      )?.label
+                    }
+                  </h2>
+                  <div className="flex gap-2">
+                    {route.capability !== "asr" && (
+                      <Button
+                        variant="outline"
+                        disabled={busy || !route.enabled}
+                        onClick={() => void save(String(route.id))}
+                      >
+                        <FlaskConical className="size-4" />
+                        测试此路由
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      disabled={busy || view.asr_selection === route.id}
+                      onClick={() =>
+                        updateView({
+                          routes: routes.filter((_, item) => item !== index),
+                        })
+                      }
+                    >
+                      <Trash2 className="size-4" />
+                      移除路由
+                    </Button>
+                  </div>
+                </div>
+                {view.asr_selection === route.id && (
+                  <p className="text-xs text-muted-foreground">
+                    当前已被远程转写选中。需要先在转写设置中更换选择，才能停用或移除此路由。
+                  </p>
+                )}
+                <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
+                  {[
+                    {
+                      name: "connection_id",
+                      label: "服务连接",
+                      required: true,
+                      options: providers.map((item) => ({
+                        value: String(item.id),
+                        label: text(item.name),
+                      })),
+                    },
+                    ...routeFields,
+                  ]
+                    .filter(
+                      (field) =>
+                        route.capability !== "asr" ||
+                        ![
+                          "web_search_param",
+                          "max_output_tokens",
+                          "price_input_per_m",
+                          "price_output_per_m",
+                        ].includes(field.name),
+                    )
+                    .map((field) => (
+                      <FormField
+                        key={field.name}
+                        field={field}
+                        value={route[field.name]}
+                        onChange={(value) => {
+                          const reset =
+                            field.name === "capability" && value === "asr"
+                              ? {
+                                  web_search_param: "",
+                                  max_output_tokens: null,
+                                  price_input_per_m: 0,
+                                  price_output_per_m: 0,
+                                }
+                              : {};
+                          updateView({
+                            routes: routes.map((item, position) =>
+                              position === index
+                                ? { ...item, ...reset, [field.name]: value }
+                                : item,
+                            ),
+                          });
+                        }}
+                      />
+                    ))}
+                </fieldset>
+              </CardContent>
+            </Card>
+          ))}
           {draft.dirty && (
             <Button
               variant="ghost"

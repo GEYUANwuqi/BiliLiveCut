@@ -75,7 +75,7 @@ function AdminOnboarding({ children }: { children: ReactNode }) {
   const setStage = (next: IntroStage) => writeIntro(key, next);
   const [busy, setBusy] = useState(false);
   const asr = useDraft<Row>("onboarding-asr", {});
-  const llm = useDraft<Row[] | null>("llm-providers", null);
+  const llm = useDraft<Row | null>("model-configuration", null);
   const wizard = stage.startsWith("setup:");
   const step = Number(stage.split(":")[1] || 0);
   const dirty = (step === 2 && asr.dirty) || (step === 3 && llm.dirty);
@@ -266,7 +266,7 @@ function AdminOnboarding({ children }: { children: ReactNode }) {
 function SetupSummary() {
   const cookie = useApi("/api/cookie-status", false);
   const config = useApi("/api/settings/configuration", false);
-  const llm = useApi("/api/llm-providers", false);
+  const llm = useApi("/api/model-configuration", false);
   const engine = rows(obj(config.data).fields).find(
     (field) => field.key === "asr_primary",
   )?.value;
@@ -305,7 +305,7 @@ function SetupSummary() {
               ? "读取失败，请到大模型服务重试"
               : llm.isPending
                 ? "正在读取…"
-                : `${Number(obj(llm.data).active_count || 0)} 个启用服务`,
+                : `${rows(obj(llm.data).connections).filter((item) => item.enabled).length} 个启用连接，${Object.values(obj(obj(llm.data).active_counts)).reduce<number>((total, value) => total + Number(value || 0), 0)} 条启用路由`,
           ],
         ].map(([label, value]) => (
           <li

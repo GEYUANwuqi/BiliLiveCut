@@ -56,6 +56,7 @@ const common = new Set(
     " ",
   ),
 );
+common.add("asr_remote_route_id");
 const effects: Record<string, string> = {
   new_room: "新建房间时生效",
   next_task: "下一任务生效",
@@ -71,6 +72,7 @@ type Change = { action: "value" | "clear" | "reset"; value?: unknown };
 
 export default function ConfigurationPage() {
   const query = useApi("/api/settings/configuration", false);
+  const modelQuery = useApi("/api/model-configuration", false);
   const cache = useQueryClient();
   const draft = useDraft<Row>("configuration", {});
   const [params, setParams] = useSearchParams();
@@ -363,6 +365,32 @@ export default function ConfigurationPage() {
                       );
                       spec.label = text(field.label);
                       spec.description = undefined;
+                      if (key === "asr_remote_route_id") {
+                        const enabled = new Set(
+                          rows(obj(modelQuery.data).connections)
+                            .filter((item) => item.enabled)
+                            .map((item) => item.id),
+                        );
+                        spec.options = [
+                          { value: "", label: "使用下方独立 API 配置" },
+                          ...rows(obj(modelQuery.data).routes)
+                            .filter(
+                              (item) =>
+                                item.capability === "asr" &&
+                                item.enabled &&
+                                enabled.has(item.connection_id),
+                            )
+                            .map((item) => ({
+                              value: String(item.id),
+                              label: `${text(item.name)} · ${text(item.model)}`,
+                            })),
+                        ];
+                        spec.disabled =
+                          modelQuery.isPending || modelQuery.isError;
+                        spec.description = modelQuery.isError
+                          ? "模型路由读取失败，请刷新后重试；当前选择保持不变。"
+                          : "先在模型连接与路由页面保存远程语音路由，再在这里选择；仅远程 API 主引擎会上传音频。";
+                      }
                       if (field.secret) {
                         spec.type = "password";
                         spec.placeholder = field.configured

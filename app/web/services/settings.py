@@ -11,6 +11,7 @@ from app.core import settings_store
 from app.core.config import get_settings, settings
 from app.core.paths import clips_dir, ready_to_upload_dir
 from app.core.sanitize import safe_exception_summary
+from app.models.contracts import ModelProbe, ModelProbeResult
 from config.launcher_settings import (
     current_web_port,
     load_launcher_config,
@@ -108,3 +109,32 @@ async def test_llm_providers(items: list[dict[str, Any]] | None = None) -> dict[
     providers = [p for p in candidates if p.enabled and p.api_key and p.base_url]
     results = await asyncio.to_thread(lambda: [_probe(p) for p in providers])
     return {"results": results}
+
+
+def test_model_route(change: ModelProbe) -> ModelProbeResult:
+    """按完整草稿解析一次文本调用，远程 ASR 需由用户明确提交音频测试。"""
+    from openai import OpenAIError
+
+    from app.analysis.llm import EmptyLLMResponseError, probe_provider
+    from app.analysis.llm_providers import from_route
+    from app.models.configuration import probe_configuration, resolve_routes
+
+    config = probe_configuration(change)
+    route = next((item for item in config.routes if item.id == change.route_id), None)
+    if route is None:
+        raise ValueError("测试路由不存在")
+    if route.capability == "asr":
+        raise ValueError("远程转写请先保存并选择路由，再用短录播测试；连通测试不会自动上传音频")
+    selected = next((item for item in resolve_routes(config, route.capability) if item[0].id == route.id), None)
+    if selected is None:
+        raise ValueError("测试路由或服务连接已停用")
+    if settings.llm_daily_budget > 0:
+        from app.analysis.llm import _today_spend
+
+        if _today_spend() >= settings.llm_daily_budget:
+            raise ValueError("已达到每日模型预算，无法发起测试请求")
+    try:
+        result = probe_provider(from_route(*selected))
+    except (OpenAIError, EmptyLLMResponseError) as exc:
+        return ModelProbeResult(id=route.id, ok=False, detail=safe_exception_summary(exc))
+    return ModelProbeResult(id=route.id, ok=True, detail=result[:80])

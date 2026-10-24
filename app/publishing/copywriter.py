@@ -171,7 +171,8 @@ def _llm_copy(text: str, reason: str) -> Copy | None:
             text=text or "(无转写)",
             reason=reason or "无",
             trend_block=_trend_block(),
-        )
+        ),
+        capability="copywriting",
     )
     if raw is None:
         return None

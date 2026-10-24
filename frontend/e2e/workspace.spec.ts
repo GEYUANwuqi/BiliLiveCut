@@ -23,8 +23,15 @@ async function mock(page: Page) {
     if (path === "/api/jobs") data = { jobs: [] };
     if (path === "/api/topics") data = { topics: [] };
     if (path === "/api/plugins") data = { plugins: [] };
-    if (path === "/api/llm-providers")
-      data = { providers: [], active_count: 0 };
+    if (path === "/api/model-configuration")
+      data = {
+        revision: 0,
+        source: "routes",
+        connections: [],
+        routes: [],
+        active_counts: {},
+        asr_selection: "",
+      };
     if (path === "/api/cookie-status") data = { has_cookie: false };
     if (path === "/api/login/qrcode") data = { status: "idle", task_id: null };
     if (path === "/review/api/queue")
@@ -535,7 +542,7 @@ test("workspace renders and opens every navigation page without errors", async (
     ["/monitor", "运行状态"],
     ["/logs", "错误日志"],
     ["/settings", "设置中心"],
-    ["/settings/llm", "大模型服务"],
+    ["/settings/llm", "模型连接与业务路由"],
     ["/settings/login", "Bilibili 账号"],
     ["/settings/plugins", "插件中心"],
     ["/settings/subtitles", "字幕模板"],

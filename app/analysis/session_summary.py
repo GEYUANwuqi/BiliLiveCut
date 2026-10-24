@@ -336,6 +336,7 @@ def build_session_timeline_summary(session_id: int) -> dict[str, Any]:
             + "\n覆盖情况（仅根据已有证据分析，不推断缺失时段）："
             + _encode(coverage),
             max_tokens=settings.highlight_llm_max_tokens,
+            capability="summary",
         )
         parsed = llm.extract_json(raw) if raw else None
         candidate = parsed.get("summary") if parsed is not None else None

@@ -59,6 +59,7 @@ web = [
 ]
 # 开发与测试工具。
 dev = [
+    "bili-live-cut[llm]", # 路由回归通过真实 SDK 验证请求，仅替换外部 HTTP 边界
     "bili-live-cut[asr-whisper]", # 回归测试使用真实 CPU VAD/音频解码，不下载转写模型
     "modelscope-hub==0.2.0", # 验证锁定 SDK 的文件清单与半下载失败边界
     "Cython==3.2.9",
