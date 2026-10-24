@@ -88,9 +88,12 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        -o 'Dpkg::Options::=--path-include=/usr/share/doc/libass9/changelog*' \
-       fonts-noto-cjk fontconfig libgomp1 liblzma5 \
+       ca-certificates libbrotli1 libexpat1 fonts-noto-cjk fontconfig libgomp1 liblzma5 \
        libass9 libfontconfig1 libfreetype6 libharfbuzz0b libfribidi0 \
        libx264-164 libx265-215 libvpx9 libopus0 libmp3lame0 libvorbis0a libvorbisenc2 libssl3t64 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge '20250419+deb13u1' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libbrotli1)" ge '1.1.0-2+deb13u1' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libexpat1)" ge '2.9.0-1~deb13u1' \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --create-home appuser \
     && mkdir -p /data /app \

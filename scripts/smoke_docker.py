@@ -131,6 +131,14 @@ def main() -> int:
                     == 200
                 ):
                     assert request(url + "/assets/missing-smoke.js") == 404
+                    assert docker("exec", name, "id", "-u").stdout.strip() == "101"
+                    for package, minimum in {
+                        "brotli-libs": "1.2.1-r0",
+                        "musl": "1.2.6-r3",
+                        "musl-utils": "1.2.6-r3",
+                        "zlib": "1.3.2-r1",
+                    }.items():
+                        docker("exec", name, "apk", "info", "--exists", f"{package}>={minimum}")
                     return url
             except (OSError, URLError):
                 pass
@@ -252,6 +260,15 @@ def main() -> int:
         }
         assert {"dpkg", "ca-certificates", "tzdata", "libc6", "libssl3t64", "libsqlite3-0"} <= installed
         assert not docker("exec", first, "dpkg", "--audit").stdout.strip()
+        # 检查真实安装版本，避免旧基础层仍满足依赖关系却缺少官方安全更新。
+        for package, minimum in {
+            "ca-certificates": "20250419+deb13u1",
+            "libbrotli1": "1.1.0-2+deb13u1",
+            "libexpat1": "2.9.0-1~deb13u1",
+        }.items():
+            installed_version = docker("exec", first, "dpkg-query", "-W", "-f=${Version}", package).stdout.strip()
+            docker("exec", first, "dpkg", "--compare-versions", installed_version, "ge", minimum)
+            print(f"{package}: {installed_version} >= {minimum}")
         docker(
             "exec",
             first,
