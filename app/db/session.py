@@ -17,9 +17,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock, RLock
+from uuid import uuid4
 
 from loguru import logger
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
 from app.core.config import settings
@@ -34,6 +37,9 @@ if _db_url.startswith("sqlite:///"):
 # timeout:遇到锁时等待秒数,缓解多任务(录制+分析+Web)并发写的 "database is locked"。
 _connect_args = {"check_same_thread": False, "timeout": 30} if _db_url.startswith("sqlite") else {}
 engine = create_engine(_db_url, echo=False, connect_args=_connect_args)
+_initialization_lock = Lock()
+_database_log_lock = RLock()
+_validated_database: tuple[Engine, str] | None = None
 
 if _db_url.startswith("sqlite"):
 
@@ -67,11 +73,35 @@ def init_db() -> None:
     from app.db import entities  # noqa: F401
     from app.db.schema import assure_schema
 
-    assure_schema()
-    from app.core.configuration import reload_configuration
+    global _validated_database
+    with _initialization_lock:
+        # 等待正在提交的日志，再撤销旧代次；校验失败时保持禁止写库。
+        with _database_log_lock:
+            _validated_database = None
+        assure_schema()
+        from app.core.configuration import reload_configuration
 
-    reload_configuration()
+        reload_configuration()
+        with _database_log_lock:
+            _validated_database = (engine, uuid4().hex)
     logger.info("数据库初始化完成: {}", settings.database_url)
+
+
+def database_log_generation() -> str | None:
+    """返回当前已通过完整初始化的日志代次，未通过时禁止入队。"""
+    validated = _validated_database
+    return validated[1] if validated is not None and validated[0] is engine else None
+
+
+@contextmanager
+def get_database_log_session(generation: str | None) -> Iterator[Session | None]:
+    """仅在原数据库及校验代次仍有效时提交日志，避免旧队列跨库写入。"""
+    with _database_log_lock:
+        if generation is None or generation != database_log_generation():
+            yield None
+            return
+        with get_session() as session:
+            yield session
 
 
 @contextmanager

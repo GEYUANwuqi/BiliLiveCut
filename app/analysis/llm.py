@@ -23,6 +23,7 @@ import math
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -134,6 +135,26 @@ def _today_spend() -> float:
         raise BudgetAccountingError("预算记录不可读，停止模型调用") from exc
 
 
+def _persist_budget(path: Path, record: _BudgetRecord) -> None:
+    """持锁写入单次增量，仅有限重试 Windows 原子替换的占用错误。"""
+    temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            stream.write(record.model_dump_json(by_alias=True))
+            stream.flush()
+            os.fsync(stream.fileno())
+        for attempt in range(7):
+            try:
+                os.replace(temporary, path)
+                return
+            except OSError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 6:
+                    raise
+                time.sleep(min(0.05 * 2**attempt, 0.5))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _add_spend(usd: float) -> None:
     """累加今日花费并持久化。
 
@@ -142,20 +163,13 @@ def _add_spend(usd: float) -> None:
     if not math.isfinite(usd) or usd < 0:
         raise BudgetAccountingError("预算记录增量必须为有限非负数")
     path = _budget_file()
-    temporary = path.with_suffix(f".{uuid4().hex}.tmp")
     try:
         with FileLock(str(path) + ".lock", timeout=10):
             today = date.today()
             record = _BudgetRecord(date=today, spend_usd=_read_spend(path, today) + usd)
-            with temporary.open("x", encoding="utf-8") as stream:
-                stream.write(record.model_dump_json(by_alias=True))
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            _persist_budget(path, record)
     except (OSError, Timeout, UnicodeError, ValidationError) as exc:
         raise BudgetAccountingError("预算记录写入失败，停止模型调用") from exc
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 # 模块级缓存:按 provider id 缓存 OpenAI 客户端实例,避免连接池泄漏。

@@ -169,10 +169,19 @@ def setup_logging() -> None:
 
     # 数据库 sink:把 WARNING 及以上写入 system_logs,供 Web 后台查看。
     # enqueue=True 让写库发生在独立线程,不阻塞业务;内部已吞掉自身异常,避免递归。
-    logger.add(_db_sink, level="WARNING", enqueue=True)
+    logger.add(_db_sink, level="WARNING", enqueue=True, filter=_filter_db_sink)
 
     _CONFIGURED = True
     logger.debug("日志系统已初始化(env={}, level={})", settings.app_env, settings.log_level)
+
+
+def _filter_db_sink(record: Record) -> bool:
+    """入队时记录校验代次，未初始化或初始化失败的诊断只写文件和控制台。"""
+    from app.db.session import database_log_generation
+
+    generation = database_log_generation()
+    record["extra"]["_database_generation"] = generation
+    return generation is not None
 
 
 def _db_sink(message: Message) -> None:
@@ -187,9 +196,11 @@ def _db_sink(message: Message) -> None:
         _safe_record(record)
         # 延迟导入,规避循环依赖(db -> logging)。
         from app.db.entities import SystemLog
-        from app.db.session import get_session
+        from app.db.session import get_database_log_session
 
-        with get_session() as db:
+        with get_database_log_session(record["extra"].get("_database_generation")) as db:
+            if db is None:
+                return
             db.add(
                 SystemLog(
                     level=record["level"].name,

@@ -134,6 +134,59 @@ def test_separate_processes_share_the_same_budget(monkeypatch: MonkeyPatch, tmp_
     assert llm._today_spend() == pytest.approx(0.3)
 
 
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_budget_transient_replace_adds_the_amount_once(monkeypatch: MonkeyPatch, tmp_path: Path, winerror: int) -> None:
+    path = tmp_path / "llm_budget.json"
+    monkeypatch.setattr(llm, "_budget_file", lambda: path)
+    llm._add_spend(0.1)
+    before = path.read_bytes()
+    original = os.replace
+    calls = 0
+
+    def temporarily_locked(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            assert path.read_bytes() == before
+            error = PermissionError("受控 Windows 文件占用")
+            error.winerror = winerror
+            raise error
+        original(source, target)
+
+    monkeypatch.setattr(os, "replace", temporarily_locked)
+    llm._add_spend(0.2)
+    assert calls == 3
+    assert llm._today_spend() == pytest.approx(0.3)
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("winerror, attempts", [(None, 1), (5, 7)])
+def test_budget_failed_replace_preserves_the_committed_record(
+    monkeypatch: MonkeyPatch, tmp_path: Path, winerror: int | None, attempts: int
+) -> None:
+    path = tmp_path / "llm_budget.json"
+    monkeypatch.setattr(llm, "_budget_file", lambda: path)
+    llm._add_spend(0.1)
+    before = path.read_bytes()
+    calls = 0
+
+    def denied(_source: Path, _target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        error = PermissionError("受控永久文件占用")
+        if winerror is not None:
+            error.winerror = winerror
+        raise error
+
+    monkeypatch.setattr(os, "replace", denied)
+    with pytest.raises(llm.BudgetAccountingError) as caught:
+        llm._add_spend(0.2)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert calls == attempts
+    assert path.read_bytes() == before and llm._today_spend() == pytest.approx(0.1)
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_competing_catalog_writes_cannot_overwrite_rotated_credentials(temp_db: None) -> None:
     save_model_configuration(change())
     barrier = Barrier(2)

@@ -100,6 +100,7 @@ def test_launcher_uses_persisted_port_for_command_and_runtime_env(
     def fake_run(command: list[str], **kwargs: object):
         captured["command"] = command
         captured["env"] = kwargs["env"]
+        captured["cwd"] = kwargs["cwd"]
         return launcher_module.subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(launcher_module.subprocess, "run", fake_run)
@@ -110,6 +111,8 @@ def test_launcher_uses_persisted_port_for_command_and_runtime_env(
     assert isinstance(env, dict)
     assert env["BLC_WEB_PORT"] == "8080"
     assert env["BLC_APP_ROOT"] == str(tmp_path)
+    assert env["BLC_SOURCE_DIR"] == str(source_dir)
+    assert captured["cwd"] == str(tmp_path)
 
 
 def test_runtime_repair_preserves_launcher_port(tmp_path: Path) -> None:

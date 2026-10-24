@@ -291,8 +291,9 @@ class TestDatabaseForeignKeys:
 
         assert CURRENT_SCHEMA_VERSION == 6
 
-    def test_schema_rejects_different_app_version(self, temp_db: None) -> None:
-        """Alpha 数据库必须由当前应用版本创建。"""
+    @pytest.mark.parametrize("created_by", ["0.1.17.2-alpha", "9.0.0-alpha", ""])
+    def test_schema_accepts_same_format_and_preserves_creation_version(self, temp_db: None, created_by: str) -> None:
+        """应用版本仅为来源，格式相同即可通过且不补写来源。"""
         from sqlmodel import Session
 
         from app.db.schema import SchemaMeta, validate_schema
@@ -301,11 +302,14 @@ class TestDatabaseForeignKeys:
         with Session(engine) as db:
             meta = db.get(SchemaMeta, 1)
             assert meta is not None
-            meta.app_version = "0.1.17.2-alpha"
+            meta.app_version = created_by
             db.add(meta)
             db.commit()
 
-        assert validate_schema() is False
+        assert validate_schema() is True
+        with Session(engine) as db:
+            meta = db.get(SchemaMeta, 1)
+            assert meta is not None and meta.app_version == created_by
 
     def test_assure_schema_rejects_old_schema_without_migration(
         self,
@@ -325,7 +329,7 @@ class TestDatabaseForeignKeys:
             db.add(meta)
             db.commit()
 
-        with pytest.raises(RuntimeError, match="Alpha 版本不迁移历史数据库"):
+        with pytest.raises(RuntimeError, match="不兼容的数据库格式不会自动迁移、删除或覆盖"):
             assure_schema()
 
         with Session(engine) as db:

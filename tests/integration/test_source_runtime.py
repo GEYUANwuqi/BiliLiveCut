@@ -1073,7 +1073,11 @@ async def test_ffmpeg_permanent_failure_persists_error_and_blocks_automatic_rest
     monitor = LiveMonitor()
     monitor._stop = asyncio.Event()
     # 完整测试中 CLI 可能已初始化异步 DB sink；不能再注册第二个。
-    sink = None if app_logging._CONFIGURED else logger.add(app_logging._db_sink, level="WARNING")
+    sink = (
+        None
+        if app_logging._CONFIGURED
+        else logger.add(app_logging._db_sink, level="WARNING", filter=app_logging._filter_db_sink)
+    )
     try:
         for _ in range(3):
             await monitor._check_all()

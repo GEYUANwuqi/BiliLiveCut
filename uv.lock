@@ -118,6 +118,7 @@ source = { editable = "." }
 dependencies = [
     { name = "brotli" },
     { name = "click" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -135,7 +136,6 @@ dependencies = [
 asr-all = [
     { name = "av" },
     { name = "faster-whisper" },
-    { name = "filelock" },
     { name = "funasr" },
     { name = "huggingface-hub" },
     { name = "modelscope" },
@@ -144,7 +144,6 @@ asr-all = [
 asr-funasr = [
     { name = "av" },
     { name = "faster-whisper" },
-    { name = "filelock" },
     { name = "funasr" },
     { name = "huggingface-hub" },
     { name = "modelscope" },
@@ -153,7 +152,6 @@ asr-funasr = [
 asr-whisper = [
     { name = "av" },
     { name = "faster-whisper" },
-    { name = "filelock" },
     { name = "huggingface-hub" },
     { name = "setuptools" },
 ]
@@ -163,7 +161,6 @@ dev = [
     { name = "check-manifest" },
     { name = "cython" },
     { name = "faster-whisper" },
-    { name = "filelock" },
     { name = "huggingface-hub" },
     { name = "modelscope-hub" },
     { name = "openai" },
@@ -211,7 +208,7 @@ requires-dist = [
     { name = "cython", marker = "extra == 'dev'", specifier = "==3.2.9" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.111" },
     { name = "faster-whisper", marker = "extra == 'asr-whisper'", specifier = ">=1.0" },
-    { name = "filelock", marker = "extra == 'asr-whisper'", specifier = ">=4.2.1" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "funasr", marker = "extra == 'asr-funasr'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'asr-whisper'", specifier = "==1.30.0" },
