@@ -13,7 +13,7 @@ from pathlib import Path
 APP_NAME = "BiliLiveCut"
 VERSION = "V0.1.19.5 Alpha"
 RELEASE_VERSION = "0.1.19.5-alpha"
-SOURCE_COMMIT_SHORT = "3ccc8f7"
+SOURCE_COMMIT_SHORT = "263c67d"
 
 
 def get_app_root() -> Path:
