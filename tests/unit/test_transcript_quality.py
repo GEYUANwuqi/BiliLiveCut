@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import subprocess
+import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.accelerators.dispatcher import pcm16_statistics
 from app.analysis.transcription.audio_normalization import normalized_asr_audio, normalized_asr_audio_window
 from app.analysis.transcription.quality import assess_transcript_quality, repair_local_decode_loop
+from app.core.config import settings
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
@@ -69,26 +72,17 @@ def test_repair_local_decode_loop_only_collapses_small_exact_loop() -> None:
 
 def test_non_wav_input_is_normalized_to_16k_mono_pcm(
     tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-    pcm_wav: Path,
 ) -> None:
     """TS 输入应经 FFmpeg 生成临时 16kHz 单声道 PCM WAV，并在用后清理。"""
-    source = tmp_path / "segment.ts"
-    source.write_bytes(b"transport-stream")
-    captured: list[str] = []
-
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured.extend(command)
-        Path(command[-1]).write_bytes(pcm_wav.read_bytes())
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    source = _transport_audio(tmp_path, 2)
 
     with normalized_asr_audio(str(source)) as normalized:
         normalized_path = Path(normalized)
         assert normalized_path.is_file()
         assert normalized_path.suffix == ".wav"
-        assert ["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"] == captured[7:14]
+        with wave.open(normalized, "rb") as audio:
+            assert (audio.getnchannels(), audio.getframerate(), audio.getsampwidth()) == (1, 16000, 2)
+            assert 1.9 < audio.getnframes() / audio.getframerate() < 2.1
 
     assert normalized_path.exists() is False
 
@@ -99,26 +93,55 @@ def test_wav_input_bypasses_ffmpeg(monkeypatch: MonkeyPatch, pcm_wav: Path) -> N
     def fail_run(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("WAV 不应调用 FFmpeg")
 
-    monkeypatch.setattr(subprocess, "run", fail_run)
+    monkeypatch.setattr(subprocess, "Popen", fail_run)
     with normalized_asr_audio(str(pcm_wav)) as normalized:
         assert normalized == str(pcm_wav)
 
 
-def test_hotspot_window_is_cut_before_priority_asr(tmp_path: Path, monkeypatch: MonkeyPatch, pcm_wav: Path) -> None:
-    """热点 ASR 必须只向 production pipeline 提交指定局部窗口。"""
+def _transport_audio(tmp_path: Path, duration_s: int) -> Path:
     source = tmp_path / "segment.ts"
-    source.write_bytes(b"transport-stream")
-    captured: list[str] = []
+    subprocess.run(
+        [
+            settings.ffmpeg_path,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-t",
+            str(duration_s),
+            "-af",
+            "volume='if(between(t,25,115),1,0)':eval=frame" if duration_s >= 120 else "anull",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-f",
+            "mpegts",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    return source
 
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured.extend(command)
-        Path(command[-1]).write_bytes(pcm_wav.read_bytes())
-        return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+def test_hotspot_window_is_cut_before_priority_asr(tmp_path: Path) -> None:
+    """热点 ASR 必须只向 production pipeline 提交指定局部窗口。"""
+    source = _transport_audio(tmp_path, 120)
 
     with normalized_asr_audio_window(str(source), 25.0, 115.0) as normalized:
         assert Path(normalized).is_file()
-
-    assert captured[captured.index("-ss") + 1] == "25.000"
-    assert captured[captured.index("-t") + 1] == "90.000"
+        with wave.open(normalized, "rb") as audio:
+            assert (audio.getnchannels(), audio.getframerate(), audio.getsampwidth()) == (1, 16000, 2)
+            assert audio.getnframes() == 90 * 16000
+            # 开头和结尾均有声音，能识别漏掉起点截取或起点错误导致的静音。
+            for position in (0, 89 * 16000):
+                audio.setpos(position)
+                _, squares, _ = pcm16_statistics(audio.readframes(16000))
+                assert squares / 16000 > 100_000
+    assert not Path(normalized).exists()

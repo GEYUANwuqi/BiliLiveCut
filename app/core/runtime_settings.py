@@ -149,11 +149,12 @@ def configured_task(function: Callable[P, R], *, fresh: bool = False) -> Callabl
         from contextlib import nullcontext
 
         from app.core.config import get_settings
+        from app.core.execution import resource_scope
         from app.core.media_usage import media_operation
 
         state = _published
         usage = media_operation() if state is not None and state.base is get_settings() else nullcontext()
-        with settings_scope(fresh=fresh), usage:
+        with settings_scope(fresh=fresh), usage, resource_scope():
             return function(*args, **kwargs)
 
     return wrapped

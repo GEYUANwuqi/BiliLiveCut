@@ -19,6 +19,41 @@ from app.web.services.background_jobs import WebJobManager
 
 
 @pytest.mark.parametrize("cancellable", [False, True])
+async def test_cancelled_async_wrapper_cannot_release_slot_while_handler_thread_runs(
+    temp_db: None, cancellable: bool
+) -> None:
+    manager = WebJobManager(max_concurrency=1)
+    entered, release, second_entered = Event(), Event(), Event()
+
+    def first(context: JobContext, payload: dict[str, object]) -> None:
+        entered.set()
+        assert release.wait(5)
+        context.check_cancelled()
+
+    def second(context: JobContext, payload: dict[str, object]) -> None:
+        second_entered.set()
+
+    manager.register("first", first)
+    manager.register("second", second)
+    job = await manager.enqueue("first", {}, label="first", owner="test", cancellable_while_running=cancellable)
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        execution = manager._tasks[job["id"]]
+        execution.cancel()
+        waiting = await manager.enqueue("second", {}, label="second", owner="test")
+        await asyncio.sleep(0.05)
+        assert not execution.done() and not second_entered.is_set()
+        assert get_job(waiting["id"])["status"] == "queued"
+        release.set()
+        await _wait_for_status(job["id"], {"cancelled" if cancellable else "succeeded"})
+        await _wait_for_status(waiting["id"], {"succeeded"})
+        assert second_entered.is_set()
+    finally:
+        release.set()
+        await manager.stop()
+
+
+@pytest.mark.parametrize("cancellable", [False, True])
 async def test_shutdown_timeout_keeps_handler_and_blocks_new_work(temp_db: None, cancellable: bool) -> None:
     manager = WebJobManager(max_concurrency=1)
     await manager.start()

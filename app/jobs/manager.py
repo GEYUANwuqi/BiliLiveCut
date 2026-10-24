@@ -4,12 +4,14 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable
+from functools import partial
 from uuid import uuid4
 
 from loguru import logger
 from pydantic import JsonValue
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.execution import run_sync, start_thread, wait_for_completion
 from app.core.process_control import ProcessCancelledError
 from app.core.runtime_settings import configured_entry
 from app.core.sanitize import safe_exception_summary
@@ -188,7 +190,7 @@ class JobManager:
             if self._stopping:
                 return
             try:
-                job = await asyncio.to_thread(job_store.claim, attempt)
+                job = await run_sync(partial(job_store.claim, attempt), lambda _job: job_store.fail(attempt, None))
             except JobSuperseded:
                 return
             except (OSError, SQLAlchemyError) as exc:
@@ -205,9 +207,11 @@ class JobManager:
             event = threading.Event()
             self._cancel_events[attempt.job_id] = event
             context = JobContext(attempt.job_id, event, attempt.number)
-            execution = asyncio.create_task(asyncio.to_thread(configured_entry(handler), context, job["payload"]))
+            execution = start_thread(partial(configured_entry(handler), context, job["payload"]))
             # 等待结束后读取异常，领域异常由任务边界记录，状态写入异常继续向外传播。
-            await asyncio.wait({execution})
+            cancelled_wait = await wait_for_completion(
+                execution, event.set if job["cancellable_while_running"] else None
+            )
             error = execution.exception() if not execution.cancelled() else JobCancelled("处理器已取消")
             if error is not None:
                 cancelled = isinstance(error, (JobCancelled, ProcessCancelledError))
@@ -225,3 +229,5 @@ class JobManager:
                 await asyncio.to_thread(job_store.finish, attempt, result)
             except JobSuperseded:
                 await asyncio.to_thread(job_store.fail, attempt, None)
+            if cancelled_wait:
+                raise asyncio.CancelledError

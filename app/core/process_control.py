@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.analysis.transcription.process_tree import ProcessTree
+from app.core.execution import retain_cleanup
 from app.core.sanitize import safe_exception_summary
 
 
@@ -47,13 +48,27 @@ def run_cancellable(
     else:
         kwargs["start_new_session"] = True
     process = subprocess.Popen(command, text=text, **kwargs)
+
+    def cleanup_starting() -> None:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=3)
+
+    release_starting = retain_cleanup(cleanup_starting)
     try:
         tree = ProcessTree(process.pid)
     except BaseException:
-        process.kill()
-        process.communicate(timeout=3)
+        cleanup_starting()
+        release_starting()
         raise
     track_subprocess(process, tree)
+
+    def cleanup() -> None:
+        terminate_owned_process(process, tree)
+        untrack_subprocess(process)
+
+    release = retain_cleanup(cleanup)
+    release_starting()
     started = time.monotonic()
     stdout = stderr = None
     try:
@@ -87,6 +102,7 @@ def run_cancellable(
         tree.terminate()
         if process.poll() is not None:
             untrack_subprocess(process)
+            release()
     result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     if check and result.returncode:
         raise subprocess.CalledProcessError(result.returncode, command, output=stdout, stderr=stderr)

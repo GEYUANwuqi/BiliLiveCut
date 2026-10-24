@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import math
-import os
 import subprocess
-import time
 import wave
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 from loguru import logger
 
 from app.accelerators.dispatcher import pcm16_statistics
-from app.analysis.transcription.process_tree import ProcessTree
 from app.core.config import settings
+from app.core.execution import resource_scope
+from app.core.process_control import run_cancellable
 
 _ASR_SAMPLE_RATE = 16_000
 _NORMALIZE_TIMEOUT_S = 300
@@ -65,50 +65,27 @@ def inspect_pcm_audio(path: str, *, check_cancelled: Callable[[], None] | None =
 def _run_normalization(
     command: list[str], check_cancelled: Callable[[], None] | None
 ) -> subprocess.CompletedProcess[str]:
-    """有任务控制器时轮询 FFmpeg 并在取消后等待退出，避免遗留解码进程。"""
-    if check_cancelled is None:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_NORMALIZE_TIMEOUT_S,
-            check=False,
+    """统一监管 FFmpeg；确认进程树退出后才允许清理临时音频。"""
+
+    def cancelled() -> bool:
+        if check_cancelled is not None:
+            check_cancelled()
+        return False
+
+    cancelled()
+    with resource_scope():
+        return cast(
+            subprocess.CompletedProcess[str],
+            run_cancellable(
+                command,
+                cancel_check=cancelled,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_NORMALIZE_TIMEOUT_S,
+            ),
         )
-    check_cancelled()
-    started = time.monotonic()
-    with subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        start_new_session=os.name != "nt",
-        creationflags=0x00000004 if os.name == "nt" else 0,  # CREATE_SUSPENDED
-    ) as process:
-        try:
-            tree = ProcessTree(process.pid)
-        except BaseException:
-            process.kill()
-            process.communicate(timeout=5)
-            raise
-        try:
-            tree.resume_suspended()
-            while True:
-                check_cancelled()
-                if time.monotonic() - started > _NORMALIZE_TIMEOUT_S:
-                    raise subprocess.TimeoutExpired(command, _NORMALIZE_TIMEOUT_S)
-                try:
-                    stdout, stderr = process.communicate(timeout=0.2)
-                    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-                except subprocess.TimeoutExpired:
-                    continue
-        finally:
-            tree.terminate()
-            if process.poll() is None:
-                process.communicate(timeout=5)
 
 
 @contextmanager

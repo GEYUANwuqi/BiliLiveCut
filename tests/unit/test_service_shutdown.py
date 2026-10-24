@@ -318,6 +318,36 @@ async def test_worker_loop_failure_still_releases_resources(monkeypatch: pytest.
     assert cleaned.is_set() and pool_stopped.is_set()
 
 
+async def test_worker_shutdown_timeout_keeps_execution_and_rejects_restart(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import settings
+    from app.core.execution import run_sync
+    from app.pipeline.task_worker import TaskWorker
+
+    entered, release = Event(), Event()
+
+    def compute() -> None:
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(settings, "worker_shutdown_timeout_seconds", 1)
+    worker = TaskWorker()
+    execution = asyncio.create_task(run_sync(compute))
+    worker._analyzing.add(execution)
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        with pytest.raises(ExceptionGroup, match="关闭期间发现异常") as raised:
+            await worker.stop()
+        assert "尚未物理退出" in str(raised.value.exceptions[0])
+        assert not execution.done() and shutdown_event.is_set()
+        with pytest.raises(RuntimeError, match="不能重新启动"):
+            await worker.start()
+        assert shutdown_event.is_set()
+    finally:
+        release.set()
+        await execution
+        await worker.stop()
+
+
 def test_real_uvicorn_sigint_exits_with_active_media_job(tmp_path: Path) -> None:
     pid_file = tmp_path / "descendant.pid"
     env = dict(os.environ)

@@ -8,6 +8,9 @@ from scripts.check_architecture import check, violations
 @pytest.mark.parametrize(
     "path,source",
     [
+        ("app/core/supervisor.py", "from app.pipeline import task_worker"),
+        ("app/core/execution.py", "from app.jobs import manager"),
+        ("app/recording/schedule_runner.py", "from app.web.services import rooms"),
         ("app/jobs/contracts.py", "from app.db import session"),
         ("app/jobs/manager.py", "import app.web.main as hidden"),
         ("app/jobs/manager.py", "def handler():\n    from ..web import main"),

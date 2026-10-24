@@ -10,6 +10,7 @@ from sqlmodel import select
 
 from app.analysis.transcription.process_pool import ASRShutdownError
 from app.core.config import settings
+from app.core.execution import resource_scope
 from app.core.process_control import ProcessShutdownError
 from app.core.runtime_settings import configured_entry
 from app.core.sanitize import safe_exception_summary
@@ -396,14 +397,15 @@ def execute_task(task_id: int, active_stage_val: str, lease_token: str | None = 
         )
         register_execution(lease.task_id, lease.lease_token)
 
-        if active_stage_val == TaskStatus.TRANSCRIBING:
-            run_transcribe(lease)
-        elif active_stage_val == TaskStatus.ANALYZING:
-            run_analyze(lease)
-        elif active_stage_val == TaskStatus.RENDERING:
-            run_render(lease)
-        elif active_stage_val == TaskStatus.PUBLISHING:
-            run_publish(lease)
+        with resource_scope():
+            if active_stage_val == TaskStatus.TRANSCRIBING:
+                run_transcribe(lease)
+            elif active_stage_val == TaskStatus.ANALYZING:
+                run_analyze(lease)
+            elif active_stage_val == TaskStatus.RENDERING:
+                run_render(lease)
+            elif active_stage_val == TaskStatus.PUBLISHING:
+                run_publish(lease)
     except (ASRShutdownError, ProcessShutdownError):
         with get_session() as db:
             if db.get_bind().dialect.name == "sqlite":

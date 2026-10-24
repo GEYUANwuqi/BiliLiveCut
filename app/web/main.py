@@ -12,10 +12,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import socket
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from functools import partial
 from ipaddress import ip_address
 
 import psutil
@@ -23,8 +23,11 @@ from fastapi import FastAPI, Request
 from loguru import logger
 
 from app import __version__, __version_label__
+from app.core.execution import run_sync
 from app.core.logging import setup_logging
+from app.core.supervisor import Service, Supervisor
 from app.db.session import init_db
+from app.recording.schedule_runner import ScheduleRunner
 from app.web.routers.api import router as api_router
 from app.web.routers.collection_router import collection_router
 from app.web.routers.intro_template_router import router as intro_template_router
@@ -33,7 +36,6 @@ from app.web.routers.review_router import review_router
 from app.web.routers.subtitle_template_router import router as subtitle_template_router
 from app.web.services import notifications as notifications_service
 from app.web.services import rooms as rooms_service
-from app.web.services import schedules as schedules_service
 
 
 def _setup_proxy_env() -> None:
@@ -68,10 +70,9 @@ def _setup_proxy_env() -> None:
     all_proxy = _os.environ.get("ALL_PROXY", "") or _os.environ.get("all_proxy", "")
     if all_proxy and all_proxy.lower().startswith("socks"):
         logger.warning(
-            "检测到 SOCKS 代理配置 (ALL_PROXY={})。"
+            "检测到 SOCKS 代理配置。"
             "请确认 httpx[socks] 已安装, 否则本地 Dashboard 请求可能失败。"
             "安装: pip install httpx[socks]",
-            all_proxy,
         )
 
 
@@ -91,23 +92,23 @@ def _non_loopback_interface_addresses() -> list[str]:
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动初始化、启动 TaskWorker、自动恢复、预约调度、关闭时优雅停止。"""
     setup_logging()
-    init_db()
+    await run_sync(init_db)
     from app.recording.danmaku import freeze_interrupted_captures
 
-    await asyncio.to_thread(freeze_interrupted_captures)
+    await run_sync(freeze_interrupted_captures)
 
     # V0.1.13: Web 安全兜底 — 启动时检查 host+password 配置
     from app.core.config import settings as _cfg_startup
 
     if _cfg_startup.docker_auth_enabled:
-        auth_state = await asyncio.to_thread(AuthStore(runtime_app_root()).state)
+        auth_state = await run_sync(AuthStore(runtime_app_root()).state)
         logger.info(
             "Docker 后台认证：{}",
             "等待使用一次性初始化码设置管理员密码" if auth_state["setup_required"] else "网页登录已启用",
         )
     elif not _cfg_startup.admin_password:
         try:
-            non_loopback_ips = await asyncio.to_thread(_non_loopback_interface_addresses)
+            non_loopback_ips = await run_sync(_non_loopback_interface_addresses)
         except OSError as exc:
             logger.opt(exception=exc).warning(
                 "安全警告: ADMIN_PASSWORD 为空，无法枚举本机网络接口。Web 将禁止非本机请求访问 /api 路由。"
@@ -137,103 +138,55 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     task_worker = get_worker()
     # V0.1.7 P3:启动开播自动录制监控器。
     from app.pipeline.live_monitor import live_monitor
+    from app.web.qr_login import qr_logins
 
-    async with AsyncExitStack() as cleanup:
-        try:
-            from app.web.qr_login import qr_logins
+    async def start_metrics() -> None:
+        start_metrics_collector(interval_s=60)
 
-            cleanup.push_async_callback(_stop_service, "qr_login", qr_logins.stop)
-            cleanup.push_async_callback(_stop_service, "email_delivery", stop_email_delivery)
-            await start_email_delivery()
-            cleanup.push_async_callback(asyncio.to_thread, stop_metrics_collector)
-            start_metrics_collector(interval_s=60)
-            cleanup.push_async_callback(_stop_service, "trends", trend_scheduler.stop)
-            trend_scheduler.start(recording_active=lambda: bool(rooms_service.recorder_manager.running_ids()))
-            cleanup.push_async_callback(_stop_service, "plugins", plugin_manager.stop)
-            await plugin_manager.start()
-            cleanup.push_async_callback(_stop_service, "worker", task_worker.stop)
-            await task_worker.start()
-            cleanup.push_async_callback(_stop_service, "web_jobs", web_job_manager.stop)
-            await web_job_manager.start()
-            cleanup.push_async_callback(_stop_service, "recorders", rooms_service.recorder_manager.stop_all)
+    async def start_trends() -> None:
+        trend_scheduler.start(recording_active=lambda: bool(rooms_service.recorder_manager.running_ids()))
 
-            # V0.1.2:自动恢复中断的录制会话。
-            try:
-                recovered = await rooms_service.auto_recover_interrupted_sessions()
-                if recovered:
-                    logger.info("已恢复 {} 个中断的录制会话。", len(recovered))
-            except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning("中断录制自动恢复失败")
+    async def recover_recordings() -> None:
+        recovered = await rooms_service.auto_recover_interrupted_sessions()
+        if recovered:
+            logger.info("已恢复 {} 个中断的录制会话。", len(recovered))
 
-            # V0.1.2:启动录制预约调度后台任务。
-            schedule_task = asyncio.create_task(_schedule_loop())
-            cleanup.push_async_callback(_stop_schedule, schedule_task)
-            cleanup.push_async_callback(_stop_service, "live_monitor", live_monitor.stop)
-            await live_monitor.start()
-            logger.info("Web 后台已启动。")
-            yield
-        finally:
-            # 先通知计算及媒体调用，再串行停止生产者、作业、Worker 和采样。
-            shutdown_event.set()
-            rooms_service.recorder_manager.request_stop_all()
+    def request_stop() -> None:
+        shutdown_event.set()
+        rooms_service.recorder_manager.request_stop_all()
+
+    schedules = _schedule_runner()
+    supervisor = Supervisor(
+        [
+            Service("qr_login", stop=qr_logins.stop),
+            Service("email_delivery", start_email_delivery, stop_email_delivery),
+            Service("metrics", start_metrics, partial(run_sync, stop_metrics_collector)),
+            Service("trends", start_trends, trend_scheduler.stop),
+            Service("plugins", plugin_manager.start, plugin_manager.stop),
+            Service("worker", task_worker.start, task_worker.stop),
+            Service("web_jobs", web_job_manager.start, web_job_manager.stop),
+            Service("recorders", recover_recordings, rooms_service.recorder_manager.stop_all),
+            Service("schedules", schedules.start, schedules.stop),
+            Service("live_monitor", live_monitor.start, live_monitor.stop),
+        ],
+        request_stop,
+    )
+    async with supervisor.running():
+        logger.info("Web 后台已启动。")
+        yield
     logger.info("Web 服务资源已关闭；操作系统进程退出由服务器调用方确认。")
 
 
-async def _stop_service(name: str, stop: Callable[[], Awaitable[object]]) -> None:
-    """记录关闭服务的真实结果；失败交给退出栈，其他清理仍继续。"""
-    try:
-        await stop()
-    except Exception as exc:  # 生命周期清理边界，记录并继续退出栈的其余资源清理。
-        logger.opt(exception=exc).error("Web 服务关闭失败 service={}", name)
-        raise
-
-
-async def _stop_schedule(task: asyncio.Task[None]) -> None:
-    """取消并读取预约调度任务，不遗漏后台异常。"""
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-
-async def _schedule_loop() -> None:
-    """后台定时检查录制预约(每 ``schedule_check_interval_s`` 秒)。"""
-    from app.core.config import settings as s
-
-    while True:
-        try:
-            await asyncio.sleep(s.schedule_check_interval_s)
-            await _run_due_schedules()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).error("预约调度异常")
+def _schedule_runner() -> ScheduleRunner:
+    return ScheduleRunner(
+        rooms_service.recorder_manager,
+        partial(notifications_service.push_notification, kind="success"),
+    )
 
 
 async def _run_due_schedules() -> None:
     """每个到期预约仅产生一个后继，失败和已录制也完成本次调度。"""
-    from app.db.entities import LiveRoom
-    from app.db.session import get_session
-    from app.web.services.schedules import complete_schedule_occurrence
-
-    for item in schedules_service.get_due_schedules():
-        error: str | None = None
-        try:
-            if not rooms_service.recorder_manager.is_running(item["room_id"]):
-                with get_session() as db:
-                    room = db.get(LiveRoom, item["room_id"])
-                    if room is None:
-                        raise ValueError("预约直播间已不存在")
-                    pipeline, produce = room.auto_analyze, room.auto_render
-                await rooms_service.recorder_manager.start(item["room_id"], pipeline=pipeline, produce=produce)
-                notifications_service.push_notification(
-                    f"预约触发：房间 #{item['room_id']} 已开始录制。", kind="success"
-                )
-        except (ValueError, RuntimeError) as exc:
-            error = str(exc)
-            logger.warning("预约触发失败 room={}: {}", item["room_id"], exc)
-        complete_schedule_occurrence(item["id"], error=error)
+    await _schedule_runner().run_due()
 
 
 app = FastAPI(

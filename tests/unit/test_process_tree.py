@@ -18,6 +18,7 @@ def posix_signals(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock]:
     kill = Mock()
     monkeypatch.setattr(process_tree, "os", SimpleNamespace(name="posix", killpg=killpg, kill=kill))
     monkeypatch.setattr(process_tree, "signal", SimpleNamespace(SIGKILL=9))
+    monkeypatch.setattr(process_tree.psutil, "process_iter", lambda **kwargs: iter(()))
     return killpg, kill
 
 
@@ -84,6 +85,25 @@ def test_concurrent_cleanup_sends_one_group_termination(posix_signals: tuple[Moc
             result.result(timeout=5)
     killpg.assert_called_once_with(1234, 9)
     kill.assert_not_called()
+
+
+def test_posix_signal_requires_physical_exit_confirmation_without_signalling_again(
+    posix_signals: tuple[Mock, Mock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killpg, _ = posix_signals
+    member = SimpleNamespace(pid=1234, info={"status": "running"})
+    monkeypatch.setattr(process_tree.os, "getpgid", lambda pid: 1234, raising=False)
+    monkeypatch.setattr(process_tree.psutil, "process_iter", lambda **kwargs: iter([member]))
+    clock = iter([0, 6, 7])
+    monkeypatch.setattr(process_tree, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    tree = process_tree.ProcessTree(1234)
+    with pytest.raises(RuntimeError, match="仍有活动成员"):
+        tree.terminate()
+    assert not tree._terminated
+    member.info["status"] = process_tree.psutil.STATUS_ZOMBIE
+    tree.terminate()
+    assert tree._terminated
+    killpg.assert_called_once_with(1234, 9)
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
