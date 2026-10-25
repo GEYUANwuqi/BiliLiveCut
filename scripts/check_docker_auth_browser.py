@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Route, expect, sync_playwright
 
 
 def check_browser(
@@ -54,8 +54,24 @@ def check_browser(
                     else None
                 ),
             )
-            expire_session()
-            page.get_by_role("button", name="保存修改", exact=True).click()
+
+            def expire_before_write(route: Route) -> None:
+                if route.request.method == "PATCH":
+                    expire_session()
+                route.continue_()
+
+            # 请求已经发出后再使真实会话过期，避免主动通知先打开登录对话框。
+            page.route("**/api/settings/configuration", expire_before_write)
+            try:
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "PATCH" and response.url.endswith("/api/settings/configuration")
+                    )
+                ) as rejected:
+                    page.get_by_role("button", name="保存修改", exact=True).click()
+                assert rejected.value.status == 401
+            finally:
+                page.unroute("**/api/settings/configuration", expire_before_write)
             relogin = page.get_by_role("dialog", name="重新登录，继续当前工作")
             expect(relogin).to_be_visible()
             if artifacts is not None:
@@ -68,6 +84,16 @@ def check_browser(
             assert page.evaluate("() => document.cookie.includes('blc_session')") is False
             stored = page.evaluate("() => [...Object.values(localStorage), ...Object.values(sessionStorage)]")
             assert all(password not in value for value in stored)
+
+            # 保留通知主动发现失效的路径，未点击保存时不能产生配置写入。
+            draft.fill("421")
+            expire_session()
+            expect(relogin).to_be_visible(timeout=20000)
+            relogin.get_by_label("密码", exact=True).fill(password)
+            relogin.get_by_role("button", name="进入工作台").click()
+            expect(relogin).not_to_be_visible()
+            expect(draft).to_have_value("421")
+            assert len(writes) == 1, "主动重新登录不能提交尚未保存的草稿"
             page.get_by_role("button", name="放弃修改", exact=True).click()
 
             page.goto(url + "/settings")
