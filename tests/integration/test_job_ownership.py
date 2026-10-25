@@ -89,13 +89,17 @@ async def test_failed_start_releases_ownership(temp_db: None, monkeypatch: pytes
         await other.stop()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows 创建符号链接需要额外权限")
-def test_database_symlink_cannot_bypass_ownership(
+def test_database_path_alias_cannot_bypass_ownership(
     temp_db: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original = session.engine
-    alias = tmp_path / "alias.db"
-    alias.symlink_to(Path(original.url.database))
+    database = Path(original.url.database)
+    if sys.platform == "win32":
+        # Windows 默认文件系统不区分大小写，不需要创建符号链接的额外权限。
+        alias = database.with_name(database.name.swapcase())
+    else:
+        alias = tmp_path / "alias.db"
+        alias.symlink_to(database)
     release = job_store.acquire_execution()
     alternate = create_engine(f"sqlite:///{alias}")
     try:
@@ -141,10 +145,11 @@ asyncio.run(main())
     contender.register("test", lambda context, payload: calls.append(context.job_id) or {"recovered": True})
     try:
         async with asyncio.timeout(15):
-            while not ready.exists():
+            while True:
                 assert child.returncode is None
+                if ready.exists() and len(job_id := ready.read_text()) == 32:
+                    break
                 await asyncio.sleep(0.02)
-        job_id = ready.read_text()
         before = job_store.get_job(job_id)
         assert before["status"] == "running" and before["attempt"] == 1
         with pytest.raises(RuntimeError, match="已有 Web 作业执行实例"):
