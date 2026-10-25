@@ -240,7 +240,7 @@ def test_system_python_detection_returns_real_supported_interpreter(tmp_path: Pa
 def test_prepare_venv_rejects_existing_unsupported_python(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     from blc_portable.launcher import main as launcher_module
 
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = tmp_path / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"fixture")
     monkeypatch.setattr(launcher_module, "_python_version", lambda _python: (3, 14))
@@ -248,13 +248,14 @@ def test_prepare_venv_rejects_existing_unsupported_python(tmp_path: Path, monkey
     with pytest.raises(RuntimeError, match="unsupported Python 3.14"):
         launcher_module.prepare_venv(tmp_path)
     assert venv_python.is_file()
+    assert venv_python.read_bytes() == b"fixture"
 
 
 def test_prepare_venv_reuses_supported_interpreter(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """A runnable managed 3.11/3.12 environment is reused without mutation."""
     from blc_portable.launcher import main as launcher_module
 
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = tmp_path / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"fixture")
     interpreter_home = tmp_path / "python-home"
@@ -280,7 +281,7 @@ def test_prepare_venv_rebuilds_when_interpreter_home_is_missing(
     """A runnable interpreter with a stale pyvenv home is still corrupted."""
     from blc_portable.launcher import main as launcher_module
 
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = tmp_path / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"stale")
     (tmp_path / ".venv" / "pyvenv.cfg").write_text(
@@ -324,7 +325,7 @@ def test_prepare_venv_rebuilds_incomplete_or_unreadable_managed_environment(
     """Only an incomplete/unreadable app-root .venv is rebuilt automatically."""
     from blc_portable.launcher import main as launcher_module
 
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = tmp_path / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     venv_python.parent.mkdir(parents=True)
     if with_python:
         venv_python.write_bytes(b"corrupt")
