@@ -1,6 +1,7 @@
 """设置注册表的中文名称；技术键与名称一起用于搜索。"""
 
 LABELS: dict[str, str] = {
+    "asr_remote_route_id": "远程转写业务路由",
     "scoring_configuration": "评分权重、融合、窗口与去重",
     "storage_cleanup_enabled": "按保留策略自动清理原片（默认关闭）",
     "max_analyzing": "同时分析任务数",

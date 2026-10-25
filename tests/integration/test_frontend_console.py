@@ -29,8 +29,14 @@ def _stop_console(process: subprocess.Popen) -> None:
         process.send_signal(signal.SIGTERM)
 
 
-@pytest.mark.parametrize("close_during_startup", [False, True])
-def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(tmp_path: Path, close_during_startup: bool) -> None:
+@pytest.mark.parametrize(
+    "close_during_startup,active_sse",
+    [(False, False), (True, False), (False, True)],
+    ids=["started", "starting", "active-sse"],
+)
+def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(
+    tmp_path: Path, close_during_startup: bool, active_sse: bool
+) -> None:
     """无控制台的宿主关闭管道后，真实后端必须执行正常 lifespan 清理。"""
     root = Path(__file__).resolve().parents[2]
     with socket.socket() as probe:
@@ -70,6 +76,7 @@ def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(tmp_path: Pa
             stdout=log,
             stderr=log,
         )
+        stream = None
         try:
             if close_during_startup:
                 process.stdin.close()
@@ -84,11 +91,17 @@ def test_supervised_backend_drains_lifespan_when_parent_pipe_closes(tmp_path: Pa
                         log.seek(0)
                         pytest.fail(log.read())
                     time.sleep(0.1)
+            if active_sse:
+                stream = opener.open(f"http://127.0.0.1:{port}/api/events", timeout=3)
+                assert stream.headers["Content-Type"].startswith("text/event-stream")
+                assert stream.readline().startswith(b"id: ")
             process.stdin.close()
             assert process.wait(timeout=25) == 0
             log.seek(0)
             assert "Web 服务资源已关闭" in log.read()
         finally:
+            if stream is not None:
+                stream.close()
             if process.poll() is None:
                 process.stdin.close()
                 process.terminate()

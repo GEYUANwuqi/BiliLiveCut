@@ -34,7 +34,7 @@ def generate_copywriter(
     :param total_duration_s: 合集总时长(秒)。
     :returns: ``{summary, title, description, chapters, tags, cover_title}``。
     """
-    if is_llm_enabled():
+    if is_llm_enabled("copywriting"):
         result = _llm_copywriter(topic_title, event_summaries, total_duration_s)
         if result:
             return result
@@ -87,7 +87,7 @@ def _llm_copywriter(
 只输出 JSON,不要其他内容。""".strip()
 
     try:
-        raw = call_text(prompt, max_tokens=1024)
+        raw = call_text(prompt, max_tokens=1024, capability="copywriting")
         if raw is None:
             return None
         match = re.search(r"\{[\s\S]*\}", raw)

@@ -2,17 +2,17 @@
 
     系统主要在中国大陆境内运行,故 LLM 层采用
     **OpenAI 兼容协议**,可对接境内可稳定访问的服务商(DeepSeek / 通义千问 Qwen /
-Moonshot Kimi / 智谱 GLM 等)，服务商统一在控制台配置。语音转写仍由本地模型完成。
+Moonshot Kimi / 智谱 GLM 等)，连接和业务路由统一在控制台配置。语音转写可明确选择本地或远程模型。
 
 设计目标(对应"降低 AI 成本""优先稳定"):
 
-* **可禁用**:未配置 API Key 时自动跳过 LLM,走纯规则,不报错;
+* **可禁用**:没有启用的业务路由时跳过 LLM，由业务使用规则结果;
 * **预算护栏**:可设每日花费上限(按可配置的 token 价格估算),超额自动降级;
-* **失败回退**:任何异常都返回 ``None``,由上层用规则分兜底;
+* **失败回退**:服务请求失败时尝试下一路由，预算账本故障停止调用并报告;
 * **依赖边界**:Portable 已内置 ``openai`` SDK;源码安装可通过
   ``pip install -e ".[llm]"`` 启用。
 
-本模块只负责"判断是否高光"。文案生成在 ``publishing/copywriter`` 复用此处的客户端。
+本模块承载文字业务的模型调用；语音转写使用独立协议和受监管子进程。
 """
 
 from __future__ import annotations
@@ -20,20 +20,26 @@ from __future__ import annotations
 import hmac
 import json
 import math
+import os
 import re
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+from uuid import uuid4
 
+from filelock import FileLock, Timeout
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.analysis import llm_providers as provs
 from app.core.config import settings
 from app.core.paths import storage_root
 from app.core.sanitize import safe_exception_summary
+from app.models.contracts import TextCapability
 
 if TYPE_CHECKING:
     from openai import OpenAI
@@ -74,15 +80,16 @@ class TranscriptRefinement:
     summary: str
 
 
-def is_llm_enabled() -> bool:
+def is_llm_enabled(capability: TextCapability = "analysis") -> bool:
     """判断当前是否可用 LLM(存在可用 provider 且未超预算)。
 
     :returns: 可用返回 ``True``。
     """
-    if not provs.active_providers():
+    if not provs.active_providers(capability):
         return False
     budget = _daily_budget()
-    if budget > 0 and _today_spend() >= budget:
+    spend = _today_spend()
+    if budget > 0 and spend >= budget:
         logger.warning("LLM 已达每日预算上限,降级为纯规则模式。")
         return False
     return True
@@ -93,21 +100,59 @@ def _budget_file() -> Path:
     return storage_root() / "llm_budget.json"
 
 
+class BudgetAccountingError(ValueError):
+    """预算账本不可用时停止后续收费请求，保留原始故障。"""
+
+
+class _BudgetRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False, hide_input_in_errors=True)
+    day: date = Field(alias="date")
+    spend_usd: float = Field(ge=0)
+
+
+def _read_spend(path: Path, today: date) -> float:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0.0
+    try:
+        record = _BudgetRecord.model_validate_json(text)
+    except ValidationError as exc:
+        raise BudgetAccountingError("预算记录无效，停止模型调用；请核查并恢复账本") from exc
+    return record.spend_usd if record.day == today else 0.0
+
+
 def _today_spend() -> float:
     """读取今日累计花费(美元)。
 
     :returns: 今日花费;无记录返回 0。
     """
     path = _budget_file()
-    if not path.exists():
-        return 0.0
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return 0.0
-    if data.get("date") != date.today().isoformat():
-        return 0.0
-    return float(data.get("spend_usd", 0.0))
+        with FileLock(str(path) + ".lock", timeout=10):
+            return _read_spend(path, date.today())
+    except (OSError, Timeout, UnicodeError) as exc:
+        raise BudgetAccountingError("预算记录不可读，停止模型调用") from exc
+
+
+def _persist_budget(path: Path, record: _BudgetRecord) -> None:
+    """持锁写入单次增量，仅有限重试 Windows 原子替换的占用错误。"""
+    temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            stream.write(record.model_dump_json(by_alias=True))
+            stream.flush()
+            os.fsync(stream.fileno())
+        for attempt in range(7):
+            try:
+                os.replace(temporary, path)
+                return
+            except OSError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 6:
+                    raise
+                time.sleep(min(0.05 * 2**attempt, 0.5))
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _add_spend(usd: float) -> None:
@@ -115,15 +160,16 @@ def _add_spend(usd: float) -> None:
 
     :param usd: 本次花费(美元)。
     """
-    today = date.today().isoformat()
-    current = _today_spend()
+    if not math.isfinite(usd) or usd < 0:
+        raise BudgetAccountingError("预算记录增量必须为有限非负数")
+    path = _budget_file()
     try:
-        _budget_file().write_text(
-            json.dumps({"date": today, "spend_usd": current + usd}),
-            encoding="utf-8",
-        )
-    except OSError as exc:  # pragma: no cover
-        logger.warning("写入预算文件失败: {}", exc)
+        with FileLock(str(path) + ".lock", timeout=10):
+            today = date.today()
+            record = _BudgetRecord(date=today, spend_usd=_read_spend(path, today) + usd)
+            _persist_budget(path, record)
+    except (OSError, Timeout, UnicodeError, ValidationError) as exc:
+        raise BudgetAccountingError("预算记录写入失败，停止模型调用") from exc
 
 
 # 模块级缓存:按 provider id 缓存 OpenAI 客户端实例,避免连接池泄漏。
@@ -152,9 +198,11 @@ def _get_client(provider: provs.LLMProvider) -> OpenAI:
 
 def _create_or_reuse_client(provider: provs.LLMProvider) -> OpenAI:
     """在缓存锁内核对已有客户端凭据，不生成或缓存密钥摘要。"""
-    cache_key = (provider.id, provider.base_url)
+    connection_id = provider.connection_id or provider.id
+    cache_key = (connection_id, provider.base_url)
+    api_key = provider.api_key or "not-required"
     cached = _client_cache.get(cache_key)
-    if cached is not None and hmac.compare_digest(cached.api_key.encode("utf-8"), provider.api_key.encode("utf-8")):
+    if cached is not None and hmac.compare_digest(cached.api_key.encode("utf-8"), api_key.encode("utf-8")):
         return cached
     try:
         from openai import OpenAI
@@ -163,9 +211,9 @@ def _create_or_reuse_client(provider: provs.LLMProvider) -> OpenAI:
             '未安装 openai SDK。源码安装请执行: pip install -e ".[llm]";'
             "Portable 请重新运行 Launcher 完成依赖修复,或升级到最新完整包。"
         ) from exc
-    client = OpenAI(api_key=provider.api_key, base_url=provider.base_url or None, max_retries=0)
+    client = OpenAI(api_key=api_key, base_url=provider.base_url or None, max_retries=0)
     for key in list(_client_cache):
-        if key[0] == provider.id:
+        if key[0] == connection_id:
             old = _client_cache.pop(key)
             if _client_active.get(id(old), 0):
                 _retired_clients[id(old)] = old
@@ -291,6 +339,10 @@ def _low_reasoning_options(provider: provs.LLMProvider) -> dict[str, object]:
 
 def probe_provider(provider: provs.LLMProvider) -> str:
     """用包含思考开销的有限生成预算测试最终正文，最多调用两次。"""
+    spend = _today_spend()
+    budget = _daily_budget()
+    if budget > 0 and spend >= budget:
+        raise BudgetAccountingError("已达到每日模型预算，无法发起测试请求")
     return _complete(provider, "只回复 pong", max_tokens=4096, extra_body=_low_reasoning_options(provider) or None)
 
 
@@ -347,6 +399,8 @@ def _complete_using_client(
     client: object, provider: provs.LLMProvider, prompt: str, max_tokens: int, extra_body: dict[str, object] | None
 ) -> str:
     """在客户端租用期间完成正文提取和空正文重试。"""
+    if provider.max_output_tokens is not None:
+        max_tokens = min(max_tokens, provider.max_output_tokens)
     resp = _create_completion(client, provider, prompt, max_tokens, extra_body)
     _account_usage(provider, resp)
     text = _extract_text(resp)
@@ -393,7 +447,7 @@ def _complete_using_client(
     )
 
 
-def call_text(prompt: str, max_tokens: int = 512) -> str | None:
+def call_text(prompt: str, max_tokens: int = 512, *, capability: TextCapability = "analysis") -> str | None:
     """按优先级遍历多个大模型完成文本生成,失败自动降级到下一个。
 
     任何 provider 成功返回非空文本即采用;全部不可用/失败返回 ``None``,
@@ -403,14 +457,16 @@ def call_text(prompt: str, max_tokens: int = 512) -> str | None:
     :param max_tokens: 最大输出 token 数。
     :returns: 模型输出文本;不可用或全部失败时返回 ``None``。
     """
-    if not is_llm_enabled():
+    if not is_llm_enabled(capability):
         return None
-    for provider in provs.active_providers():
+    for provider in provs.active_providers(capability):
         try:
             text = _complete(provider, prompt, max_tokens)
             if text:
                 return text
             logger.warning("模型 {} 返回空结果,尝试下一个。", provider.name)
+        except BudgetAccountingError:
+            raise
         except Exception as exc:  # noqa: BLE001 — 逐个降级
             logger.opt(exception=exc).warning(
                 "模型调用失败 provider={} model={}，尝试下一个: {}",
@@ -425,6 +481,8 @@ def call_text(prompt: str, max_tokens: int = 512) -> str | None:
 def call_web_search(
     prompt: str,
     max_tokens: int = 2048,
+    *,
+    capability: TextCapability = "trends",
 ) -> str | None:
     """按优先级遍历多个大模型完成(尽力联网搜索的)文本生成,失败自动降级。
 
@@ -435,9 +493,9 @@ def call_web_search(
     :param max_tokens: 最大输出 token 数。
     :returns: 模型输出文本;全部不可用时返回 ``None``。
     """
-    if not is_llm_enabled():
+    if not is_llm_enabled(capability):
         return None
-    for provider in provs.active_providers():
+    for provider in provs.active_providers(capability):
         search_param = provider.web_search_param.strip()
         # 1) 带联网搜索参数尝试。
         if search_param:
@@ -445,6 +503,8 @@ def call_web_search(
                 text = _complete(provider, prompt, max_tokens, {search_param: True})
                 if text:
                     return text
+            except BudgetAccountingError:
+                raise
             except Exception as exc:  # noqa: BLE001 — 不支持该参数则退化为普通调用
                 logger.opt(exception=exc).warning(
                     "模型 provider={} model={} 带联网参数({})调用失败,尝试普通调用: {}",
@@ -458,6 +518,8 @@ def call_web_search(
             text = _complete(provider, prompt, max_tokens)
             if text:
                 return text
+        except BudgetAccountingError:
+            raise
         except Exception as exc:  # noqa: BLE001 — 降级到下一个 provider
             logger.opt(exception=exc).warning(
                 "模型调用失败 provider={} model={}，尝试下一个: {}",
@@ -473,62 +535,8 @@ def call_trend_search(
     prompt: str,
     max_tokens: int = 2048,
 ) -> str | None:
-    """趋势采集专用:使用 ``TREND_API_KEY`` / ``TREND_BASE_URL`` / ``TREND_MODEL`` 的独立配置。
-
-    若未配置趋势专用 API 则回退到通用 LLM 的多模型列表。
-
-    用于网感资料库的联网采集,可与通用 LLM 使用不同的模型/服务商。
-
-    :param prompt: 用户提示词。
-    :param max_tokens: 最大输出 token 数。
-    :returns: 模型输出文本;全部不可用时返回 ``None``。
-    """
-    from app.analysis.llm_providers import LLMProvider
-
-    # 是否配置了趋势专用 API
-    trend_key = settings.trend_api_key.strip()
-    trend_url = settings.trend_base_url.strip()
-
-    trend_model = settings.trend_model.strip()
-    if trend_key and trend_url and trend_model:
-        trend_provider = LLMProvider(
-            id="trend",
-            name="网感采集专用",
-            base_url=trend_url,
-            api_key=trend_key,
-            model=trend_model,
-            web_search_param=settings.trend_web_search_param,
-        )
-        search_param = trend_provider.web_search_param.strip()
-        # 1) 带联网搜索参数尝试。
-        if search_param:
-            try:
-                text = _complete(trend_provider, prompt, max_tokens, {search_param: True})
-                if text:
-                    logger.info("趋势采集(专用 API + 联网搜索)成功,model={}", trend_provider.model)
-                    return text
-            except Exception as exc:
-                logger.opt(exception=exc).warning(
-                    "趋势采集 provider=trend model={} 联网调用失败，尝试普通调用: {}",
-                    trend_provider.model,
-                    safe_exception_summary(exc),
-                )
-        # 2) 普通调用(无联网)。
-        try:
-            text = _complete(trend_provider, prompt, max_tokens)
-            if text:
-                logger.info("趋势采集(专用 API 普通调用)成功,model={}", trend_provider.model)
-                return text
-        except Exception as exc:
-            logger.opt(exception=exc).warning(
-                "趋势采集 provider=trend model={} 调用失败，回退通用 LLM: {}",
-                trend_provider.model,
-                safe_exception_summary(exc),
-            )
-
-    # 回退:使用通用 LLM 多模型列表(含联网搜索)
-    logger.info("趋势采集未配置专用 API,回退到通用 LLM。")
-    return call_web_search(prompt, max_tokens)
+    """按热点路由生成内容；旧专用配置由兼容适配器读取，全部受预算限制。"""
+    return call_web_search(prompt, max_tokens, capability="trends")
 
 
 def extract_json_array(raw: str) -> list[object] | None:
@@ -621,6 +629,7 @@ def refine_transcript(raw_text: str) -> TranscriptRefinement | None:
     raw = call_text(
         _TRANSCRIPT_REFINEMENT_PROMPT.format(text=source),
         max_tokens=settings.transcript_llm_refine_max_tokens,
+        capability="transcript",
     )
     if raw is None:
         return None

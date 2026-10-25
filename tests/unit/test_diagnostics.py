@@ -14,7 +14,7 @@ from loguru import logger
 from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
-from app.core.logging import _ApplicationLogHandler, _db_sink, _safe_record
+from app.core.logging import _ApplicationLogHandler, _db_sink, _filter_db_sink, _safe_record
 from app.core.process_control import run_cancellable
 from app.core.sanitize import safe_exception_summary, sanitize_diagnostic
 
@@ -76,7 +76,7 @@ def test_loguru_file_and_database_keep_one_context_and_safe_trace(temp_db: None,
         messages.append(str(message))
         _db_sink(message)
 
-    handler = logger.add(sink, format="{message}", level="WARNING", diagnose=False)
+    handler = logger.add(sink, format="{message}", level="WARNING", diagnose=False, filter=_filter_db_sink)
     file_handler = logger.add(tmp_path / "diagnostic.log", format="{message}", level="WARNING", diagnose=False)
     try:
         logger.patch(_safe_record).bind(task_id=765, session_id=123).opt(exception=_nested_error()).warning(

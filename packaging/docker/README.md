@@ -1,6 +1,6 @@
 # BiliLiveCut Docker 部署
 
-本目录提供 BiliLiveCut `v0.1.19.5-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；后端容器以 UID/GID 1000 的 `appuser` 运行单实例 API 服务，内含 FFmpeg、中文字体、C/Cython/C++/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
+本目录提供 BiliLiveCut `v0.1.20.0-Alpha` 的 CPU 镜像。构建上下文为仓库根目录；后端容器以 UID/GID 1000 的 `appuser` 运行单实例 API 服务，内含 FFmpeg、中文字体、C/Cython/C++/Rust 扩展及配套 CPU PyTorch/TorchAudio。业务操作见[使用指南](../../docs/features/README.md)。
 
 ## 前后端服务
 
@@ -155,7 +155,7 @@ Compose 默认移除全部 Linux capabilities，并设置 `no-new-privileges`，
 | ModelScope 缓存 | `/data/cache/modelscope` |
 | 可选浏览器缓存 | `/data/cache/playwright` |
 
-旧版本 Compose 的 `hf-cache` 卷挂到 `/root`，与 appuser 的缓存位置不匹配；新配置改为 `/data/cache`，不会自动删除或迁移旧卷。重建或删除容器保留宿主 storage；不要将旧 Schema 数据库覆盖到当前目录。当前版本只接受 Schema v6。
+旧版本 Compose 的 `hf-cache` 卷挂到 `/root`，与 appuser 的缓存位置不匹配；新配置改为 `/data/cache`，不会自动删除或迁移旧卷。重建或删除容器保留宿主 storage，数据库仍为 `/data/blc.db`，路径不随镜像版本改变。当前版本要求 Schema v6、模型指纹、实际结构、约束和完整性全部通过；应用版本仅记录创建来源。升级前停止容器并备份整个持久目录，不兼容格式会保留并拒绝启动，不自动迁移或替换，也不能手改版本绕过校验。
 
 镜像默认 CPU 推理，模型权重仍在首次使用时下载，因此需要足够磁盘、内存和可访问的模型源。镜像构建和 CI 只验证真实 SDK 导入与服务运行，不下载转写模型、不测量真实转写吞吐。GPU 部署需另外准备匹配的 CUDA 镜像和设备透传；修改设备配置为 cuda 不能使这个 CPU 镜像支持 GPU。
 

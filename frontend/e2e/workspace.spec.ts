@@ -23,8 +23,15 @@ async function mock(page: Page) {
     if (path === "/api/jobs") data = { jobs: [] };
     if (path === "/api/topics") data = { topics: [] };
     if (path === "/api/plugins") data = { plugins: [] };
-    if (path === "/api/llm-providers")
-      data = { providers: [], active_count: 0 };
+    if (path === "/api/model-configuration")
+      data = {
+        revision: 0,
+        source: "routes",
+        connections: [],
+        routes: [],
+        active_counts: {},
+        asr_selection: "",
+      };
     if (path === "/api/cookie-status") data = { has_cookie: false };
     if (path === "/api/login/qrcode") data = { status: "idle", task_id: null };
     if (path === "/review/api/queue")
@@ -535,7 +542,7 @@ test("workspace renders and opens every navigation page without errors", async (
     ["/monitor", "运行状态"],
     ["/logs", "错误日志"],
     ["/settings", "设置中心"],
-    ["/settings/llm", "大模型服务"],
+    ["/settings/llm", "模型连接与业务路由"],
     ["/settings/login", "Bilibili 账号"],
     ["/settings/plugins", "插件中心"],
     ["/settings/subtitles", "字幕模板"],
@@ -883,6 +890,7 @@ test("Basic media survives worker restart, stays in one tab and stops after logo
     string,
     { runningStatus: string; scriptURL: string }
   >();
+  const lifecycle: { versionId: string; status: string; time: number }[] = [];
   cdp.on(
     "ServiceWorker.workerVersionUpdated",
     (event: {
@@ -892,8 +900,15 @@ test("Basic media survives worker restart, stays in one tab and stops after logo
         scriptURL: string;
       }[];
     }) => {
-      for (const version of event.versions)
+      for (const version of event.versions) {
         versions.set(version.versionId, version);
+        if (version.scriptURL.endsWith("/media-auth.js"))
+          lifecycle.push({
+            versionId: version.versionId,
+            status: version.runningStatus,
+            time: Date.now(),
+          });
+      }
     },
   );
   await cdp.send("ServiceWorker.enable");
@@ -913,10 +928,28 @@ test("Basic media survives worker restart, stays in one tab and stops after logo
     });
   });
   const versionId = running()![0];
+  const stopIndex = lifecycle.length;
+  const transitions = () =>
+    lifecycle
+      .slice(stopIndex)
+      .filter((entry) => entry.versionId === versionId)
+      .map((entry) => entry.status);
   await cdp.send("ServiceWorker.stopWorker", { versionId });
-  await expect
-    .poll(() => versions.get(versionId)?.runningStatus)
-    .toBe("stopped");
+  // 后台查询可立即唤醒 Worker，必须验证完整转换，不能采样短暂的停止状态。
+  await page.evaluate(async () => {
+    await fetch("/auth/status", { cache: "no-store" });
+  });
+  try {
+    await expect.poll(transitions).toContain("stopped");
+    await expect
+      .poll(() => transitions().slice(transitions().indexOf("stopped") + 1))
+      .toContain("running");
+  } finally {
+    await test.info().attach("service-worker-lifecycle", {
+      body: JSON.stringify(lifecycle),
+      contentType: "application/json",
+    });
+  }
   await page.evaluate(() => {
     const image = document.createElement("img");
     image.id = "restarted-auth-image";

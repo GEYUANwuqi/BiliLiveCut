@@ -19,11 +19,13 @@ import asyncio
 import time
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 
 from loguru import logger
 
 from app.core import settings_store
 from app.core.config import settings
+from app.core.execution import run_sync
 
 # 调度循环的检查间隔(秒)。较小的值让"进入窗口/暂停"响应更及时。
 _CHECK_INTERVAL_S = 30
@@ -84,6 +86,7 @@ class TrendScheduler:
         self._last_run_at: datetime | None = None
         self._last_saved = 0
         self._collecting = False
+        self._stopping = False
 
     # ---------------- 生命周期 ---------------- #
     def start(self, recording_active: Callable[[], bool] | None = None) -> None:
@@ -91,19 +94,26 @@ class TrendScheduler:
 
         :param recording_active: 返回"当前是否有录制在进行"的回调(兜底复查)。
         """
+        if self._stopping and self._task is not None:
+            raise RuntimeError("网感调度执行尚未确认关闭，不能重新启动")
         if recording_active is not None:
             self._recording_active = recording_active
         if self._task is None or self._task.done():
+            self._stopping = False
             self._task = asyncio.create_task(self._loop())
             logger.info("网感定时采集调度器已启动。")
 
     async def stop(self) -> None:
         """停止调度后台任务。"""
         if self._task is not None:
+            self._stopping = True
             self._task.cancel()
+            _, pending = await asyncio.wait({self._task}, timeout=settings.worker_shutdown_timeout_seconds)
+            if pending:
+                raise RuntimeError("网感采集线程尚未物理退出，关闭未完成")
             try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                self._task.result()
+            except asyncio.CancelledError:
                 pass
             self._task = None
             logger.info("网感定时采集调度器已停止。")
@@ -143,13 +153,13 @@ class TrendScheduler:
 
     async def _tick(self) -> None:
         """单次调度判断:是否到点、是否暂停、是否在窗口内。"""
-        if not settings_store.get_bool("trend_schedule_enabled"):
+        if not await run_sync(partial(settings_store.get_bool, "trend_schedule_enabled")):
             return
         if not settings.trend_enabled:
             return  # 资料库本身未启用,无从采集
         if self._is_paused():
             return
-        start_min, end_min, interval_s = self._read_cfg()
+        start_min, end_min, interval_s = await run_sync(self._read_cfg)
         now = datetime.now()
         now_min = now.hour * 60 + now.minute
         if not in_window(now_min, start_min, end_min):
@@ -169,7 +179,7 @@ class TrendScheduler:
 
         self._collecting = True
         try:
-            saved = await asyncio.to_thread(collect_and_save, "")
+            saved = await run_sync(partial(collect_and_save, ""))
             self._last_run_ts = time.time()
             self._last_run_at = now
             self._last_saved = saved

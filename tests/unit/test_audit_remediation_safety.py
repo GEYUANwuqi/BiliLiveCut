@@ -249,6 +249,9 @@ def test_upload_persists_attempt_and_retries_only_unsent_results(
 
 @pytest.mark.asyncio
 async def test_http_retry_executes_on_event_loop(temp_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.db.entities import AppSetting
+    from app.db.job_store import get_job
+    from app.db.session import get_session
     from app.web import main
     from app.web.routers import jobs as router
     from app.web.services import background_jobs as jobs
@@ -257,7 +260,8 @@ async def test_http_retry_executes_on_event_loop(temp_db: None, monkeypatch: pyt
     manager.register("audit_job", lambda context, payload: {"executed": True})
     monkeypatch.setattr(router, "web_job_manager", manager)
     monkeypatch.setattr(main, "_ADMIN_PASSWORD", "")
-    jobs._save_job(stored_job("http-retry"))
+    with get_session() as db:
+        db.add(AppSetting(key="web_job:http-retry", value=json.dumps(stored_job("http-retry"))))
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=main.app), base_url="http://127.0.0.1"
@@ -265,7 +269,7 @@ async def test_http_retry_executes_on_event_loop(temp_db: None, monkeypatch: pyt
             response = await client.post("/api/jobs/http-retry/retry")
         assert response.status_code == 200
         await asyncio.gather(*list(manager._tasks.values()))
-        assert jobs.get_job("http-retry")["status"] == "succeeded"
+        assert get_job("http-retry")["status"] == "succeeded"
     finally:
         await manager.stop()
 
@@ -579,6 +583,7 @@ def test_existing_successful_upload_completes_segment_task(temp_db: None, tmp_pa
 @pytest.mark.asyncio
 async def test_recovery_finds_active_job_behind_500_completed_jobs(temp_db: None) -> None:
     from app.db.entities import AppSetting
+    from app.db.job_store import get_job
     from app.db.session import get_session
     from app.web.services import background_jobs as jobs
 
@@ -593,6 +598,6 @@ async def test_recovery_finds_active_job_behind_500_completed_jobs(temp_db: None
     await manager.start()
     try:
         await asyncio.gather(*list(manager._tasks.values()))
-        assert jobs.get_job("older-active")["status"] == "succeeded"
+        assert get_job("older-active")["status"] == "succeeded"
     finally:
         await manager.stop()

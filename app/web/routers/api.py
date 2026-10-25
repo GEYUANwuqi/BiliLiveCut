@@ -11,6 +11,7 @@ from app.web.routers.clips import router as clips_router
 from app.web.routers.container import router as container_router
 from app.web.routers.dashboard import router as dashboard_router
 from app.web.routers.email_notifications import router as email_notifications_router
+from app.web.routers.events import router as events_router
 from app.web.routers.jobs import router as jobs_router
 from app.web.routers.lark_notifications import router as lark_notifications_router
 from app.web.routers.llm import router as llm_router
@@ -31,6 +32,7 @@ from app.web.routers.variants import router as variants_router
 router = APIRouter(prefix="/api")
 
 router.include_router(dashboard_router)
+router.include_router(events_router)
 router.include_router(email_notifications_router)
 router.include_router(lark_notifications_router)
 router.include_router(jobs_router)

@@ -11,6 +11,7 @@ from app.core import settings_store
 from app.core.config import get_settings, settings
 from app.core.paths import clips_dir, ready_to_upload_dir
 from app.core.sanitize import safe_exception_summary
+from app.models.contracts import ModelProbe, ModelProbeResult
 from config.launcher_settings import (
     current_web_port,
     load_launcher_config,
@@ -25,21 +26,21 @@ def get_settings_view() -> dict[str, Any]:
 
     :returns: 设置视图字典。
     """
-    pipeline_override = settings_store.get_setting("recording_pipeline_enabled", "").strip()
-    refinement_override = settings_store.get_setting("transcript_llm_refine_enabled", "").strip()
-    asr_concurrency_override = settings_store.get_setting("asr_task_max_concurrency", "").strip()
+    overrides = settings_store.saved_keys(
+        {"recording_pipeline_enabled", "transcript_llm_refine_enabled", "asr_task_max_concurrency"}
+    )
     launcher_config = load_launcher_config(runtime_app_root(), warn=logger.warning)
     running_port = current_web_port()
     return {
         "recording_pipeline_enabled": settings_store.recording_pipeline_enabled(),
         "recording_pipeline_env_default": get_settings().recording_pipeline_enabled,
-        "recording_pipeline_overridden": bool(pipeline_override),
+        "recording_pipeline_overridden": "recording_pipeline_enabled" in overrides,
         "transcript_llm_refine_enabled": settings_store.transcript_llm_refine_enabled(),
         "transcript_llm_refine_env_default": get_settings().transcript_llm_refine_enabled,
-        "transcript_llm_refine_overridden": bool(refinement_override),
+        "transcript_llm_refine_overridden": "transcript_llm_refine_enabled" in overrides,
         "asr_task_max_concurrency": settings_store.asr_task_max_concurrency(),
         "asr_task_max_concurrency_env_default": get_settings().asr_task_max_concurrency,
-        "asr_task_max_concurrency_overridden": bool(asr_concurrency_override),
+        "asr_task_max_concurrency_overridden": "asr_task_max_concurrency" in overrides,
         "web_port": launcher_config.web_port,
         "current_web_port": running_port,
         "restart_required": launcher_config.web_port != running_port,
@@ -108,3 +109,32 @@ async def test_llm_providers(items: list[dict[str, Any]] | None = None) -> dict[
     providers = [p for p in candidates if p.enabled and p.api_key and p.base_url]
     results = await asyncio.to_thread(lambda: [_probe(p) for p in providers])
     return {"results": results}
+
+
+def test_model_route(change: ModelProbe) -> ModelProbeResult:
+    """按完整草稿解析一次文本调用，远程 ASR 需由用户明确提交音频测试。"""
+    from openai import OpenAIError
+
+    from app.analysis.llm import EmptyLLMResponseError, probe_provider
+    from app.analysis.llm_providers import from_route
+    from app.models.configuration import probe_configuration, resolve_routes
+
+    config = probe_configuration(change)
+    route = next((item for item in config.routes if item.id == change.route_id), None)
+    if route is None:
+        raise ValueError("测试路由不存在")
+    if route.capability == "asr":
+        raise ValueError("远程转写请先保存并选择路由，再用短录播测试；连通测试不会自动上传音频")
+    selected = next((item for item in resolve_routes(config, route.capability) if item[0].id == route.id), None)
+    if selected is None:
+        raise ValueError("测试路由或服务连接已停用")
+    if settings.llm_daily_budget > 0:
+        from app.analysis.llm import _today_spend
+
+        if _today_spend() >= settings.llm_daily_budget:
+            raise ValueError("已达到每日模型预算，无法发起测试请求")
+    try:
+        result = probe_provider(from_route(*selected))
+    except (OpenAIError, EmptyLLMResponseError) as exc:
+        return ModelProbeResult(id=route.id, ok=False, detail=safe_exception_summary(exc))
+    return ModelProbeResult(id=route.id, ok=True, detail=result[:80])

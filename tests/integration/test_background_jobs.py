@@ -12,7 +12,45 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.web.services.background_jobs import JobContext, WebJobManager, _decode_job, get_job
+from app.db.job_store import get_job
+from app.jobs.context import JobContext
+from app.jobs.contracts import JobAttempt, JobData, decode_job
+from app.web.services.background_jobs import WebJobManager
+
+
+@pytest.mark.parametrize("cancellable", [False, True])
+async def test_cancelled_async_wrapper_cannot_release_slot_while_handler_thread_runs(
+    temp_db: None, cancellable: bool
+) -> None:
+    manager = WebJobManager(max_concurrency=1)
+    entered, release, second_entered = Event(), Event(), Event()
+
+    def first(context: JobContext, payload: dict[str, object]) -> None:
+        entered.set()
+        assert release.wait(5)
+        context.check_cancelled()
+
+    def second(context: JobContext, payload: dict[str, object]) -> None:
+        second_entered.set()
+
+    manager.register("first", first)
+    manager.register("second", second)
+    job = await manager.enqueue("first", {}, label="first", owner="test", cancellable_while_running=cancellable)
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        execution = manager._tasks[job["id"]]
+        execution.cancel()
+        waiting = await manager.enqueue("second", {}, label="second", owner="test")
+        await asyncio.sleep(0.05)
+        assert not execution.done() and not second_entered.is_set()
+        assert get_job(waiting["id"])["status"] == "queued"
+        release.set()
+        await _wait_for_status(job["id"], {"cancelled" if cancellable else "succeeded"})
+        await _wait_for_status(waiting["id"], {"succeeded"})
+        assert second_entered.is_set()
+    finally:
+        release.set()
+        await manager.stop()
 
 
 @pytest.mark.parametrize("cancellable", [False, True])
@@ -44,7 +82,7 @@ async def test_shutdown_timeout_keeps_handler_and_blocks_new_work(temp_db: None,
         with pytest.raises(RuntimeError, match="正在关闭"):
             await manager.enqueue("shutdown_test", {}, label="late", owner="tester")
         with pytest.raises(RuntimeError, match="正在关闭"):
-            manager.retry(job["id"], "tester")
+            await manager.retry(job["id"], "tester")
         release.set()
         result = await _wait_for_status(job["id"], {"cancelled" if cancellable else "succeeded"})
         assert result["finished_at"] is not None
@@ -96,22 +134,19 @@ async def test_upload_job_reflects_actual_upload_terminal_status(
 async def test_failed_job_status_write_is_observed_and_saved_once(
     temp_db: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.web.services import background_jobs
+    from app.db import job_store
 
     manager = WebJobManager()
     await manager.start()
     manager.register("value", lambda context, payload: {})
-    update = background_jobs._update_job
     failures = 0
 
-    def fail_running(job_id: str, **changes: Any) -> dict[str, Any]:
+    def fail_running(attempt: JobAttempt) -> JobData:
         nonlocal failures
-        if changes.get("status") == "running":
-            failures += 1
-            raise OSError("database state unavailable")
-        return update(job_id, **changes)
+        failures += 1
+        raise OSError("database state unavailable")
 
-    monkeypatch.setattr(background_jobs, "_update_job", fail_running)
+    monkeypatch.setattr(job_store, "claim", fail_running)
     job = await manager.enqueue("value", {}, label="test", owner="test")
     result = await _wait_for_status(job["id"], {"failed"})
     await manager.stop()
@@ -219,7 +254,7 @@ async def test_background_job_can_retry_after_failure(temp_db: None) -> None:
     job = await manager.enqueue("test_retry", {}, label="retry", owner="tester")
     failed = await _wait_for_status(job["id"], {"failed"})
     assert failed["error"] == "RuntimeError: boom"
-    manager.retry(job["id"], "tester")
+    await manager.retry(job["id"], "tester")
     completed = await _wait_for_status(job["id"], {"succeeded"})
     await manager.stop()
 
@@ -392,4 +427,4 @@ def test_background_job_rejects_non_current_persisted_format(mutate: Any) -> Non
     mutate(payload)
 
     with pytest.raises(ValueError, match="Web 作业"):
-        _decode_job(json.dumps(payload))
+        decode_job(json.dumps(payload))

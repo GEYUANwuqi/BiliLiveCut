@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -143,18 +144,44 @@ def test_rerender_uses_committed_adjusted_boundary_and_versioned_path(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """后台重渲染显式传递已提交边界和独立版本。"""
-    from app.pipeline import orchestrator
+    """通过真实 HTTP 作业及 FFmpeg 核验已提交边界与独立版本。"""
+    from app.core.config import settings
+    from app.db.entities import FinalClip, UploadTask
+    from app.db.session import get_session
     from app.web.main import app
 
     candidate_id, base = _seed_candidate(tmp_path)
-    calls: list[dict[str, object]] = []
-
-    def fake_produce_clip(candidate_id_arg: int, auto_upload: bool = False, **kwargs: object) -> SimpleNamespace:
-        calls.append({"candidate_id": candidate_id_arg, "auto_upload": auto_upload, **kwargs})
-        return SimpleNamespace(id=77, file_path="clip-review.mp4", title="review")
-
-    monkeypatch.setattr(orchestrator, "produce_clip", fake_produce_clip)
+    monkeypatch.setattr(settings, "clip_loudnorm", False)
+    monkeypatch.setattr(settings, "clip_remove_silence", False)
+    monkeypatch.setattr(settings, "clip_preset", "ultrafast")
+    subprocess.run(
+        [
+            settings.ffmpeg_path,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=160x90:r=5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000",
+            "-t",
+            "100",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            str(tmp_path / "recording.ts"),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
     with TestClient(app) as client:
         adjusted = client.post(
             f"/review/api/{candidate_id}/adjust",
@@ -162,16 +189,32 @@ def test_rerender_uses_committed_adjusted_boundary_and_versioned_path(
         )
         assert adjusted.status_code == 200
         response = client.post(f"/review/api/{candidate_id}/rerender")
-
-    assert response.status_code == 200
-    assert calls[0]["candidate_id"] == candidate_id
-    assert calls[0]["auto_upload"] is False
-    assert calls[0]["start_ts"] == (base + timedelta(seconds=6)).replace(tzinfo=None)
-    assert calls[0]["end_ts"] == (base + timedelta(seconds=40)).replace(tzinfo=None)
-    assert str(calls[0]["output_suffix"]).startswith("review-")
-    assert response.json()["status"] == "accepted"
-    assert response.json()["job"]["type"] == "review_rerender"
-    assert response.json()["version"] == calls[0]["output_suffix"]
+        assert response.status_code == 200
+        accepted = response.json()
+        assert accepted["status"] == "accepted" and accepted["job"]["type"] == "review_rerender"
+        payload = accepted["job"]["payload"]
+        assert payload["candidate_id"] == candidate_id
+        assert datetime.fromisoformat(payload["start_ts"]) == (base + timedelta(seconds=6)).replace(tzinfo=None)
+        assert datetime.fromisoformat(payload["end_ts"]) == (base + timedelta(seconds=40)).replace(tzinfo=None)
+        deadline = time.monotonic() + 60
+        while True:
+            status = client.get(f"/api/jobs/{accepted['job']['id']}")
+            assert status.status_code == 200
+            state = status.json()
+            if state["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            assert time.monotonic() < deadline, state
+            time.sleep(0.05)
+        assert state["status"] == "succeeded", state
+        assert state["result"]["version"] == accepted["version"]
+        assert accepted["version"].startswith("review-")
+        with get_session() as db:
+            clip = db.get(FinalClip, state["result"]["clip_id"])
+            assert clip.candidate_id == candidate_id
+            assert clip.duration_s == pytest.approx(34, abs=0.3)
+            assert Path(clip.file_path).stat().st_size > 0
+            assert f"job_{state['id']}_{state['attempt']}_" in Path(clip.file_path).stem
+            assert db.exec(select(UploadTask)).all() == []
 
 
 def test_validate_clip_boundary_rejects_recording_gap(temp_db: None, tmp_path: Path) -> None:

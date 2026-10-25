@@ -324,8 +324,10 @@ def test_cleanup_failure_does_not_report_cancelled_or_requeue(
     pool = ASRProcessPool(sdk_process)
     monkeypatch.setattr(process_pool, "get_process_pool", lambda: pool)
     kill = pool._kill
+    cleanup_failed = threading.Event()
 
     def fail_cleanup(slot: _Slot) -> None:
+        cleanup_failed.set()
         raise RuntimeError("injected OS termination failure")
 
     def infer(lease: TaskLease) -> None:
@@ -361,12 +363,16 @@ def test_cleanup_failure_does_not_report_cancelled_or_requeue(
             try:
                 pid = wait_for_file(tmp_path / "pid")
                 assert task_worker.cancel_task(task_id)
-                future.result(timeout=15)
+                assert cleanup_failed.wait(5)
+                assert not future.done()
                 stale_recovery.recover_stale()
                 with get_session() as db:
                     task = db.get(SegmentTask, task_id)
                     assert task.stage == TaskStatus.CANCELLING and task.completed_at is None
-                    assert "IPC" in task.last_error
+                from app.pipeline.lifecycle import execution_active
+
+                assert execution_active(task_id, "cleanup-failure")
+                assert any(value > 0 for value in pool._roles.values())
                 assert psutil.pid_exists(pid)
                 assert not task_worker.retry_task(task_id)
                 failed_slot = next(slot for slot in pool._slots if slot.process.pid == pid)
@@ -375,6 +381,7 @@ def test_cleanup_failure_does_not_report_cancelled_or_requeue(
                 with pool._condition:
                     for slot in list(pool._slots):
                         kill(slot)
+            future.result(timeout=5)
         # Windows 退出进程的句柄仍可能保留 PID；等待原进程并验证真实退出及 IPC 收尾。
         failed_process.wait(timeout=5)
         assert failed_slot.process.exitcode is not None
@@ -382,12 +389,28 @@ def test_cleanup_failure_does_not_report_cancelled_or_requeue(
         assert failed_slot.connection.closed
         assert failed_slot.io_thread is not None and not failed_slot.io_thread.is_alive()
         assert not pool.has_active_task(task_id, "cleanup-failure")
+        assert all(value == 0 for value in pool._roles.values())
         stale_recovery.recover_stale()
         with get_session() as db:
             assert db.get(SegmentTask, task_id).stage == TaskStatus.CANCELLED
     finally:
         monkeypatch.setattr(pool, "_kill", kill)
         pool.shutdown(0)
+
+
+def test_reset_cannot_replace_pool_with_active_parent_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.analysis.transcription import process_pool
+
+    pool = ASRProcessPool(sdk_process)
+    monkeypatch.setattr(process_pool, "_pool", pool)
+    with pool.operation({"task_id": 57, "lease_token": "parent-decoding"}):
+        with pool._condition:
+            pool._closed = True
+        with pytest.raises(RuntimeError, match="解码操作"):
+            process_pool.reset_process_pool()
+        assert process_pool.get_process_pool() is pool
+    process_pool.reset_process_pool()
+    assert process_pool._pool is None
 
 
 def test_cancel_confirms_old_process_exit_before_retry(tmp_path: Path) -> None:

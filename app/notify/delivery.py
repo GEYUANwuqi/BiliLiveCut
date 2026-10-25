@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
@@ -11,6 +10,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from app.core.execution import run_sync
 from app.core.runtime_settings import process_settings
 from app.notify.email_verification import send_verified_email
 
@@ -87,6 +87,8 @@ async def start_email_delivery() -> None:
     """允许当前宿主投递，不创建业务管理器或提前建立 SMTP 连接。"""
     global _accepting
     with _lock:
+        if not _accepting and _executor is not None:
+            raise RuntimeError("通知投递线程尚未确认关闭，不能重新启动")
         _accepting = True
 
 
@@ -95,6 +97,9 @@ async def stop_email_delivery() -> None:
     global _executor, _accepting
     with _lock:
         _accepting = False
-        executor, _executor = _executor, None
+        executor = _executor
     if executor is not None:
-        await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+        await run_sync(partial(executor.shutdown, wait=True, cancel_futures=True))
+        with _lock:
+            if _executor is executor:
+                _executor = None

@@ -20,9 +20,9 @@ from app.core.paths import raw_dir
 from app.core.process_control import run_cancellable
 from app.db.entities import AppSetting, Danmaku, LiveRoom, RawSegment, RecordingSession, SegmentTask, SessionStatus
 from app.db.session import get_session
+from app.jobs.context import JobContext
 from app.pipeline.stage_result import make_pipeline_key, make_stage_key
 from app.recording.import_comments import COMMENT_SUFFIXES, CommentReport, preprocess_comments
-from app.web.services.background_jobs import JobContext
 
 MAX_VIDEO_BYTES = 50 * 1024**3
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".flv", ".ts", ".mov", ".webm", ".m4v"}
@@ -274,9 +274,10 @@ def prepare_import(context: JobContext, import_id: str) -> dict[str, object]:
                 raise ValueError("分段总时长与原视频不一致，可能存在损坏或不连续时间戳")
             context.report(85, "正在登记分析输入与持久任务")
             context.check_cancelled()
-            with get_session() as db:
+            with context.result_transaction() as db:
                 record = get_import(import_id, db)
                 _publish_import(db, record, parts, report, duration, context)
+                context.complete(db, {"import_id": import_id, "session_id": record.session_id})
             published = True
         finally:
             if not published:

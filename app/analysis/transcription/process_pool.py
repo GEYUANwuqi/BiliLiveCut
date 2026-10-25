@@ -192,6 +192,8 @@ class _Slot:
     incoming: queue.Queue[dict[str, Any] | Exception] = field(default_factory=queue.Queue)
     io_stop: threading.Event = field(default_factory=threading.Event)
     io_thread: threading.Thread | None = None
+    reserved_roles: tuple[str, ...] = ()
+    quarantined: bool = False
 
 
 def _slot_io(slot: _Slot) -> None:
@@ -243,6 +245,7 @@ class ASRProcessPool:
         self._closed = False
         self._shutdown_at: float | None = None
         self._operations: dict[str, dict[str, object]] = {}
+        self._starting: dict[BaseProcess, Connection] = {}
 
     @contextmanager
     def operation(self, context: dict[str, object]) -> Iterator[None]:
@@ -280,6 +283,33 @@ class ASRProcessPool:
         slot.connection.close()
         if slot in self._slots:
             self._slots.remove(slot)
+        if slot.quarantined:
+            self._release_roles(slot)
+
+    def _release_roles(self, slot: _Slot) -> None:
+        for role in slot.reserved_roles:
+            self._roles[role] -= 1
+        slot.reserved_roles = ()
+        self._condition.notify_all()
+
+    def _reap_failed(self, slot: _Slot) -> None:
+        with self._condition:
+            if slot in self._slots and slot.quarantined:
+                self._kill(slot)
+
+    def _reap_starting(self, process: BaseProcess) -> None:
+        with self._condition:
+            connection = self._starting.get(process)
+            if connection is None:
+                return
+            if process.is_alive():
+                process.kill()
+            process.join(5)
+            if process.is_alive():
+                raise RuntimeError(f"ASR 启动失败后的进程尚未退出 pid={process.pid}")
+            connection.close()
+            self._starting.pop(process)
+            self._condition.notify_all()
 
     def _retire(self, slot: _Slot) -> None:
         """空闲槽先正常退出，让模型库的 multiprocessing finalizer 释放信号量。"""
@@ -315,7 +345,7 @@ class ASRProcessPool:
                 if self._closed:
                     raise ASRShutdownError("ASR pool is stopping")
                 latest = process_settings()
-                active = sum(item.busy for item in self._slots)
+                active = sum(item.busy for item in self._slots) + len(self._starting)
                 task_id = request["context"].get("task_id")
                 same_task_active = task_id is not None and any(
                     item.busy and item.context.get("task_id") == task_id for item in self._slots
@@ -336,24 +366,37 @@ class ASRProcessPool:
                 process = multiprocessing.get_context("spawn").Process(
                     target=_child_entry, args=(child, self._target, os.getpid()), name="BiliLiveCut-ASR"
                 )
-                process.start()
+                try:
+                    process.start()
+                except BaseException:
+                    parent.close()
+                    child.close()
+                    raise
                 child.close()
+                from app.core.execution import retain_cleanup
+
+                self._starting[process] = parent
+                release_starting = retain_cleanup(lambda: self._reap_starting(process))
                 try:
                     tree = ProcessTree(process.pid)
                 except BaseException:
-                    process.kill()
-                    process.join(5)
-                    parent.close()
+                    self._reap_starting(process)
+                    release_starting()
                     raise
                 slot = _Slot(process, parent, tree)
                 slot.io_thread = threading.Thread(
                     target=_slot_io, args=(slot,), name=f"asr-ipc-{process.pid}", daemon=True
                 )
                 self._slots.append(slot)
+                self._starting.pop(process)
+                release_starting()
                 try:
                     slot.io_thread.start()
                 except RuntimeError:
+                    slot.quarantined = True
+                    release_failed = retain_cleanup(lambda: self._reap_failed(slot))
                     self._kill(slot)
+                    release_failed()
                     raise
             slot.busy = True
             slot.started = time.monotonic()
@@ -365,6 +408,7 @@ class ASRProcessPool:
             }
             for role in roles:
                 self._roles[role] = self._roles.get(role, 0) + 1
+            slot.reserved_roles = roles
         finished = False
         try:
             logger.info("asr_process_start context={} pid={} budget_s={}", slot.context, slot.process.pid, timeout_s)
@@ -435,7 +479,12 @@ class ASRProcessPool:
         finally:
             with self._condition:
                 if not finished:
+                    from app.core.execution import retain_cleanup
+
+                    slot.quarantined = True
+                    release = retain_cleanup(lambda: self._reap_failed(slot))
                     self._kill(slot)
+                    release()
                     logger.warning(
                         "asr_process_terminated context={} pid={} stage={} elapsed_s={:.1f}",
                         slot.context,
@@ -448,8 +497,7 @@ class ASRProcessPool:
                     slot.last_used = time.monotonic()
                     for model in slot.models:
                         model["active_users"] = 0
-                for role in roles:
-                    self._roles[role] -= 1
+                    self._release_roles(slot)
                 self._condition.notify_all()
 
     def shutdown(self, grace_s: float) -> None:
@@ -459,6 +507,8 @@ class ASRProcessPool:
             self._closed = True
             self._shutdown_at = deadline
             self._condition.notify_all()
+            for process in tuple(self._starting):
+                self._reap_starting(process)
             for slot in self._slots:
                 if slot.busy:
                     logger.info(
@@ -470,6 +520,9 @@ class ASRProcessPool:
                         grace_s,
                     )
             while any(slot.busy for slot in self._slots) or self._operations:
+                for slot in list(self._slots):
+                    if slot.quarantined:
+                        self._kill(slot)
                 self._condition.wait(0.2)
                 if time.monotonic() > deadline + 12:
                     raise RuntimeError("ASR 监管线程未在终止宽限内归还进程槽")
@@ -485,7 +538,12 @@ class ASRProcessPool:
             key: value for key, value in config.model_dump().items() if key.startswith(("asr_", "whisper_"))
         }
         with self._condition:
+            for process in tuple(self._starting):
+                self._reap_starting(process)
             for slot in list(self._slots):
+                if slot.quarantined:
+                    self._kill(slot)
+                    continue
                 if slot.busy:
                     continue
                 while not slot.incoming.empty():
@@ -549,5 +607,9 @@ def reset_process_pool() -> None:
     """重启 Worker 时仅替换已关闭且没有运行槽的监管器。"""
     global _pool
     with _pool_lock:
-        if _pool is not None and _pool._closed and not _pool._slots:
-            _pool = None
+        if _pool is not None:
+            with _pool._condition:
+                if _pool._closed:
+                    if _pool._slots or _pool._operations or _pool._starting:
+                        raise RuntimeError("ASR 监管器仍有活动进程或解码操作，不能重新启动")
+                    _pool = None

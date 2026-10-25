@@ -171,7 +171,8 @@ def _llm_copy(text: str, reason: str) -> Copy | None:
             text=text or "(无转写)",
             reason=reason or "无",
             trend_block=_trend_block(),
-        )
+        ),
+        capability="copywriting",
     )
     if raw is None:
         return None
@@ -227,23 +228,9 @@ def _fallback_copy(text: str, reason: str) -> Copy:
     )
 
 
-@configured_task
-def generate_copy(clip_id: int, *, task_lease: TaskLease | None = None) -> FinalClip:
-    """为成品切片生成文案并按审核模式决定状态。
-
-    :param clip_id: ``final_clips`` 主键。
-    :param task_lease: 可选的人工出片租约，文案提交前原子复验。
-    :returns: 更新后的 :class:`FinalClip`。
-    :raises ValueError: 切片不存在时。
-    """
+def prepare_copy(clip: FinalClip) -> FinalClip:
+    """为未发布或已有成片计算文案，不写入正式结果。"""
     with get_session() as db:
-        if task_lease is not None:
-            from app.pipeline.lease import require_current_lease
-
-            require_current_lease(db, task_lease)
-        clip = db.get(FinalClip, clip_id)
-        if clip is None:
-            raise ValueError(f"切片不存在: id={clip_id}")
         candidate_id = clip.candidate_id
         cand = db.get(HighlightCandidate, candidate_id)
         session = db.get(RecordingSession, cand.session_id) if cand else None
@@ -256,30 +243,54 @@ def generate_copy(clip_id: int, *, task_lease: TaskLease | None = None) -> Final
     text, reason = gather_clip_text(candidate_id)
     copy = _llm_copy(text, reason) or _fallback_copy(text, reason)
 
-    status = _decide_status(auto_approve, auto_approve_threshold, score, copy.worth_publishing)
+    clip.title = copy.title
+    clip.description = copy.description
+    clip.tags_json = json.dumps(copy.tags, ensure_ascii=False)
+    clip.publish_suggestion = (
+        f"{copy.publish_suggestion} | 封面:{copy.cover_suggestion} | 值得发布:{copy.worth_publishing}"
+    )
+    clip.status = _decide_status(auto_approve, auto_approve_threshold, score, copy.worth_publishing)
+    return clip
+
+
+@configured_task
+def generate_copy(clip_id: int, *, task_lease: TaskLease | None = None) -> FinalClip:
+    """为已经发布的成片单独生成文案，提交时复验租约与输入。"""
+    from app.clipping.drafts import input_fingerprint
+
+    with get_session() as db:
+        clip = db.get(FinalClip, clip_id)
+        if clip is None:
+            raise ValueError(f"切片不存在: id={clip_id}")
+        fingerprint = input_fingerprint(db, clip.candidate_id)
+        original = clip.model_dump(mode="json")
+    prepared = prepare_copy(clip)
 
     with get_session() as db:
         if task_lease is not None:
             from app.pipeline.lease import require_current_lease
 
             require_current_lease(db, task_lease)
+        else:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
         clip = db.get(FinalClip, clip_id)
-        clip.title = copy.title
-        clip.description = copy.description
-        clip.tags_json = json.dumps(copy.tags, ensure_ascii=False)
-        clip.publish_suggestion = (
-            f"{copy.publish_suggestion} | 封面:{copy.cover_suggestion} | 值得发布:{copy.worth_publishing}"
-        )
-        clip.status = status
+        if (
+            clip is None
+            or clip.model_dump(mode="json") != original
+            or input_fingerprint(db, clip.candidate_id) != fingerprint
+        ):
+            raise ValueError("成片或审核输入已改变，拒绝保存迟到文案")
+        for name in ("title", "description", "tags_json", "publish_suggestion", "status"):
+            setattr(clip, name, getattr(prepared, name))
         db.add(clip)
 
     logger.success(
         "文案完成 clip={} 状态={} 标题={!r}",
         clip_id,
-        status,
-        copy.title,
+        clip.status,
+        clip.title,
     )
-    if status == ClipStatus.READY:
+    if clip.status == ClipStatus.READY:
         export_manifest(clip_id)
     return clip
 

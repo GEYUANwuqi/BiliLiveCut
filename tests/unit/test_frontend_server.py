@@ -77,6 +77,53 @@ def request(port, path, method="GET", body=None, headers=None, **kwargs):
     return result
 
 
+def test_proxy_delivers_small_sse_frames_before_upstream_closes(tmp_path: Path) -> None:
+    release, finished = threading.Event(), threading.Event()
+    observed: list[str] = []
+    frame = b'event: resync\ndata: {"version":1,"topics":[]}\n\n'
+
+    class StreamingBackend(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            observed.append(self.headers.get("Last-Event-ID", ""))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.wfile.write(frame)
+            self.wfile.flush()
+            release.wait(5)
+            finished.set()
+
+        def log_message(self, _format: str, *args: object) -> None:
+            return
+
+    backend = ThreadingHTTPServer(("127.0.0.1", 0), StreamingBackend)
+    frontend = FrontendHTTPServer(
+        ("127.0.0.1", 0),
+        partial(FrontendHandler, directory=tmp_path, backend=f"http://127.0.0.1:{backend.server_port}"),
+    )
+    threads = [threading.Thread(target=server.serve_forever) for server in (backend, frontend)]
+    connection = http.client.HTTPConnection("127.0.0.1", frontend.server_port, timeout=2)
+    try:
+        for thread in threads:
+            thread.start()
+        connection.request("GET", "/api/events", headers={"Last-Event-ID": "opaque-cursor"})
+        response = connection.getresponse()
+        assert response.status == 200 and response.getheader("X-Accel-Buffering") == "no"
+        assert response.read(len(frame)) == frame
+        assert not finished.is_set()
+        assert observed == ["opaque-cursor"]
+    finally:
+        release.set()
+        connection.close()
+        for server in (frontend, backend):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+
+
 def test_frontend_starts_without_reverse_dns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     def forbidden(*args):
         pytest.fail("静态前端启动不应等待反向 DNS")

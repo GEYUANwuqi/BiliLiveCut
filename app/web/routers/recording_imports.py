@@ -12,6 +12,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.db.entities import RawSegment, SegmentTask, TaskStatus, Transcript
+from app.db.job_store import get_job
 from app.db.session import get_session
 from app.pipeline.task_context import event_first_context
 from app.recording.import_comments import MAX_COMMENT_BYTES
@@ -27,7 +28,7 @@ from app.recording.imports import (
     save_import,
     upload_path,
 )
-from app.web.services.background_jobs import get_job, web_job_manager
+from app.web.services.background_jobs import web_job_manager
 from app.web.services.review_workflow import review_actor
 
 router = APIRouter(prefix="/recording-imports")

@@ -184,8 +184,7 @@ def test_short_command_cannot_execute_before_windows_job_ownership(
             assert not marker.exists(), "child executed before job ownership"
         return owned_tree(pid)
 
-    target = audio_normalization if normalization else process_control
-    monkeypatch.setattr(target, "ProcessTree", delayed_attachment)
+    monkeypatch.setattr(process_control, "ProcessTree", delayed_attachment)
     if normalization:
         result = audio_normalization._run_normalization(command, lambda: None)
     else:

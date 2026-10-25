@@ -345,6 +345,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Events
+         * @description 订阅当前账号可见的状态提示；所有业务数据仍由 HTTP 查询。
+         */
+        get: operations["events_api_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events/{event_id}/variants": {
         parameters: {
             query?: never;
@@ -731,6 +751,50 @@ export interface paths {
         get: operations["get_metrics_api_metrics_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/model-configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Configuration
+         * @description 返回共享连接与各业务路由的脱敏视图。
+         */
+        get: operations["get_model_configuration_api_model_configuration_get"];
+        /**
+         * Put Model Configuration
+         * @description 在同一配置版本内保存全部连接与路由，不修改运行中任务的快照。
+         */
+        put: operations["put_model_configuration_api_model_configuration_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/model-configuration/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Model Configuration
+         * @description 仅测试指定文本路由，保留真实执行的取消与收尾约束。
+         */
+        post: operations["test_model_configuration_api_model_configuration_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2506,6 +2570,49 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             };
         };
+        /**
+         * ConnectionChange
+         * @description 空密钥保留同一连接的已保存凭据，清空必须明确声明。
+         */
+        ConnectionChange: {
+            /**
+             * Api Key
+             * @default
+             */
+            api_key: string;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Clear Api Key
+             * @default false
+             */
+            clear_api_key: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * ConnectionView
+         * @description 服务连接的公开投影，永不包含密钥。
+         */
+        ConnectionView: {
+            /** Api Key Set */
+            api_key_set: boolean;
+            /** Base Url */
+            base_url: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2682,6 +2789,113 @@ export interface components {
             source_id: number;
             /** Target Id */
             target_id: number;
+        };
+        /**
+         * ModelConfigurationChange
+         * @description 模型配置整体保存，与其他设置共用乐观版本检查。
+         */
+        ModelConfigurationChange: {
+            /** Connections */
+            connections: components["schemas"]["ConnectionChange"][];
+            /** Revision */
+            revision: number;
+            /** Routes */
+            routes: components["schemas"]["ModelRoute"][];
+        };
+        /**
+         * ModelConfigurationView
+         * @description 同一数据库版本的连接、路由及兼容来源。
+         */
+        ModelConfigurationView: {
+            /** Active Counts */
+            active_counts: {
+                [key: string]: number;
+            };
+            /** Asr Selection */
+            asr_selection: string;
+            /** Connections */
+            connections: components["schemas"]["ConnectionView"][];
+            /** Revision */
+            revision: number;
+            /** Routes */
+            routes: components["schemas"]["ModelRoute"][];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "legacy" | "routes";
+        };
+        /**
+         * ModelProbe
+         * @description 仅测试管理员明确选择的文本路由，不保存草稿。
+         */
+        ModelProbe: {
+            /** Connections */
+            connections: components["schemas"]["ConnectionChange"][];
+            /** Revision */
+            revision: number;
+            /** Route Id */
+            route_id: string;
+            /** Routes */
+            routes: components["schemas"]["ModelRoute"][];
+        };
+        /**
+         * ModelProbeResult
+         * @description 单条文本路由的有限调用结果。
+         */
+        ModelProbeResult: {
+            /** Detail */
+            detail: string;
+            /** Id */
+            id: string;
+            /** Ok */
+            ok: boolean;
+        };
+        /**
+         * ModelRoute
+         * @description 业务能力独立选择模型、连接、调用顺序和计费参数。
+         */
+        ModelRoute: {
+            /**
+             * Capability
+             * @enum {string}
+             */
+            capability: "analysis" | "transcript" | "trends" | "summary" | "copywriting" | "asr";
+            /** Connection Id */
+            connection_id: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Id */
+            id: string;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /**
+             * Price Input Per M
+             * @default 0
+             */
+            price_input_per_m: number;
+            /**
+             * Price Output Per M
+             * @default 0
+             */
+            price_output_per_m: number;
+            /**
+             * Priority
+             * @default 100
+             */
+            priority: number;
+            /**
+             * Web Search Param
+             * @default
+             */
+            web_search_param: string;
         };
         /**
          * PluginSettingsBody
@@ -3448,6 +3662,24 @@ export interface operations {
             };
         };
     };
+    events_api_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_variants_api_events__event_id__variants_get: {
         parameters: {
             query?: never;
@@ -4104,6 +4336,92 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_model_configuration_api_model_configuration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelConfigurationView"];
+                };
+            };
+        };
+    };
+    put_model_configuration_api_model_configuration_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelConfigurationChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelConfigurationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_model_configuration_api_model_configuration_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelProbe"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProbeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

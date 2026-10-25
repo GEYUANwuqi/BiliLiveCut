@@ -3,11 +3,11 @@
 核心原则:
 
 * Schema 由当前 SQLModel/SQLAlchemy 模型确定性创建;
-* 使用 SHA-256 指纹 + 版本号双重验证一致性;
+* 使用 SHA-256 指纹 + 数据库格式版本双重验证一致性;
 * 数据库不存在时创建; 存在的数据库仅在精确匹配时启动;
 * 任何校验失败均阻止应用启动。
 
-Alpha 版本不提供历史数据库迁移或兼容接口。
+应用版本仅记录创建来源，不决定格式兼容性；不提供不兼容格式的自动迁移。
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ CURRENT_SCHEMA_VERSION = 6
 
 
 class SchemaMeta(SQLModel, table=True):
-    """Schema 元信息 (``schema_meta``): 单行表, 记录当前 Schema 版本与指纹。"""
+    """记录格式版本与指纹，app_version 保留数据库创建时的应用版本。"""
 
     __tablename__ = "schema_meta"
 
@@ -306,7 +306,6 @@ def validate_schema() -> bool:
 
             stored_version = meta.schema_version
             stored_fingerprint = meta.schema_fingerprint
-            stored_app_version = meta.app_version
 
         # 3. 版本比较
         if stored_version != CURRENT_SCHEMA_VERSION:
@@ -314,15 +313,6 @@ def validate_schema() -> bool:
                 "Schema 版本不匹配: 数据库={} 程序={}",
                 stored_version,
                 CURRENT_SCHEMA_VERSION,
-            )
-            return False
-
-        current_app_version = _app_version_str()
-        if stored_app_version != current_app_version:
-            logger.error(
-                "数据库应用版本不匹配: 数据库={} 程序={}",
-                stored_app_version,
-                current_app_version,
             )
             return False
 
@@ -406,7 +396,9 @@ def assure_schema() -> None:
                 raise
         # 创建后立即校验
         if not validate_schema():
-            raise RuntimeError(f"新创建的数据库 Schema 校验失败。请删除数据库后重试。\n数据库路径: {db_path}")
+            raise RuntimeError(
+                f"新创建的数据库 Schema 校验失败。请停止服务并保留数据库和日志以供排查。\n数据库路径: {db_path}"
+            )
         logger.info("数据库创建并校验成功: {}", db_path)
         return
 
@@ -417,8 +409,9 @@ def assure_schema() -> None:
         "\n当前数据库 Schema 与程序不兼容。\n"
         f"\n数据库版本: {_stored_version()}"
         f"\n程序要求版本: {CURRENT_SCHEMA_VERSION}"
-        "\n\nAlpha 版本不迁移历史数据库。"
-        "\n请使用当前版本创建的新数据库，或删除旧数据库后重新启动。"
+        "\n\n不兼容的数据库格式不会自动迁移、删除或覆盖。"
+        "\n请停止服务并备份数据库及关联媒体，在副本上核查受支持的转换方案；"
+        "也可显式配置独立的新数据库路径。不要改写版本或指纹绕过校验。"
         f"\n\n数据库路径:\n{db_path}\n"
     )
 

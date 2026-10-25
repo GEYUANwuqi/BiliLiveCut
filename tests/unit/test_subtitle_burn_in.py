@@ -289,17 +289,17 @@ def test_clean_main_and_subtitled_counterpart_share_covering_segments(
             variants = db.exec(select(ClipVariant)).all()
             assert variants and all(not item.has_subtitles for item in variants)
             assert not any(item.variant_type == ClipVariantType.SUBTITLED for item in variants)
-        assert not (Path(clip.file_path).parent / f"clip_{candidate_id}_subtitled.mp4").exists()
+        assert not Path(clip.file_path).with_stem(f"{Path(clip.file_path).stem}_subtitled").exists()
         return
     assert "CORRECT" in subtitle_file.read_text(encoding="utf-8")
     assert "wrong" not in subtitle_file.read_text(encoding="utf-8")
     at_s = 1.4 if with_intro else 0.4
     assert _bright_pixels(Path(clip.file_path), at_s) == 0
-    assert _bright_pixels(Path(clip.file_path).parent / f"clip_{candidate_id}_subtitled.mp4", at_s) > 20
     with get_session() as db:
         counterpart = db.exec(select(ClipVariant).where(ClipVariant.variant_type == ClipVariantType.SUBTITLED)).one()
         assert counterpart.has_subtitles is True
         assert Path(counterpart.file_path).is_file()
+        assert _bright_pixels(Path(counterpart.file_path), at_s) > 20
         if with_intro:
             assert counterpart.duration_s == pytest.approx(3, abs=0.15)
     if with_intro:

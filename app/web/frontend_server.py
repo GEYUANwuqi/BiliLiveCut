@@ -220,8 +220,9 @@ class FrontendHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             if self.command != "HEAD":
-                while chunk := response.read(65536):
+                while chunk := response.read1(65536):
                     self.wfile.write(chunk)
+                    self.wfile.flush()
         except (OSError, http.client.HTTPException, ValueError):
             if not started:
                 self.send_error(502, "Backend unavailable")

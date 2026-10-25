@@ -139,7 +139,9 @@ async def dispatch(
     path = request.url.path
     try:
         session = await run_in_threadpool(
-            store.session, request.cookies.get(COOKIE_NAME, ""), touch=not path.startswith("/auth/")
+            store.session,
+            request.cookies.get(COOKIE_NAME, ""),
+            touch=not path.startswith("/auth/") and path != "/api/events",
         )
         if path.startswith("/auth/"):
             return await _endpoint(request, store, reviewers, session, csrf_check)

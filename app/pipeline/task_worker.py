@@ -18,14 +18,14 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from sqlmodel import select
 
 from app.core.config import settings
+from app.core.execution import run_sync as _thread_io
 from app.core.sanitize import safe_exception_summary
 from app.db.entities import (
     RawSegment,
@@ -67,26 +67,6 @@ from app.pipeline.stale_recovery import (
 
 
 _logger = logger
-_T = TypeVar("_T")
-
-
-async def _thread_io(operation: Callable[[], _T], cancel_result: Callable[[_T], None] | None = None) -> _T:
-    """隔离有限时的同步 I/O；取消时先收尾并撤回尚未派发的领取结果。"""
-    pending = asyncio.create_task(asyncio.to_thread(operation))
-    cancelled = False
-    while True:
-        try:
-            result = await asyncio.shield(pending)
-            break
-        except asyncio.CancelledError:
-            if pending.cancelled():
-                raise
-            cancelled = True
-    if cancelled:
-        if cancel_result is not None:
-            await _thread_io(partial(cancel_result, result))
-        raise asyncio.CancelledError
-    return result
 
 
 if TYPE_CHECKING:
@@ -290,14 +270,16 @@ class TaskWorker:
         """启动 Worker 主循环。"""
         if self._running:
             return
-        shutdown_event.clear()
+        if any(not task.done() for task in self._executions()):
+            raise RuntimeError("Worker 上一次执行尚未物理退出，不能重新启动")
         from app.analysis.transcription.process_pool import reset_process_pool
 
         reset_process_pool()
+        shutdown_event.clear()
         self._running = True
         from app.pipeline.publish_recovery import recover_publish_state
 
-        await asyncio.to_thread(recover_publish_state)
+        await _thread_io(recover_publish_state)
         await _thread_io(recover_orphans)
         from app.analysis.session_summary import recover_running_session_summary_requests
 
@@ -317,7 +299,7 @@ class TaskWorker:
         from app.analysis.transcription.isolated import preload_isolated_models
 
         try:
-            await asyncio.to_thread(preload_isolated_models)
+            await _thread_io(preload_isolated_models)
         except (RuntimeError, OSError, ValueError, ImportError) as exc:
             _logger.warning("ASR 预加载失败，任务仍可按配置尝试加载或回退: {}", safe_exception_summary(exc, limit=500))
 
@@ -342,7 +324,7 @@ class TaskWorker:
         from app.analysis.transcription.process_pool import get_process_pool
 
         try:
-            await asyncio.to_thread(get_process_pool().shutdown, grace_period)
+            await _thread_io(partial(get_process_pool().shutdown, grace_period))
         except (RuntimeError, OSError, asyncio.CancelledError):
             # 进程终止异常也必须撤销迟到计算的写入权，但不能声称原生进程已退出。
             from app.analysis.session_summary import interrupt_summary_execution
@@ -358,8 +340,8 @@ class TaskWorker:
         preload = getattr(self, "_preload_task", None)
         if preload is not None and not preload.done():
             _, pending = await asyncio.wait({preload}, timeout=max(0, deadline - time.monotonic()))
-            for task in pending:
-                task.cancel()
+            if pending:
+                errors.append(RuntimeError("ASR 预加载尚未物理退出，关闭未完成"))
         for coll_name, coll in [
             ("transcribing", self._transcribing),
             ("analyzing", self._analyzing),
@@ -387,20 +369,23 @@ class TaskWorker:
                         claim = self._summary_claims.get(future)
                         if claim is not None:
                             await asyncio.to_thread(interrupt_summary_execution, claim)
-                for t in still_running:
-                    _logger.warning(
-                        "优雅关闭: 取消剩余等待 kind={} task={}；同步线程可能仍等待外部响应，计算租约已撤销",
-                        coll_name,
-                        t.get_name(),
-                    )
-                    t.cancel()
                 if still_running:
-                    await asyncio.gather(*still_running, return_exceptions=True)
+                    errors.append(RuntimeError(f"{len(still_running)} 个 {coll_name} 执行尚未物理退出，保留资源占用"))
 
         await asyncio.to_thread(cleanup_subprocesses)
         if errors:
             raise ExceptionGroup("Worker 关闭期间发现异常", errors)
         _logger.info("TaskWorker stopped.")
+
+    def _executions(self) -> tuple[asyncio.Task[None] | asyncio.Task[bool], ...]:
+        tasks = (
+            *self._transcribing,
+            *self._analyzing,
+            *self._rendering,
+            *self._publishing,
+            *self._session_summaries,
+        )
+        return (*tasks, self._preload_task) if self._preload_task is not None else tasks
 
     async def _loop(self) -> None:
         """主调度循环 — 每个 tick 执行阶段推进、stale 恢复、任务分发。"""
@@ -509,7 +494,7 @@ class TaskWorker:
         if claim is None:
             return
         task = asyncio.create_task(
-            asyncio.to_thread(execute_session_summary_claim, claim),
+            _thread_io(partial(execute_session_summary_claim, claim)),
             name=f"summary:{claim.session_id}:{claim.request_id}",
         )
         self._session_summaries.add(task)
@@ -568,7 +553,7 @@ class TaskWorker:
             act_stage = active_stage(queued_stage)
             lease = task.lease_token
             t = asyncio.create_task(
-                asyncio.to_thread(execute_task, task.id, act_stage, lease),
+                _thread_io(partial(execute_task, task.id, act_stage, lease)),
                 name=f"task:{task.id}:segment:{task.segment_id}:{act_stage}:lease:{lease}",
             )
             t.add_done_callback(_observe_execution)

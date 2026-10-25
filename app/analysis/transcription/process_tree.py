@@ -21,6 +21,8 @@ class ProcessTree:
         self.pid = pid
         self._lock = Lock()
         self._terminated = False
+        self._signal_sent = False
+        self._group_missing = False
         self._handle: int | None = None
         if os.name != "nt":
             return
@@ -161,11 +163,33 @@ class ProcessTree:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self._handle = None
         else:
-            try:
-                os.killpg(self.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                # spawn 尚未执行 setsid 时没有同 PID 进程组，直接终止启动者。
+            if not self._signal_sent:
                 try:
-                    os.kill(self.pid, signal.SIGKILL)
+                    os.killpg(self.pid, signal.SIGKILL)
                 except ProcessLookupError:
-                    pass
+                    # spawn 尚未执行 setsid 时没有同 PID 进程组，直接终止启动者。
+                    self._group_missing = True
+                    try:
+                        os.kill(self.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                self._signal_sent = True
+            self._wait_for_posix_exit()
+
+    def _wait_for_posix_exit(self) -> None:
+        deadline = time.monotonic() + 5
+        while True:
+            active = False
+            for process in psutil.process_iter(attrs=["pid", "status"]):
+                try:
+                    owned = process.pid == self.pid if self._group_missing else os.getpgid(process.pid) == self.pid
+                except ProcessLookupError:
+                    continue
+                if owned and process.info["status"] not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                    active = True
+                    break
+            if not active:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"终止信号已发送，但进程组仍有活动成员 pgid={self.pid}")
+            time.sleep(0.02)

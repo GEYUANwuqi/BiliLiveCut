@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 type Provider = Record<string, unknown>;
 
-async function fixture(page: Page) {
+async function fixture(page: Page, introduceConflict = false) {
   let providers: Provider[] = [
     {
       id: "existing-service",
@@ -17,24 +17,57 @@ async function fixture(page: Page) {
       price_output_per_m: 2,
     },
   ];
-  const writes: { path: string; providers: Provider[] }[] = [];
+  let revision = 1;
+  let routes: Provider[] = [
+    {
+      id: "existing-route",
+      name: "原分析",
+      capability: "analysis",
+      connection_id: "existing-service",
+      model: "existing-model",
+      enabled: true,
+      priority: 10,
+      web_search_param: "",
+      price_input_per_m: 1,
+      price_output_per_m: 2,
+    },
+  ];
+  const writes: {
+    path: string;
+    connections: Provider[];
+    routes: Provider[];
+    route_id?: string;
+  }[] = [];
   await page.route("**/*", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/auth/status")
       return route.fulfill({ json: { enabled: false } });
-    if (path.startsWith("/api/llm-providers")) {
+    if (path.startsWith("/api/model-configuration")) {
       if (request.method() !== "GET") {
-        const incoming = request.postDataJSON().providers as Provider[];
-        writes.push({ path, providers: incoming });
+        const body = request.postDataJSON();
+        const incoming = body.connections as Provider[];
+        writes.push({ path, ...body });
+        if (introduceConflict && request.method() === "PUT") {
+          introduceConflict = false;
+          revision++;
+          routes.push({
+            ...routes[0],
+            id: "other-user-route",
+            model: "other-user-model",
+          });
+        }
+        if (body.revision !== revision)
+          return route.fulfill({
+            status: 409,
+            json: { detail: "配置已在其他页面修改" },
+          });
         if (path.endsWith("/test"))
           return route.fulfill({
             json: {
-              results: incoming.map((provider) => ({
-                name: provider.name,
-                ok: true,
-                detail: "本地测试响应",
-              })),
+              id: body.route_id,
+              ok: true,
+              detail: "本地测试响应",
             },
           });
         providers = incoming.map(({ api_key, clear_api_key, ...provider }) => ({
@@ -42,9 +75,18 @@ async function fixture(page: Page) {
           api_key_set:
             !clear_api_key && (!!api_key || provider.id === "existing-service"),
         }));
+        routes = body.routes;
+        revision++;
       }
       return route.fulfill({
-        json: { providers, active_count: providers.length },
+        json: {
+          revision,
+          source: "routes",
+          connections: providers,
+          routes,
+          asr_selection: "",
+          active_counts: { analysis: routes.length },
+        },
       });
     }
     if (path.startsWith("/api/")) return route.fulfill({ json: [] });
@@ -107,6 +149,7 @@ test("provider presets create editable drafts without reusing existing credentia
     await expect(
       page.getByLabel("API 地址", { exact: false }).last(),
     ).toHaveValue(url);
+    await page.getByRole("button", { name: "添加路由", exact: true }).click();
     await expect(
       page.getByLabel("模型名称", { exact: false }).last(),
     ).toHaveValue(model);
@@ -130,29 +173,40 @@ test("provider presets create editable drafts without reusing existing credentia
     .getByLabel("API 密钥", { exact: true })
     .last()
     .fill("new-test-key");
-  await page.getByRole("button", { name: "测试连接", exact: true }).click();
-  await expect(page.getByText("本地测试响应")).toHaveCount(4);
+  await page
+    .getByRole("button", { name: "测试此路由", exact: true })
+    .last()
+    .click();
+  await expect(page.getByText("本地测试响应")).toHaveCount(1);
   expect(writes.map((write) => write.path)).toEqual([
-    "/api/llm-providers/test",
+    "/api/model-configuration/test",
   ]);
-  expect(writes[0].providers[0]).toMatchObject({
+  expect(writes[0].connections[0]).toMatchObject({
     id: "existing-service",
     api_key: "",
     clear_api_key: false,
     base_url: "https://existing.example.invalid/v1",
   });
-  expect(writes[0].providers.at(-1)).toMatchObject({
-    id: "",
+  expect(writes[0].connections.at(-1)).toMatchObject({
     base_url: "https://customized.example.invalid/v1",
-    model: "my-endpoint",
     api_key: "new-test-key",
   });
-  expect(writes[0].providers[1]).not.toHaveProperty("docsUrl");
-  await page.getByRole("button", { name: "保存全部服务", exact: true }).click();
-  await expect(page.getByText("服务配置已保存")).toBeVisible();
+  expect(writes[0].routes.at(-1)).toMatchObject({
+    model: "my-endpoint",
+    connection_id: writes[0].connections.at(-1)?.id,
+  });
+  expect(writes[0].route_id).toBe(writes[0].routes.at(-1)?.id);
+  expect(writes[0].connections[1]).not.toHaveProperty("docsUrl");
+  expect(writes[0].connections[1]).not.toHaveProperty("model");
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
+  await expect(
+    page.getByText("连接与业务路由已保存；新任务使用新配置"),
+  ).toBeVisible();
   expect(writes.map((write) => write.path)).toEqual([
-    "/api/llm-providers/test",
-    "/api/llm-providers",
+    "/api/model-configuration/test",
+    "/api/model-configuration",
   ]);
   await expect(page.getByLabel("API 密钥", { exact: true }).last()).toHaveValue(
     "",
@@ -166,6 +220,7 @@ test("account-specific models stay blank and custom drafts can be discarded", as
   await page.goto("/settings/llm");
   await page.getByLabel("服务商预设", { exact: true }).selectOption("qianfan");
   await page.getByRole("button", { name: "添加服务", exact: true }).click();
+  await page.getByRole("button", { name: "添加路由", exact: true }).click();
   await expect(
     page.getByLabel("模型名称", { exact: false }).last(),
   ).toHaveValue("");
@@ -180,4 +235,94 @@ test("account-specific models stay blank and custom drafts can be discarded", as
   await page.getByRole("button", { name: "放弃全部修改", exact: true }).click();
   await expect(page.getByLabel("服务名称", { exact: true })).toHaveCount(1);
   expect(writes).toEqual([]);
+});
+
+test("independent summary and ASR routes share one connection without copying its key", async ({
+  page,
+}) => {
+  const writes = await fixture(page);
+  await page.goto("/settings/llm");
+  await page
+    .getByLabel("使用连接", { exact: true })
+    .selectOption("existing-service");
+  for (const capability of ["summary", "asr"]) {
+    await page
+      .getByLabel("业务能力", { exact: true })
+      .first()
+      .selectOption(capability);
+    await page.getByRole("button", { name: "添加路由", exact: true }).click();
+    await page
+      .getByLabel("模型名称", { exact: false })
+      .last()
+      .fill(`${capability}-model`);
+  }
+  await expect(
+    page.getByRole("button", { name: "测试此路由", exact: true }),
+  ).toHaveCount(2);
+  await expect(page.getByLabel("API 密钥", { exact: true })).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
+  await expect(
+    page.getByText("连接与业务路由已保存；新任务使用新配置"),
+  ).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0].connections).toHaveLength(1);
+  expect(writes[0].connections[0].api_key).toBe("");
+  expect(writes[0].routes.slice(1)).toMatchObject([
+    {
+      capability: "summary",
+      model: "summary-model",
+      connection_id: "existing-service",
+    },
+    {
+      capability: "asr",
+      model: "asr-model",
+      connection_id: "existing-service",
+      web_search_param: "",
+      price_input_per_m: 0,
+      price_output_per_m: 0,
+    },
+  ]);
+  expect(writes[0].routes.every((route) => !("api_key" in route))).toBe(true);
+});
+
+test("model catalog conflicts preserve the draft revision and the other editor's route", async ({
+  page,
+}) => {
+  const writes = await fixture(page, true);
+  await page.goto("/settings/llm");
+  await page.getByLabel("服务名称", { exact: true }).fill("本地草稿");
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("配置已在其他页面修改");
+  await page.getByRole("button", { name: "读取最新版本", exact: true }).click();
+  await expect(
+    page.getByText(/已读取最新配置，当前草稿与原版本仍保留/),
+  ).toBeVisible();
+  await expect(page.getByLabel("服务名称", { exact: true })).toHaveValue(
+    "本地草稿",
+  );
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toMatchObject({ revision: 1 });
+  await page.getByRole("button", { name: "放弃全部修改", exact: true }).click();
+  await expect(
+    page.getByLabel("模型名称", { exact: false }).last(),
+  ).toHaveValue("other-user-model");
+  await page.getByLabel("服务名称", { exact: true }).fill("重新修改");
+  await page
+    .getByRole("button", { name: "保存连接与路由", exact: true })
+    .click();
+  await expect(
+    page.getByText("连接与业务路由已保存；新任务使用新配置"),
+  ).toBeVisible();
+  expect(writes[2]).toMatchObject({ revision: 2 });
+  expect(writes[2].routes.at(-1)).toMatchObject({
+    id: "other-user-route",
+    model: "other-user-model",
+  });
 });
